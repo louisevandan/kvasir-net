@@ -316,6 +316,87 @@ function client(base, extra = {}) {
       `poll ${used}ms: two in a row reach ${used * 2}ms against a ${WORKER_STALE_MS}ms budget`)
   })
 
+  // A host double: what expertHost.cjs exposes to the loop, and nothing else.
+  function fakeHost({ canHost = true } = {}) {
+    return {
+      phase: 'idle', held: null, provisioned: [], released: [],
+      canHost: () => canHost,
+      busy() { return ['downloading', 'starting', 'serving'].includes(this.phase) },
+      heldExperts() { return this.held ? this.held.end - this.held.begin : 0 },
+      heldSegments() { return this.phase === 'serving' ? [[this.held.layer, this.held.begin, this.held.end]] : [] },
+      coverageUrl() { return this.phase === 'serving' ? 'relay:expert-w' : '' },
+      async provision(a) {
+        this.provisioned.push(a)
+        this.held = { model: a.model, layer: a.layer, begin: a.experts[0], end: a.experts[1] }
+        this.phase = 'serving'
+      },
+      release(why) { this.released.push(why); this.phase = 'idle'; this.held = null },
+      status() { return { phase: this.phase } },
+    }
+  }
+  const marketRoutes = (volunteers) => ({
+    'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),
+    'POST /api/auth/node-token': () => ({ body: { node_token: 'tok', expires_in: 2592000 } }),
+    'POST /api/expert-volunteer': (b) => {
+      volunteers.push(b)
+      return { body: { assigned: true, model: 'step', layer: 5, experts: [0, 16], n_embd: 4096, n_layer: 45, n_expert: 288 } }
+    },
+    'POST /api/expert-coverage': () => ({ body: { ok: true, wired: true } }),
+  })
+
+  await test('once serving, reports the held segment with a relay url and stops volunteering', async () => {
+    const volunteers = []
+    const br = await fakeBridge(marketRoutes(volunteers))
+    try {
+      const host = fakeHost()
+      const p = client(br.base, { host })
+      p.running = true; p.maxExpertsFn = () => 64
+      await p.tick()
+      await new Promise((r) => setImmediate(r))
+      assert.strictEqual(host.provisioned.length, 1)
+      p.running = true
+      await p.tick()
+      p.stop()
+      assert.strictEqual(volunteers.length, 1, 'volunteered again while holding a segment')
+      const posts = br.seen.filter((x) => x.key === 'POST /api/expert-coverage').map((x) => x.body)
+      const last = posts[posts.length - 1]
+      assert.deepStrictEqual(last.segments, [[5, 0, 16]])
+      assert.strictEqual(last.url, 'relay:expert-w')
+      assert.deepStrictEqual(host.released, ['node stopped'])
+    } finally { await br.close() }
+  })
+
+  await test('a lowered VRAM budget releases what no longer fits', async () => {
+    const volunteers = []
+    const br = await fakeBridge(marketRoutes(volunteers))
+    try {
+      const host = fakeHost()
+      host.phase = 'serving'; host.held = { model: 'step', layer: 5, begin: 0, end: 16 }
+      const p = client(br.base, { host })
+      p.running = true; p.maxExpertsFn = () => 8
+      await p.tick()
+      p.running = false
+      assert.deepStrictEqual(host.released, ['the VRAM budget no longer fits it'])
+      // Whatever it posts afterwards, it no longer claims the range.
+      for (const x of br.seen.filter((y) => y.key === 'POST /api/expert-coverage')) {
+        assert.deepStrictEqual(x.body.segments, [])
+      }
+    } finally { await br.close() }
+  })
+
+  await test('a machine with no worker does not volunteer for work it cannot do', async () => {
+    const volunteers = []
+    const br = await fakeBridge(marketRoutes(volunteers))
+    try {
+      const p = client(br.base, { host: fakeHost({ canHost: false }) })
+      p.running = true; p.maxExpertsFn = () => 64
+      await p.tick()
+      p.running = false
+      assert.strictEqual(volunteers.length, 0)
+      assert.strictEqual(p.assignment, null)
+    } finally { await br.close() }
+  })
+
   console.log('\nbridge participation')
   console.log(results.join('\n'))
   console.log(`\n${passed}/${results.length} passed`)

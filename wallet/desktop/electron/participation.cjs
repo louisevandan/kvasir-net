@@ -67,7 +67,7 @@ class ParticipationError extends Error {
  * @param {(line:string)=>void} [opts.log]
  */
 class Participation {
-  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null }) {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.walletFn = wallet
     // Same identity the settlement side already uses for this machine
@@ -87,6 +87,9 @@ class Participation {
     this.timer = null
     this.running = false
     this.lastError = null
+    // What turns an assignment into something held (expertHost.cjs). Without
+    // one this machine volunteers and reports nothing, which is the truth.
+    this.host = host
   }
 
   // ---- token ---------------------------------------------------------------
@@ -282,16 +285,36 @@ class Participation {
       let failed = true
       try {
         const cap = this.maxExpertsFn ? this.maxExpertsFn() : null
-        if (cap === 0) {
-          // The operator lent the network no GPU memory. Asking for work we
-          // have said we cannot hold would only earn an assignment to refuse.
+        const host = this.host
+        if (host && host.busy()) {
+          // Holding (or fetching) an assignment: do not volunteer again. Once
+          // our segment is reported, the bridge sees that range as covered and
+          // would hand out a different one every poll — a node that swapped
+          // shards each minute would never serve anything.
+          if (cap != null && host.heldExperts() > cap) {
+            host.release('the VRAM budget no longer fits it')
+            this.assignment = null
+          }
+        } else if (cap === 0 || (host && !host.canHost())) {
+          // No GPU memory lent, or nothing here that could compute an expert.
+          // Asking for work we cannot hold would only earn an assignment to refuse.
           this.assignment = null
         } else {
           await this.volunteer({ model: this.model, maxExperts: cap })
+          if (this.assignment && host) {
+            host.provision(this.assignment, { workerId: this.workerIdFn() })
+              // Report as soon as it serves, not a poll later: the coverage
+              // post is what wires the relay session the worker dials.
+              .then(() => this.poke())
+              .catch(() => { /* logged by the host; the next tick volunteers again */ })
+          }
         }
         // Report every tick, assignment or not: the census keys on heartbeat
         // freshness, so staying silent drops this machine out of the market.
-        await this.reportCoverage(this.heldSegments(), { model: this.model })
+        await this.reportCoverage(this.heldSegments(), {
+          model: this.model || (host && host.held && host.held.model),
+          url: host ? host.coverageUrl() : '',
+        })
         this.lastError = null
         failed = false
       } catch (e) {
@@ -321,19 +344,21 @@ class Participation {
   stop() {
     this.running = false
     if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    if (this.host) this.host.release('node stopped')
   }
 
   /**
    * What this machine actually HOLDS, as [layer, begin, end] triples.
    *
-   * Empty until shard download exists. An accepted assignment is not a held
-   * segment: reporting one would inflate the bridge's replica count for a
-   * range nothing can serve, and expert-volunteer would stop recruiting for
-   * it. The machine still appears as a volunteer with an empty report, which
-   * is exactly the truth — "here, holding nothing yet".
+   * Only what the host's worker is serving right now. An accepted assignment
+   * is not a held segment, and neither is a shard still downloading:
+   * reporting either would inflate the bridge's replica count for a range
+   * nothing can serve, and expert-volunteer would stop recruiting for it. The
+   * machine still appears as a volunteer with an empty report, which is
+   * exactly the truth — "here, holding nothing yet".
    */
   heldSegments() {
-    return []
+    return this.host ? this.host.heldSegments() : []
   }
 
   /**
@@ -347,6 +372,7 @@ class Participation {
     if (this.running) {
       if (this.lastError === 'wallet is locked') phase = 'awaiting_unlock'
       else if (!hasToken) phase = 'authenticating'
+      else if (this.host && this.host.phase === 'serving') phase = 'serving'
       else if (this.assignment) phase = 'assigned'
       else phase = 'volunteering'
     }
@@ -358,6 +384,7 @@ class Participation {
       // token, so the wallet only has to be unlocked for the first one.
       workerId: this.workerIdFn(),
       assignment: this.assignment,
+      host: this.host ? this.host.status() : null,
       lastError: this.lastError,
     }
   }

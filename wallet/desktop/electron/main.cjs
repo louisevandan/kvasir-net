@@ -8,7 +8,8 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
-const { executors, expertsForBudget, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
+const { executors, expertsForBudget, locateExecutor, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
+const { ExpertHost } = require('./expertHost.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
@@ -574,8 +575,13 @@ let lastGpuTotalBytes = null
 let lastGpuFreeBytes = null
 // VRAM our own expert worker holds right now. It shows up as "used" in the
 // probe, and must be added back or the node would shrink its own offer every
-// time it took work.
-let ownWorkerGpuBytes = 0
+// time it took work. Estimated from the memory model, not measured: WDDM does
+// not report per-process GPU memory.
+function ownWorkerGpuBytes() {
+  const m = expertMemoryModel()
+  if (!m || !expertHost || expertHost.phase !== 'serving') return 0
+  return m.fixedBytes + m.scratchBytes + expertHost.heldExperts() * m.residentBytesPerExpert
+}
 
 function expertMemoryModel() {
   const worker = KNOWN_EXECUTORS.find((k) => k.id === 'linkcpp-expert-worker')
@@ -607,7 +613,7 @@ function vramBudgetBytes() {
 function maxExpertsForBudget(budget = vramBudgetBytes()) {
   const available = lastGpuFreeBytes == null
     ? null
-    : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes - SYSTEM_VRAM_RESERVE)
+    : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes() - SYSTEM_VRAM_RESERVE)
   return expertsForBudget(budget, expertMemoryModel(), available)
 }
 async function refreshGpuTotal() {
@@ -620,7 +626,17 @@ async function refreshGpuTotal() {
   } catch { return null }
 }
 
-const participation = new Participation({
+// Turns an assignment into a served segment: shard download, the worker, the
+// relay. Declared before participation, which drives it.
+let participation = null
+const expertHost = new ExpertHost({
+  baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+  token: () => participation.ensureToken(),
+  workerBinary: () => locateExecutor('linkcpp-expert-worker'),
+  shardDir: path.join(app.getPath('userData'), 'shards'),
+  log: (line) => console.log(line),
+})
+participation = new Participation({
   baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
   wallet: () => activeAddress(),
   // Signing needs the unlocked mnemonic (or the debug identity). Throwing here
@@ -629,6 +645,7 @@ const participation = new Participation({
   sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), activeKeypair().secretKey),
   store: nodeTokenStore,
   log: (line) => console.log(line),
+  host: expertHost,
 })
 const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }
@@ -665,7 +682,7 @@ async function nodeStatus({ inspect = false } = {}) {
     // So the slider's live preview uses the same conversion as the offer.
     expertMemoryModel: expertMemoryModel(),
     vramReserveBytes: SYSTEM_VRAM_RESERVE,
-    ownWorkerGpuBytes,
+    ownWorkerGpuBytes: ownWorkerGpuBytes(),
   }
 }
 
@@ -890,5 +907,5 @@ app.whenReady().then(() => {
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}) })
+app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}); expertHost.release('quitting') })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

@@ -4,3 +4,4 @@ release/
 *.log
 .DS_Store
 resources/p4/
+resources/expert-worker/

@@ -229,4 +229,10 @@ function expertsForBudget(budget, model, availableBytes) {
   return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
 }
 
-module.exports = { executors, expertsForBudget, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }
+/** Path of an installed executor binary, or null. Does not start it. */
+function locateExecutor(id) {
+  const k = KNOWN.find((x) => x.id === id)
+  return k ? findBinary(k.locate()) : null
+}
+
+module.exports = { executors, expertsForBudget, locateExecutor, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }

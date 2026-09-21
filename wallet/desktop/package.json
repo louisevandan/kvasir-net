@@ -37,7 +37,8 @@
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
     "tweetnacl": "^1.0.3",
-    "kvasir-p4-bridge": "file:../../p4bridge"
+    "kvasir-p4-bridge": "file:../../p4bridge",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
