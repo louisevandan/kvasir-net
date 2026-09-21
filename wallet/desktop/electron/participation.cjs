@@ -1,0 +1,301 @@
+'use strict'
+/**
+ * Joining the bridge's expert market.
+ *
+ * Until now this app ran a p4 agent on the machine and told the settlement
+ * service it was online — and that was all. Nothing ever asked the machine to
+ * serve anything, so `contributedUnits` stayed at 0 forever and the operator
+ * saw an "online" node that earned nothing. p4node.cjs supervises the local
+ * process; this file is the part that was missing, the one that makes the
+ * bridge aware the machine exists and willing to give it work.
+ *
+ * The flow mirrors wallet/ios/.../BridgeAuthService.swift +
+ * BridgeParticipation.swift and wallet/android/.../BridgeAuthService.kt, so the
+ * three clients present themselves to the bridge identically:
+ *
+ *   1. POST /api/auth/challenge   {wallet}                  -> {nonce, message}
+ *   2. ed25519-sign the message with the wallet key         -> base64
+ *   3. POST /api/auth/node-token  {wallet,nonce,signature}  -> {node_token} (30d)
+ *   4. Authorization: Bearer <node_token> from then on
+ *   5. POST /api/expert-volunteer {model?, max_experts?}    -> an assignment
+ *   6. POST /api/expert-coverage  {segments:[...]}          periodically
+ *
+ * Deliberately NOT here: downloading expert shards and relaying the actual
+ * compute. The bridge side of both is still being written; without them a
+ * machine can be a visible volunteer but not yet a worker, which is the state
+ * this round is meant to reach.
+ */
+const CHALLENGE_PATH = '/api/auth/challenge'
+const TOKEN_PATH = '/api/auth/node-token'
+const VOLUNTEER_PATH = '/api/expert-volunteer'
+const COVERAGE_PATH = '/api/expert-coverage'
+const DEMAND_PATH = '/api/expert-demand'
+
+// The bridge rejects anything longer; a base58 Solana address is 32-44.
+const MAX_WALLET_LEN = 44
+
+const DEFAULT_POLL_MS = 60_000
+const REQUEST_TIMEOUT_MS = 20_000
+
+class ParticipationError extends Error {
+  constructor(message, { status = 0, code = '' } = {}) {
+    super(message)
+    this.name = 'ParticipationError'
+    this.status = status
+    this.code = code
+  }
+}
+
+/**
+ * @param {object} opts
+ * @param {string} opts.baseUrl        gateway base, e.g. https://gate.kvasir-ai.net
+ * @param {() => string} opts.wallet   base58 address of the unlocked wallet
+ * @param {(bytes: Uint8Array) => Uint8Array} opts.sign
+ *        detached ed25519 signature. Injected rather than taking the secret key
+ *        so the mnemonic never leaves main.cjs's unlocked-session handling.
+ * @param {{load:()=>({token:string,expiresAt:number}|null), save:(v:object|null)=>void}} [opts.store]
+ *        persists the 30-day node token across restarts. Optional: without it
+ *        the token simply lives for the process's lifetime.
+ * @param {(line:string)=>void} [opts.log]
+ */
+class Participation {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {} }) {
+    this.base = String(baseUrl || '').replace(/\/+$/, '')
+    this.walletFn = wallet
+    this.signFn = sign
+    this.store = store
+    this.log = log
+    this.token = null
+    this.tokenExpiresAt = 0
+    this.assignment = null
+    this.timer = null
+    this.running = false
+    this.lastError = null
+  }
+
+  // ---- token ---------------------------------------------------------------
+
+  /**
+   * A cached token is reused until it is close to expiry. `skew` keeps us from
+   * starting a request with a token that dies mid-flight.
+   */
+  cachedToken() {
+    if (!this.token && this.store) {
+      const saved = this.store.load()
+      if (saved && saved.token) {
+        this.token = saved.token
+        this.tokenExpiresAt = Number(saved.expiresAt) || 0
+      }
+    }
+    const skew = 60_000
+    if (this.token && (!this.tokenExpiresAt || Date.now() + skew < this.tokenExpiresAt)) {
+      return this.token
+    }
+    return null
+  }
+
+  forgetToken() {
+    this.token = null
+    this.tokenExpiresAt = 0
+    if (this.store) this.store.save(null)
+  }
+
+  /** Steps 1-3. Requires an unlocked wallet, because step 2 signs. */
+  async mintToken() {
+    const wallet = String(this.walletFn() || '')
+    if (!wallet) throw new ParticipationError('wallet is locked', { code: 'wallet_locked' })
+    if (wallet.length > MAX_WALLET_LEN) {
+      throw new ParticipationError(`wallet address is ${wallet.length} chars; the bridge accepts at most ${MAX_WALLET_LEN}`,
+        { code: 'wallet_too_long' })
+    }
+
+    const ch = await this.post(CHALLENGE_PATH, { wallet })
+    const message = ch && ch.message
+    const nonce = ch && ch.nonce
+    if (!message || !nonce) {
+      throw new ParticipationError('the bridge issued no challenge', { code: 'no_challenge' })
+    }
+
+    // Sign the message EXACTLY as given: it is a human-readable string the
+    // bridge re-derives byte for byte. Re-encoding or trimming it here would
+    // produce a signature that verifies against nothing.
+    const sig = this.signFn(Buffer.from(message, 'utf8'))
+    const signature = Buffer.from(sig).toString('base64')
+
+    const resp = await this.post(TOKEN_PATH, { wallet, nonce, signature })
+    const token = resp && resp.node_token
+    if (!token) throw new ParticipationError('the bridge issued no node token', { code: 'no_token' })
+
+    this.token = token
+    // expires_in is seconds (30 days). Treat a missing value as "unknown" and
+    // rely on the 401-retry path rather than inventing an expiry.
+    const ttl = Number(resp.expires_in)
+    this.tokenExpiresAt = Number.isFinite(ttl) && ttl > 0 ? Date.now() + ttl * 1000 : 0
+    if (this.store) this.store.save({ token, expiresAt: this.tokenExpiresAt, wallet })
+    this.log(`bridge: node token minted (${ttl ? Math.round(ttl / 86400) + 'd' : 'no stated expiry'})`)
+    return token
+  }
+
+  async ensureToken() {
+    return this.cachedToken() || (await this.mintToken())
+  }
+
+  /**
+   * Run an authenticated call, re-minting once on 401. A node token outlives
+   * the app, so the common failure is a token that expired or was revoked
+   * while the app was closed; without this the node would sit there failing
+   * every poll until someone restarted it.
+   */
+  async authed(fn) {
+    let token = await this.ensureToken()
+    try {
+      return await fn(token)
+    } catch (e) {
+      if (e instanceof ParticipationError && e.status === 401) {
+        this.log('bridge: node token rejected, re-authenticating')
+        this.forgetToken()
+        token = await this.mintToken()
+        return await fn(token)
+      }
+      throw e
+    }
+  }
+
+  // ---- market --------------------------------------------------------------
+
+  /**
+   * Step 5. Returns the assignment, or null when the bridge wants nobody.
+   *
+   * An assignment WITHOUT `n_embd` is refused. The dimension decides how the
+   * expert tensors are read; guessing it does not fail loudly, it silently
+   * computes garbage and reports it as work. iOS does the same
+   * (BridgeParticipation.swift: "bridge did not supply n_embd … skipping").
+   */
+  async volunteer({ model = null, maxExperts = null } = {}) {
+    const body = {}
+    if (model) body.model = model
+    if (maxExperts != null) body.max_experts = maxExperts
+
+    const resp = await this.authed((token) => this.post(VOLUNTEER_PATH, body, token))
+    if (!resp || resp.assigned !== true) {
+      this.assignment = null
+      return { assigned: false, reason: (resp && resp.reason) || 'no assignment' }
+    }
+    if (resp.n_embd == null) {
+      this.assignment = null
+      throw new ParticipationError(
+        `the bridge assigned '${resp.model}' without n_embd — refusing to serve rather than compute garbage`,
+        { code: 'missing_n_embd' })
+    }
+    this.assignment = resp
+    const [begin, end] = Array.isArray(resp.experts) ? resp.experts : [null, null]
+    this.log(`bridge: assigned ${resp.model} layer ${resp.layer} experts ${begin}-${end} (n_embd=${resp.n_embd})`)
+    return resp
+  }
+
+  /** Step 6. `segments` is what this machine currently holds. */
+  async reportCoverage(segments) {
+    if (!Array.isArray(segments) || segments.length === 0) return null
+    return this.authed((token) => this.post(COVERAGE_PATH, { segments }, token))
+  }
+
+  /** Step 7, read-only: what the bridge is currently recruiting for. */
+  async demand() {
+    return this.authed((token) => this.get(DEMAND_PATH, token))
+  }
+
+  // ---- loop ----------------------------------------------------------------
+
+  /**
+   * Poll the market until stopped. Errors are logged and retried rather than
+   * thrown: a node that stops volunteering because the bridge blipped is worse
+   * than one that keeps asking.
+   */
+  start({ pollMs = DEFAULT_POLL_MS, model = null } = {}) {
+    if (this.running) return
+    this.running = true
+    const tick = async () => {
+      if (!this.running) return
+      try {
+        await this.volunteer({ model })
+        if (this.assignment) await this.reportCoverage(this.segmentsFor(this.assignment))
+        this.lastError = null
+      } catch (e) {
+        this.lastError = e.message
+        // A locked wallet is the expected state after a restart, not a fault.
+        this.log(e.code === 'wallet_locked'
+          ? 'bridge: waiting for the wallet to be unlocked'
+          : `bridge: ${e.message}`)
+      }
+      if (this.running) this.timer = setTimeout(tick, pollMs)
+    }
+    tick()
+  }
+
+  stop() {
+    this.running = false
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+  }
+
+  /**
+   * What to report as held. Until shard download exists this machine holds
+   * nothing it has fetched, so it reports the assignment it accepted — which is
+   * what keeps it visible in the market and lets the bridge count replicas.
+   */
+  segmentsFor(a) {
+    if (!a) return []
+    const [begin, end] = Array.isArray(a.experts) ? a.experts : [null, null]
+    if (begin == null || end == null) return []
+    return [{ model: a.model, layer: a.layer, expert_begin: begin, expert_end: end }]
+  }
+
+  status() {
+    return {
+      running: this.running,
+      hasToken: !!this.cachedToken(),
+      assignment: this.assignment,
+      lastError: this.lastError,
+    }
+  }
+
+  // ---- transport -----------------------------------------------------------
+
+  post(path, body, token = null) { return this.request('POST', path, body, token) }
+  get(path, token = null) { return this.request('GET', path, null, token) }
+
+  async request(method, path, body, token) {
+    const url = this.base + path
+    const headers = { Accept: 'application/json' }
+    if (body != null) headers['Content-Type'] = 'application/json'
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS)
+    let resp
+    try {
+      resp = await fetch(url, {
+        method, headers,
+        body: body == null ? undefined : JSON.stringify(body),
+        signal: ctl.signal,
+      })
+    } catch (e) {
+      throw new ParticipationError(
+        e.name === 'AbortError' ? `${method} ${path} timed out` : `${method} ${path}: ${e.message}`,
+        { code: 'network' })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const text = await resp.text().catch(() => '')
+    let data = null
+    try { data = text ? JSON.parse(text) : null } catch { /* non-JSON body */ }
+
+    if (!resp.ok) {
+      const msg = (data && (data.error || (data.error && data.error.message))) || text || `HTTP ${resp.status}`
+      throw new ParticipationError(String(msg).slice(0, 300), { status: resp.status })
+    }
+    return data
+  }
+}
+
+module.exports = { Participation, ParticipationError, MAX_WALLET_LEN }

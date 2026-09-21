@@ -7,6 +7,7 @@ const http = require('node:http')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
+const { Participation } = require('./participation.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
@@ -460,6 +461,47 @@ async function localGenerate(sender, name, prompt, maxTokens) {
 // ran. Until one exists it stays null, and the settlement service scores the node
 // on its floor tier rather than on a number the app made up.
 const p4node = new P4Node()
+
+// ---- bridge participation --------------------------------------------------
+// The p4 agent above owns this machine's accelerators; this is what tells the
+// bridge the machine exists and asks it for work. Without it the node registers
+// with settlement, reports "online", and is never given anything to serve —
+// contributedUnits stays 0 forever, which is exactly what operators saw.
+//
+// The node token is a 30-day bearer credential, so it gets the same treatment
+// as the mnemonic: encrypted with the OS keystore, never written in the clear.
+// config.json sits unprotected in userData and would hand a 30-day identity to
+// anyone who reads that folder.
+const nodeTokenFile = () => path.join(app.getPath('userData'), 'node-token.enc')
+const nodeTokenStore = {
+  load() {
+    try {
+      const buf = fs.readFileSync(nodeTokenFile())
+      if (!safeStorage.isEncryptionAvailable()) return null
+      const rec = JSON.parse(safeStorage.decryptString(buf))
+      // A token minted for a different wallet is useless: the bridge scopes it
+      // to the signer. Silently dropping it makes switching wallets just work.
+      return rec && rec.wallet === readConfig().address ? rec : null
+    } catch { return null }
+  },
+  save(rec) {
+    try {
+      if (rec == null) { fs.unlinkSync(nodeTokenFile()); return }
+      if (!safeStorage.isEncryptionAvailable()) return
+      fs.writeFileSync(nodeTokenFile(), safeStorage.encryptString(JSON.stringify(rec)))
+    } catch { /* best effort: a lost token is re-minted on the next poll */ }
+  },
+}
+
+const participation = new Participation({
+  baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+  wallet: () => readConfig().address || '',
+  // Signing needs the unlocked mnemonic. Throwing here (rather than returning
+  // an empty signature) is what surfaces "wallet is locked" as a real reason.
+  sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), keypairFromMnemonic(requireUnlocked()).secretKey),
+  store: nodeTokenStore,
+  log: (line) => console.log(line),
+})
 const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }
 
@@ -479,7 +521,13 @@ async function benchmark(sender, maxTokens = 64) {
 
 async function nodeStatus({ inspect = false } = {}) {
   if (inspect) await p4node.inspect().catch(() => {})
-  return { ...p4node.status(), capability: await capability(), measured, relay: relay.status() }
+  // `participation` is what the operator needs to tell "the agent is running"
+  // from "the bridge has actually given this machine work" — the two looked
+  // identical before, which is why an earning-nothing node read as healthy.
+  return {
+    ...p4node.status(), capability: await capability(), measured,
+    relay: relay.status(), participation: participation.status(),
+  }
 }
 
 /**
@@ -636,6 +684,10 @@ function register() {
   ipcMain.handle('node:status', (_e, opts) => nodeStatus(opts || {}))
   ipcMain.handle('node:start', async () => {
     p4node.start()
+    // Volunteer beside the agent. It polls, so a locked wallet or an
+    // unreachable bridge is a logged retry rather than a failed start — the
+    // local agent is useful on its own.
+    participation.start({ pollMs: 60_000 })
     // The tunnel comes up beside the agent, not after it is proven: the relay
     // only needs the port to exist by the time somebody dials, and a stream
     // that arrives early closes itself and says the agent is not up yet.
@@ -643,7 +695,7 @@ function register() {
     await new Promise((r) => setTimeout(r, 1200))
     return nodeStatus({ inspect: true })
   })
-  ipcMain.handle('node:stop', async () => { relay.stop(); await p4node.stop(); return nodeStatus() })
+  ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); await p4node.stop(); return nodeStatus() })
   ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
   ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
 }
