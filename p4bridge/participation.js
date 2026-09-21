@@ -395,12 +395,26 @@ class Participation {
         if (value === null) return fail(res, 400, `${key} is required`), true;
         target.searchParams.set(key, value);
       }
+      // A shard is hundreds of megabytes and the client is on the far side of
+      // a CDN, so it WILL sometimes go away mid-body. When it does, the pipe
+      // below pauses the upstream reader, and undici asserts
+      // `assert(!this.paused)` the moment the upstream socket ends while
+      // paused — an uncaught exception, which took the whole bridge down and
+      // inference with it the first time a worker aborted a download.
+      //
+      // So the fetch is abortable and the client going away aborts it, which
+      // ends the read rather than pausing it.
+      const abort = new AbortController();
+      const giveUp = () => abort.abort();
+      res.on('close', giveUp);
       let upstream;
       try {
         upstream = await fetch(target, {
           headers: { 'x-kvasir-service-token': this.shard.token },
+          signal: abort.signal,
         });
       } catch (error) {
+        res.off('close', giveUp);
         return fail(res, 502, `the shard reader is unreachable: ${error.message}`), true;
       }
       // Its refusals are the useful ones — "layer 0 holds no routed experts"
@@ -415,11 +429,22 @@ class Participation {
         ...(upstream.headers.get('x-kvasir-shard-digest')
           ? { 'x-kvasir-shard-digest': upstream.headers.get('x-kvasir-shard-digest') } : {}),
       });
-      if (!upstream.body) { res.end(); return true; }
+      if (!upstream.body) { res.off('close', giveUp); res.end(); return true; }
       // Streamed, not buffered: one window is hundreds of megabytes and the
       // bridge holds the ring in the same process.
-      const { Readable } = require('node:stream');
-      Readable.fromWeb(upstream.body).pipe(res);
+      //
+      // `pipeline` rather than `pipe`, because pipe leaves a failure on either
+      // side unhandled, and an unhandled stream error here is the same crash by
+      // another route. Everything this can throw is a transfer that did not
+      // finish; the response is already committed, so there is nothing to say
+      // to the client but to stop.
+      const { Readable, pipeline } = require('node:stream');
+      pipeline(Readable.fromWeb(upstream.body), res, (error) => {
+        res.off('close', giveUp);
+        if (error && error.name !== 'AbortError') {
+          this.log?.(`shard relay ended early: ${error.message}`);
+        }
+      });
       return true;
     }
 

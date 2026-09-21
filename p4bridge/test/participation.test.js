@@ -228,6 +228,54 @@ test('a shard download is gated, relayed verbatim, and refused when there is no 
   assert.equal(refused.status, 503);
 });
 
+test('a client that walks away mid-shard does not take the bridge with it', async (t) => {
+  // What happened in production: a worker aborted a download, the pipe paused
+  // the upstream reader, and undici asserted `assert(!this.paused)` when the
+  // upstream socket ended while paused. That is an uncaught exception, and the
+  // bridge serves inference from the same process, so a cancelled download
+  // stopped the ring.
+  let opened = 0;
+  const reader = http.createServer((req, res) => {
+    opened += 1;
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    // Big enough that the client is certain to give up partway.
+    const chunk = Buffer.alloc(256 * 1024, 7);
+    let sent = 0;
+    const tick = () => {
+      if (res.writableEnded || res.destroyed) return;
+      res.write(chunk);
+      sent += 1;
+      if (sent < 200) setTimeout(tick, 5); else res.end();
+    };
+    tick();
+  });
+  const readerPort = await listen(reader);
+  t.after(() => reader.close());
+
+  const { server, participation } = startBridge({
+    shard: { origin: `http://127.0.0.1:${readerPort}`, token: 'reader-secret' },
+  });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await tokenFor(port);
+
+  const abort = new AbortController();
+  const shard = `http://127.0.0.1:${port}/api/proxy/models/step-3.7-flash/expert-shard`
+    + '?layer=3&expert_begin=0&expert_end=2';
+  const response = await fetch(shard, {
+    headers: { authorization: `Bearer ${token}` }, signal: abort.signal,
+  });
+  const body = response.body.getReader();
+  await body.read();                 // take one chunk, then leave
+  abort.abort();
+
+  // The process must still be here, and still answering.
+  await new Promise((r) => setTimeout(r, 120));
+  const after = await call(port, 'POST', '/api/expert-volunteer', { token, body: { max_experts: 1 } });
+  assert.equal(after.status, 200, 'the bridge must survive an abandoned download');
+  assert.equal(opened, 1);
+});
+
 test('a layer with no experts is never offered, and an unread model offers nothing', async (t) => {
   // The bug this guards: nLayer was treated as "every layer has experts", so a
   // volunteer was handed layer 0 of a model whose first blocks are dense. The
