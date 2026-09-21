@@ -122,7 +122,7 @@ export default function Nav() {
 
       {/* mobile panel */}
       {open && (
-        <div className="glass border-b border-line xl:hidden">
+        <div className="glass-solid border-b border-line xl:hidden">
           <Container className="flex flex-col gap-1 py-4">
             {NAV_ITEMS.map((item) =>
               "children" in item ? (

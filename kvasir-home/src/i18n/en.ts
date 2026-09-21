@@ -18,6 +18,7 @@ export const en = {
     technology: "Technology",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Team",
   },
 
   actions: {

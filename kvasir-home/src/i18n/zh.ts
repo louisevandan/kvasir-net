@@ -14,6 +14,7 @@ export const zh: Dict = {
     technology: "技术",
     blog: "博客",
     wiki: "百科",
+    team: "团队",
   },
 
   actions: {

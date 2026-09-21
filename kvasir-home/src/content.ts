@@ -61,6 +61,10 @@ export const NAV_ITEMS = [
       { key: "wiki", href: "/wiki" },
     ],
   },
+  // Top level rather than tucked into a dropdown: at seed stage the question
+  // "who is building this" is asked early and answered nowhere else, and the
+  // footer link was invisible on mobile, where the nav is a hamburger.
+  { key: "team", href: "/team" },
 ] as const;
 
 /* Example request — code, never translated. */

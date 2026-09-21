@@ -21,6 +21,7 @@ export const nl: Dict = {
     technology: "Technologie",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Team",
   },
 
   actions: {

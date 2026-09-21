@@ -14,6 +14,7 @@ export const id: Dict = {
     technology: "Teknologi",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Tim",
   },
 
   actions: {

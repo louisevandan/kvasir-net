@@ -20,6 +20,7 @@ export const ja: Dict = {
     technology: "技術",
     blog: "ブログ",
     wiki: "Wiki",
+    team: "チーム",
   },
 
   actions: {

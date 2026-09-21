@@ -14,6 +14,7 @@ export const ko: Dict = {
     technology: "기술",
     blog: "블로그",
     wiki: "위키",
+    team: "팀",
   },
 
   actions: {

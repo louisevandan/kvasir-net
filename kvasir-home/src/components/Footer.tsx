@@ -84,15 +84,10 @@ export default function Footer() {
               >
                 Releases
               </a>
-              {/* Untranslated, like Releases: the page itself is English-only,
-                  and a translated label pointing at English copy is worse than
-                  an English label that tells you what you are about to get. */}
-              <a
-                href="/team"
-                className="text-ink-muted transition-colors hover:text-ink"
-              >
-                Team
-              </a>
+              {/* Team is in the main nav now, so it is not repeated here.
+                  Install stays untranslated, like Releases: the page is
+                  English-only, and a translated label pointing at English copy
+                  is worse than an English label that says what you will get. */}
               <a
                 href="/install"
                 className="text-ink-muted transition-colors hover:text-ink"
