@@ -341,6 +341,31 @@ const staticRoutes = [
     jsonld: [breadcrumb([["Release notes", "/releases"]])],
   },
   {
+    path: "/team",
+    title: "Team & structure — Kvasir",
+    description:
+      "The five people building Kvasir, and how the company is arranged: token issuance from an ADGM entity in Abu Dhabi, engineering in Korea.",
+    image: `${ORIGIN}/og.png`,
+    kind: "website",
+    bodyHtml:
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Who builds this</h1><p class="mt-4 text-lg text-ink-muted">Five people across three countries. Issuance and engineering sit in different jurisdictions on purpose: the token is issued by an ADGM entity in Abu Dhabi, where a virtual-asset regime says plainly what an issuer may do, and the engineering stays in Korea with the engineers.</p></section>`,
+    jsonld: [
+      breadcrumb([["Team & structure", "/team"]]),
+      {
+        "@type": "Organization",
+        name: "Kvasir AI Network",
+        url: ORIGIN,
+        employee: [
+          { "@type": "Person", name: "Guy Jaber", jobTitle: "Founder" },
+          { "@type": "Person", name: "Kiwan Maeng", jobTitle: "Founder, Chief Engineering" },
+          { "@type": "Person", name: "Anver Layshev", jobTitle: "Business Development and Marketing" },
+          { "@type": "Person", name: "Antonio K.", jobTitle: "Chief Architect" },
+          { "@type": "Person", name: "Louis E. Vandan", jobTitle: "AI Model Engineering" },
+        ],
+      },
+    ],
+  },
+  {
     path: "/install",
     title: "Installing the mobile builds — Kvasir",
     description:

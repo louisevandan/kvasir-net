@@ -84,6 +84,21 @@ export default function Footer() {
               >
                 Releases
               </a>
+              {/* Untranslated, like Releases: the page itself is English-only,
+                  and a translated label pointing at English copy is worse than
+                  an English label that tells you what you are about to get. */}
+              <a
+                href="/team"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                Team
+              </a>
+              <a
+                href="/install"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                Install
+              </a>
               <a
                 href="/legal"
                 className="text-ink-muted transition-colors hover:text-ink"
