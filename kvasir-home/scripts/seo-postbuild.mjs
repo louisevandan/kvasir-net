@@ -359,7 +359,7 @@ const staticRoutes = [
           { "@type": "Person", name: "Guy Jaber", jobTitle: "Founder" },
           { "@type": "Person", name: "Kiwan Maeng", jobTitle: "Founder, Chief Engineering" },
           { "@type": "Person", name: "Anver Layshev", jobTitle: "Business Development and Marketing" },
-          { "@type": "Person", name: "Antonio K.", jobTitle: "Chief Architect" },
+          { "@type": "Person", name: "Tony A. K.", jobTitle: "Chief Architect" },
           { "@type": "Person", name: "Louis E. Vandan", jobTitle: "AI Model Engineering" },
         ],
       },

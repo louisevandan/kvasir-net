@@ -67,7 +67,7 @@ const PEOPLE: Person[] = [
       + "gamification.",
   },
   {
-    name: "Antonio K.",
+    name: "Tony A. K.",
     role: "Chief Architect",
     based: "Korea",
     avatar: "/team/antonio.webp",
