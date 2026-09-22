@@ -70,6 +70,31 @@ function perfTier(tps) {
   return PERF_TIERS.find((x) => t >= x.minTps) || PERF_TIERS[PERF_TIERS.length - 1];
 }
 
+// A node that has never reported a decode throughput.
+//
+// PERF_TIERS grades nodes by tokens/s, which is the right question for a node
+// that generates tokens. An expert node does not: it computes an FFN over a
+// batch of hidden states and never decodes anything, so there is no tokens/s
+// to measure and there never will be. Falling back to perfTier(0) put every
+// such node in the bottom tier at 0.7x — permanently, whatever the hardware.
+// An M4, a 4090 and a GB10 all lost 30% for the same reason: a number that
+// does not apply to them was missing.
+//
+// So the multiplier is 1. Not because expert work deserves a bonus, but
+// because relay contribution is already metered in bytes carried: a slower
+// machine serves fewer batches and earns less by doing so. Multiplying that by
+// 0.7 charges the same slowness twice.
+//
+// This is the honest shape of the rule — "no measurement, no adjustment" —
+// rather than keying off backend === 'relay', which is a value that is about
+// to change as clients start reporting what they actually run on.
+const UNMEASURED = { tier: 'unrated', mult: 1 };
+
+/** The tier and multiplier for a node, graded only if it has been measured. */
+function tierFor(node) {
+  return node && node.perfScore != null ? perfTier(node.perfScore) : UNMEASURED;
+}
+
 // Credit infra-role uptime rewards for the elapsed time since the last accrual,
 // clamped so an offline gap isn't paid. Call on every register/heartbeat/contribution.
 // Uptime rewards SUM with inference rewards into the same pendingRewards balance.
@@ -510,7 +535,7 @@ app.post('/api/node/register', async (req, res) => {
   if (trusted) accrueUptime(n, nowSec());
   if (trusted && hostsGateway != null) n.hostsGateway = !!hostsGateway;
   if (trusted && hostsBridge != null) n.hostsBridge = !!hostsBridge;
-  const pt = perfTier(n.perfScore);
+  const pt = tierFor(n);
   n.tier = pt.tier;
   n.perfMultiplier = pt.mult;
   db.nodes[nodeId] = n;
@@ -592,7 +617,7 @@ app.post('/api/node/remove', (req, res) => {
 function creditContribution(node, rawUnits, at = nowSec()) {
   const raw = Number(rawUnits);
   if (!Number.isFinite(raw) || raw <= 0) return { raw: 0, effective: 0, multiplier: 1, gatewayBonus: 1 };
-  const multiplier = node.perfMultiplier || perfTier(node.perfScore).mult;
+  const multiplier = tierFor(node).mult;
   const gatewayBonus = node.hostsGateway ? GATEWAY_BONUS : 1;
   const effective = raw * multiplier * gatewayBonus;
   // Rounded on the way into the ledger. Ten units credited at once and the same
@@ -625,7 +650,7 @@ app.post('/api/node/contribution', (req, res) => {
   saveDB(db);
   res.json({
     nodeId, contributedUnits: n.contributedUnits, effectiveUnits: n.effectiveUnits,
-    perfMultiplier: mult, tier: n.tier || perfTier(n.perfScore).tier,
+    perfMultiplier: mult, tier: n.tier || tierFor(n).tier,
     hostsGateway: !!n.hostsGateway, gatewayBonus: gwBonus,
     pendingRewards: n.pendingRewards, lastReport: n.lastReport,
   });
@@ -656,7 +681,7 @@ app.get('/api/node/status/:owner', (req, res) => {
       if (last == null) status = 'registered';
       else if (now - last < 300) status = 'online';
       else if (now - last < 3600) status = 'idle';
-      const pt = perfTier(n.perfScore);
+      const pt = tierFor(n);
       return {
         nodeId, status,
         os: n.os || 'unknown',
@@ -667,7 +692,7 @@ app.get('/api/node/status/:owner', (req, res) => {
         backend: n.backend || null,
         mode: n.mode || null,
         tier: n.tier || pt.tier,
-        perfMultiplier: n.perfMultiplier || pt.mult,
+        perfMultiplier: n.perfMultiplier != null ? n.perfMultiplier : pt.mult,
         hostsGateway: !!n.hostsGateway,
         gatewayBonus: n.hostsGateway ? GATEWAY_BONUS : 1,
         hostsBridge: !!n.hostsBridge,
@@ -702,7 +727,7 @@ app.get('/api/node/all', (_req, res) => {
     if (last == null) status = 'registered';
     else if (now - last < 300) status = 'online';
     else if (now - last < 3600) status = 'idle';
-    const pt = perfTier(n.perfScore);
+    const pt = tierFor(n);
     const owner = String(n.owner || '');
     return {
       nodeId, status,
@@ -1068,8 +1093,11 @@ function upsertInfraNode(nodeId, owner, roles, label, deviceKind) {
   accrueUptime(n, now); // credit elapsed uptime before refreshing role flags
   n.hostsGateway = !!roles.hostsGateway;
   n.hostsBridge = !!roles.hostsBridge;
-  n.tier = n.tier || perfTier(0).tier;
-  n.perfMultiplier = n.perfMultiplier || perfTier(0).mult;
+  // Assigned, not defaulted: a stale 'C'/0.7 written before this rule existed
+  // has to be cleared, or a node keeps paying for a measurement it never owed.
+  const ipt = tierFor(n);
+  n.tier = ipt.tier;
+  n.perfMultiplier = ipt.mult;
   n.lastReport = now;
   db.nodes[nodeId] = n;
   saveDB(db);
@@ -1115,8 +1143,10 @@ function upsertInferenceNode(nodeId, owner, label, info) {
   n.os = info.os || n.os || HOST_OS;
   n.accelerator = info.accelerator || n.accelerator || 'gpu';
   if (info.backend != null) n.backend = String(info.backend);
-  if (info.perfScore != null) { n.perfScore = Number(info.perfScore); const pt = perfTier(n.perfScore); n.tier = pt.tier; n.perfMultiplier = pt.mult; }
-  else { n.tier = n.tier || perfTier(0).tier; n.perfMultiplier = n.perfMultiplier || perfTier(0).mult; }
+  if (info.perfScore != null) n.perfScore = Number(info.perfScore);
+  const pt = tierFor(n);
+  n.tier = pt.tier;
+  n.perfMultiplier = pt.mult;
   const cumulative = Number(info.units || 0);
   let credited = Number(n.creditedUnits || 0);
   if (cumulative < credited) credited = 0; // bridge counters reset -> rebaseline
@@ -2282,7 +2312,7 @@ app.get('/api/admin/nodes', requireAdmin, (_req, res) => {
     return {
       nodeId, status, owner: n.owner, os: n.os || 'unknown', label: n.label || nodeId,
       accelerator: n.accelerator || 'cpu', backend: n.backend || null,
-      tier: n.tier || perfTier(n.perfScore).tier, perfScore: n.perfScore || 0,
+      tier: n.tier || tierFor(n).tier, perfScore: n.perfScore || 0,
       hostsGateway: !!n.hostsGateway, hostsBridge: !!n.hostsBridge,
       effectiveUnits: n.effectiveUnits || 0, pendingRewards: n.pendingRewards || 0,
       claimedTotal: n.claimedTotal || 0, registeredAt: n.registeredAt || null, lastReport: last,
