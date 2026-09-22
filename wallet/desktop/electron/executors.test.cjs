@@ -5,7 +5,10 @@ const { expertsForBudget, capacityForBudget, nextSlotWindow, slotsThatFit, exper
 
 const MIB = 1024 * 1024
 const GIB = 1024 * MIB
-const cuda = KNOWN.find((k) => k.id === 'linkcpp-expert-worker').memoryModel
+// The arithmetic is tested on a fixed model, so re-measuring a backend does not
+// rewrite these expectations. The shipped models are checked separately below.
+const cuda = { residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB }
+const shippedCuda = KNOWN.find((k) => k.id === 'linkcpp-expert-worker').memoryModel
 let passed = 0
 const test = (name, fn) => { fn(); passed++; console.log('ok -', name) }
 
@@ -83,6 +86,12 @@ test('the expert executor is the one for this platform', () => {
   assert.ok(entry, 'no expert executor for this platform')
   assert.ok(!entry.platforms || entry.platforms.includes(process.platform))
   assert.ok(entry.memoryModel && entry.memoryModel.residentBytesPerExpert > 0)
+})
+
+test('the shipped CUDA model covers what the cuBLAS build was measured to take', () => {
+  // RTX 4060, cuBLAS + FP32, 64 experts: +107 MiB scratch at 512 tokens x 8.
+  assert.ok(shippedCuda.scratchBytes >= 107 * MIB, `scratch ${shippedCuda.scratchBytes / MIB} MiB`)
+  assert.ok(shippedCuda.residentBytesPerExpert >= 9_502_720, 'R below the served bytes per expert')
 })
 
 console.log(`\n${passed} passed`)

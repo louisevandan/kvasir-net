@@ -16,18 +16,24 @@
  * Neither cross-compiles: CUDA for Windows needs MSVC and nvcc on the host,
  * and Metal needs Xcode's toolchain. Each platform builds its own.
  *
- * ## No NVIDIA DLLs in the pack
+ * ## cuBLAS, and why the pack is two parts
  *
- * The worker runs the expert FFN on Q4_K/Q5_K weights with mul_mat_id. With
- * GGML_CUDA_FORCE_MMQ those go through ggml's own quantized kernels, never
- * cuBLAS — measured: identical outputs with and without cuBLAS present, up to
- * 512 tokens x 8 experts per request. ggml-cuda still links cuBLAS, so it is
- * delay-loaded: the DLL is only looked for if a cuBLAS call is ever made. That
- * takes ~770 MB of NVIDIA DLLs out of the pack. cudart is linked statically.
+ * The first pack forced MMQ and left cuBLAS out. That was measured wrong: the
+ * check compared MMQ with MMQ. Against a float64 oracle from the shard's own
+ * weights, MMQ falls under cosine 0.999 as soon as a dispatch is wider than 8
+ * tokens (8 of 256 tokens at T=256 on an RTX 4060; the same on GB10), because
+ * above MMVQ_MAX_BATCH_SIZE ggml switches to MMQ. Chunking to 8 keeps it
+ * correct but costs 3-6x on prefill-width batches. cuBLAS with FP32 compute
+ * passes at every width measured (T=1..512, min cosine 1.000000 as displayed)
+ * and is 25-33% slower than MMQ, 2-4.6x faster than chunking. So the worker is
+ * built with GGML_CUDA_FORCE_CUBLAS; it sets GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F
+ * itself and does not chunk (LINKCPP_CUDA_CUBLAS in main.cpp).
  *
- * MMQ needs compute capability >= 6.1 (DP4A); below that ggml would fall back
- * to cuBLAS. So the arch list starts at 6.1 and the app refuses older GPUs
- * before downloading anything (PACKS.win32.minComputeCapability).
+ * That brings back cublas64_12 + cublasLt64_12, ~770 MB. They change only
+ * with the CUDA release, while the worker changes with every fix, so they ship
+ * as a separate part: runtime (the DLLs, named by their content hash, fetched
+ * once) and worker (the exe). A worker update is then only the worker.
+ * cudart is linked statically. The arch list starts at 6.1, as before.
  *
  * Needs: Visual Studio Build Tools (C++), and a CUDA 12.x toolkit — the
  * installer, or NVIDIA's redist zips unpacked into one tree — at CUDA_PATH or
@@ -73,9 +79,8 @@ function build() {
   const configure = [
     'cmake', '-S', `"${REPO}"`, '-B', `"${BUILD}"`, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     '-DLINKCPP_EXPERT_WORKER_ONLY=ON', '-DGGML_NATIVE=OFF', '-DBUILD_SHARED_LIBS=OFF',
-    '-DGGML_CUDA=ON', '-DGGML_CUDA_FORCE_MMQ=ON', '-DGGML_STATIC=ON', '-DGGML_OPENMP=OFF',
+    '-DGGML_CUDA=ON', '-DGGML_CUDA_FORCE_CUBLAS=ON', '-DGGML_STATIC=ON', '-DGGML_OPENMP=OFF',
     '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded', `"-DCMAKE_CUDA_ARCHITECTURES=${ARCHS}"`,
-    '"-DCMAKE_EXE_LINKER_FLAGS=/DELAYLOAD:cublas64_12.dll delayimp.lib"',
     `-DCUDAToolkit_ROOT=${cuda}`, `-DCMAKE_CUDA_COMPILER=${cuda}/bin/nvcc.exe`,
   ].join(' ')
   const script = [
@@ -155,41 +160,93 @@ function buildMetal() {
   console.log('It ships inside the app; there is no pack to publish and no hash to pin.')
 }
 
+const RUNTIME_DLLS = ['cublas64_12.dll', 'cublasLt64_12.dll']
+
+// Windows 10+ ships bsdtar, which writes zip with -a. Named by full path:
+// a Git-for-Windows tar earlier on PATH reads "C:\\..." as a remote host.
+function zipDir(stage, zip) {
+  fs.rmSync(zip, { force: true })
+  const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+  execFileSync(tar, ['-a', '-c', '-f', zip, '-C', stage, '.'], { stdio: 'inherit' })
+  return {
+    bytes: fs.statSync(zip).size,
+    sha256: crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex'),
+  }
+}
+
+/**
+ * Two zips, each pinned on its own: the NVIDIA runtime and our worker.
+ *
+ * The runtime part is versioned by the DLLs' content hash, not by date or
+ * commit, so rebuilding the worker against the same CUDA release produces
+ * the same runtime version: the app sees it is already installed and fetches
+ * only the new worker.
+ */
 function pack({ exe, cuda }) {
   const rev = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim()
   const now = new Date()
   const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((n) => String(n).padStart(2, '0')).join('.')
-  const version = `${date}-${rev}`
-  const stage = path.join(REPO, 'build', `expert-pack-${version}`)
-  fs.rmSync(stage, { recursive: true, force: true })
-  fs.mkdirSync(stage, { recursive: true })
-  fs.copyFileSync(exe, path.join(stage, EXE))
-  // cudart is linked in statically, so its license notice travels with it.
+  const workerVersion = `${date}-${rev}`
+  const out = path.join(REPO, 'build')
   const license = path.join(cuda, 'LICENSE')
-  if (fs.existsSync(license)) fs.copyFileSync(license, path.join(stage, 'NVIDIA-CUDA-LICENSE.txt'))
-  fs.writeFileSync(path.join(stage, 'README.txt'), [
+
+  // runtime
+  const h = crypto.createHash('sha256')
+  for (const f of RUNTIME_DLLS) {
+    const src = path.join(cuda, 'bin', f)
+    if (!fs.existsSync(src)) throw new Error(`${src} missing: the CUDA tree needs libcublas`)
+    h.update(fs.readFileSync(src))
+  }
+  const runtimeVersion = `cublas12-${h.digest('hex').slice(0, 12)}`
+  const rStage = path.join(out, `expert-runtime-${runtimeVersion}`)
+  fs.rmSync(rStage, { recursive: true, force: true })
+  fs.mkdirSync(rStage, { recursive: true })
+  for (const f of RUNTIME_DLLS) fs.copyFileSync(path.join(cuda, 'bin', f), path.join(rStage, f))
+  if (fs.existsSync(license)) fs.copyFileSync(license, path.join(rStage, 'NVIDIA-CUDA-LICENSE.txt'))
+  fs.writeFileSync(path.join(rStage, 'README.txt'), [
+    'Kvasir expert worker - NVIDIA runtime (Windows x64)',
+    `runtime ${runtimeVersion}`,
+    '',
+    `${RUNTIME_DLLS.join(', ')}: NVIDIA cuBLAS, redistributed unmodified`,
+    'under the terms in NVIDIA-CUDA-LICENSE.txt.',
+    '',
+  ].join('\r\n'))
+  const rZip = path.join(out, `kvasir-expert-runtime-win-x64-${runtimeVersion}.zip`)
+  const r = zipDir(rStage, rZip)
+
+  // worker
+  const wStage = path.join(out, `expert-worker-${workerVersion}`)
+  fs.rmSync(wStage, { recursive: true, force: true })
+  fs.mkdirSync(wStage, { recursive: true })
+  fs.copyFileSync(exe, path.join(wStage, EXE))
+  // cudart is linked in statically, so its license notice travels with it too.
+  if (fs.existsSync(license)) fs.copyFileSync(license, path.join(wStage, 'NVIDIA-CUDA-LICENSE.txt'))
+  fs.writeFileSync(path.join(wStage, 'README.txt'), [
     'Kvasir expert worker - Windows x64, NVIDIA CUDA',
-    `version ${version}`,
+    `worker ${workerVersion}, needs runtime ${runtimeVersion}`,
     '',
     `${EXE}  built from apps/linkcpp-expert-worker at ${rev}`,
     `  MSVC, static CRT, CUDA runtime linked statically, archs ${ARCHS}`,
-    '  ggml quantized kernels only (MMQ); cuBLAS is not used or shipped',
+    '  cuBLAS with FP32 compute for wide batches (the DLLs are the runtime part)',
     '',
     'Requires an NVIDIA GPU with compute capability 6.1 or newer and a driver',
-    'supporting CUDA 12.x. The CUDA runtime is distributed under the terms in',
-    'NVIDIA-CUDA-LICENSE.txt.',
+    'supporting CUDA 12.x.',
     '',
   ].join('\r\n'))
-  const zip = path.join(REPO, 'build', `kvasir-expert-worker-win-x64-cuda12-${version}.zip`)
-  fs.rmSync(zip, { force: true })
-  // Windows 10+ ships bsdtar, which writes zip with -a. Named by full path:
-  // a Git-for-Windows tar earlier on PATH reads "C:\\..." as a remote host.
-  const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
-  execFileSync(tar, ['-a', '-c', '-f', zip, '-C', stage, '.'], { stdio: 'inherit' })
-  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex')
-  const bytes = fs.statSync(zip).size
-  console.log(`\npack: ${zip}\n  version ${version}\n  bytes   ${bytes}\n  sha256  ${sha256}`)
-  console.log('\nPin these in electron/cudaPack.cjs PACKS.win32 once the file is hosted.')
+  const wZip = path.join(out, `kvasir-expert-worker-win-x64-cuda12-${workerVersion}.zip`)
+  const w = zipDir(wStage, wZip)
+
+  const pin = {
+    version: workerVersion,
+    parts: [
+      { id: 'runtime', version: runtimeVersion, file: path.basename(rZip), sha256: r.sha256, bytes: r.bytes, files: RUNTIME_DLLS },
+      { id: 'worker', version: workerVersion, file: path.basename(wZip), sha256: w.sha256, bytes: w.bytes, files: [EXE] },
+    ],
+  }
+  console.log(`\nruntime: ${rZip}\n  ${r.bytes} bytes  sha256 ${r.sha256}`)
+  console.log(`worker:  ${wZip}\n  ${w.bytes} bytes  sha256 ${w.sha256}`)
+  console.log('\nPin in electron/cudaPack.cjs PACKS.win32 (add each part\'s url once hosted):')
+  console.log(JSON.stringify(pin, null, 2))
 }
 
 function main() {
