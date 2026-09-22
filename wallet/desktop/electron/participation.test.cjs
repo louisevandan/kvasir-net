@@ -431,7 +431,7 @@ function client(base, extra = {}) {
     const br = await fakeBridge(marketRoutes(volunteers))
     try {
       const pool = fakePool({ capacitySlots: 2, window: 40 })
-      const p = client(br.base, { host: pool })
+      const p = client(br.base, { host: pool, platform: () => ({ os: 'windows', device_kind: 'desktop', accelerator: 'gpu', backend: 'cuda' }) })
       p.pollMs = 45_000
       // Ticks run one at a time here; poke()'s early tick is the loop's own
       // business and would interleave with the ones this test drives.
@@ -453,6 +453,8 @@ function client(base, extra = {}) {
       assert.deepStrictEqual(last.map((b) => b.url), ['relay:expert-w', 'relay:expert-w-2'])
       assert.ok(last.every((b) => b.owner === WALLET), 'every slot pays the same wallet')
       assert.ok(last.every((b) => b.model === 'step'))
+      assert.ok(last.every((b) => b.os === 'windows' && b.device_kind === 'desktop' && b.backend === 'cuda'),
+        'the platform travels with every slot report')
       // Each slot is told its relay is wired only after its own report was accepted.
       assert.ok(pool.wiredIds.includes('w') && pool.wiredIds.includes('w-2'))
     } finally { await br.close() }

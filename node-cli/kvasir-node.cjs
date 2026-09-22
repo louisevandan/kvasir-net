@@ -155,6 +155,14 @@ function createNode(opts) {
     workerId: () => workerId,
     log,
     host: pool,
+    // Recorded in the ledger as a server, not guessed. A Mac runs the Metal
+    // worker; everything else here is CUDA.
+    platform: {
+      os: { darwin: 'macos', linux: 'linux', win32: 'windows' }[process.platform] || process.platform,
+      device_kind: 'server',
+      accelerator: 'gpu',
+      backend: process.platform === 'darwin' ? 'metal' : 'cuda',
+    },
   })
   return { participation, pool, workerId, address: key.address, gateway, workerBinary, model, budget, log }
 }
