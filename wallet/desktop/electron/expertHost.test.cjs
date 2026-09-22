@@ -203,6 +203,11 @@ test('relay bytes cross both ways, and a dead worker stops being reported', asyn
   await withGateway({ shard: serveShard, relay }, async (base) => {
     const host = makeHost(base, dir)
     await host.provision(ASSIGN, { workerId: 'desktop-abc' })
+    // Nothing is dialled until the bridge has wired the session.
+    await new Promise((r) => setTimeout(r, 150))
+    assert.equal(bridgeSide, null, 'dialled before the coverage report was accepted')
+    host.wired()
+    host.wired()   // idempotent: a second call while dialling does nothing
     await until(() => bridgeSide)
     assert.equal(relayQuery.get('session'), 'expert-desktop-abc')
     assert.equal(relayQuery.get('token'), TOKEN)
@@ -271,6 +276,7 @@ test('a pool holds several shards as separate identities', async () => {
     assert.deepEqual(reps.map((r) => r.url), ['relay:expert-desktop-abc', 'relay:expert-desktop-abc-2'])
     assert.equal(pool.heldExperts(), 128)
     assert.notEqual(pool.hosts[0].port, pool.hosts[1].port)
+    for (const r of reps) pool.wired(r.workerId)
     await until(() => sessions.length >= 2)
     assert.deepEqual([...new Set(sessions)].sort(), ['expert-desktop-abc', 'expert-desktop-abc-2'])
     assert.equal(pool.status().servingSlots, 2)
@@ -293,6 +299,23 @@ test('trim releases the newest slots first', async () => {
     // The freed slot is reused by the next assignment, under its own id.
     await pool.provision({ model: 'm', layer: 6, experts: [0, 8], n_embd: 4096 })
     assert.deepEqual(pool.reports().filter((r) => r.segments.length).map((r) => r.workerId), ['desktop-abc', 'desktop-abc-2'])
+    pool.release()
+  })
+})
+
+test('the shard cache keeps what is held plus two spares', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eh-'))
+  await withGateway({ shard: serveShard, relay: () => {} }, async (base) => {
+    const pool = makePool(base, dir)
+    // Four shards pass through slot 0 one after another; one is held at the end.
+    for (const layer of [3, 4, 5, 6]) {
+      pool.release()
+      await pool.provision({ model: 'm', layer, experts: [0, 8], n_embd: 4096 })
+      await new Promise((r) => setTimeout(r, 20))   // distinct mtimes
+    }
+    const left = fs.readdirSync(path.join(dir, 'shards', 'm')).filter((n) => n.endsWith('.gguf')).sort()
+    // Held: L6. Spares: the two most recent of the rest, L5 and L4. L3 is gone.
+    assert.deepEqual(left, ['L4_e000-008.gguf', 'L5_e000-008.gguf', 'L6_e000-008.gguf'])
     pool.release()
   })
 })
