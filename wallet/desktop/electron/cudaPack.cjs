@@ -30,7 +30,7 @@ const { execFile } = require('node:child_process')
  */
 const PACKS = {
   win32: {
-    version: '2026.09.22-00b6887e',
+    version: '2026.09.23-99afdb2a',
     worker: 'linkcpp-expert-worker.exe',
     // cuBLAS + FP32 for wide batches, ggml's vector kernels for T <= 8. The
     // arch list starts at 6.1; older GPUs are refused before any download.
@@ -39,7 +39,11 @@ const PACKS = {
     parts: [
       {
         id: 'runtime',
-        version: 'cublas12-2d5628eb470e',   // content hash of the two DLLs
+        // Content hash of the two DLLs. A rebuild against the same CUDA makes
+        // the same version but a different zip (entry timestamps move), so the
+        // published zip stays pinned and is never re-uploaded: that would
+        // invalidate every installed runtime for a header change.
+        version: 'cublas12-2d5628eb470e',
         url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-cuda-runtime-win-x64-cublas12-2d5628eb470e.zip',
         sha256: 'f8b2d46f6238b8b16d5c0b86be567ec79035f2a2821318e9d329a2d0672acba9',
         bytes: 552_860_542,
@@ -47,10 +51,10 @@ const PACKS = {
       },
       {
         id: 'worker',
-        version: '2026.09.22-00b6887e',
-        url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-expert-worker-win-x64-cuda12-2026.09.22-00b6887e.zip',
-        sha256: '80fae064d65cb4d599248c4ffc9ffc75954414eafbd3df50798fe0d7c277fcfc',
-        bytes: 167_449_119,
+        version: '2026.09.23-99afdb2a',
+        url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-expert-worker-win-x64-cuda12-2026.09.23-99afdb2a.zip',
+        sha256: '4a398324bd6b0f5fef6c82f55b2607e2c79c0ee4e1516be82172f080dcacc5bd',
+        bytes: 167_463_599,
         files: ['linkcpp-expert-worker.exe'],
       },
     ],
