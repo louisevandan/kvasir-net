@@ -35,11 +35,12 @@
  * once) and worker (the exe). A worker update is then only the worker.
  * cudart is linked statically. The arch list starts at 6.1, as before.
  *
- * Known and not yet fixed: the exe embeds this machine's source paths (ggml's
- * assert messages carry __FILE__), so a shipped pack names the build account
- * and checkout layout. It is not a runtime dependency. Mapping them away needs
- * a prefix map on both compilers — /pathmap for MSVC, -Xcompiler for nvcc's
- * host pass — which is the next change to this build.
+ * Source paths: ggml's assert messages carry __FILE__, so without care the
+ * exe names the build account and checkout layout (186 copies of
+ * C:\Users\<account>\...\kvasir-net\ in the first cuBLAS pack). cl's
+ * /d1trimfile:<prefix> strips that prefix from __FILE__; it is passed to C and
+ * C++ and, through -Xcompiler, to nvcc's host pass. After the build the exe is
+ * searched for the checkout path and the build fails if any copy is left.
  *
  * Needs: Visual Studio Build Tools (C++), and a CUDA 12.x toolkit — the
  * installer, or NVIDIA's redist zips unpacked into one tree — at CUDA_PATH or
@@ -52,6 +53,7 @@
 const { execFileSync } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 
 const HERE = __dirname
@@ -91,6 +93,10 @@ function build() {
     '-DGGML_CUDA=ON', '-DGGML_CUDA_FORCE_CUBLAS=ON', '-DGGML_CUDA_NCCL=OFF', '-DGGML_STATIC=ON', '-DGGML_OPENMP=OFF',
     '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded', `"-DCMAKE_CUDA_ARCHITECTURES=${ARCHS}"`,
     `-DCUDAToolkit_ROOT=${cuda}`, `-DCMAKE_CUDA_COMPILER=${cuda}/bin/nvcc.exe`,
+    // _INIT, so these add to CMake's default flags instead of replacing them.
+    `"-DCMAKE_C_FLAGS_INIT=/d1trimfile:${REPO}"`,
+    `"-DCMAKE_CXX_FLAGS_INIT=/d1trimfile:${REPO}"`,
+    `"-DCMAKE_CUDA_FLAGS_INIT=-Xcompiler=/d1trimfile:${REPO}"`,
   ].join(' ')
   const script = [
     '@echo off',
@@ -105,6 +111,14 @@ function build() {
   execFileSync('cmd', ['/c', bat], { stdio: 'inherit' })
   const exe = path.join(BUILD, 'apps', 'linkcpp-expert-worker', EXE)
   if (!fs.existsSync(exe)) throw new Error(`build reported success but ${exe} is missing`)
+  // Whatever the flags claim, check the binary: a pack is shipped to strangers.
+  const bin = fs.readFileSync(exe)
+  const account = os.userInfo().username
+  for (const needle of [REPO, REPO.replace(/\\/g, '/'), account && `\\Users\\${account}\\`]) {
+    if (!needle) continue
+    const n = bin.toString('latin1').split(needle).length - 1
+    if (n) throw new Error(`${EXE} still embeds "${needle}" ${n} time(s); the source-path trim did not take`)
+  }
   return { exe, cuda }
 }
 
