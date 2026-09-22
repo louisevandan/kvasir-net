@@ -280,10 +280,32 @@ class Participation {
     this.tick()
   }
 
+  /**
+   * One poll, never two at once. poke() can land while a tick is still awaiting
+   * the bridge (a slot finishing its download does exactly that); running a
+   * second tick alongside would double the coverage posts and could volunteer
+   * twice for one free slot. So a poke during a tick is remembered and run as
+   * soon as the current one ends.
+   */
   async tick() {
+    if (!this.running) return
+    if (this.inTick) { this.pokeWanted = true; return }
+    this.inTick = true
+    try { await this.tickOnce() } finally { this.inTick = false }
+    if (this.pokeWanted) { this.pokeWanted = false; this.poke() }
+  }
+
+  async tickOnce() {
       if (!this.running) return
       let failed = true
       try {
+        if (this.host && typeof this.host.reports === 'function') {
+          await this.tickPool(this.host)
+          this.lastError = null
+          failed = false
+          if (this.running) this.timer = setTimeout(() => this.tick(), this.pollMs)
+          return
+        }
         const cap = this.maxExpertsFn ? this.maxExpertsFn() : null
         const host = this.host
         if (host && host.busy()) {
@@ -330,6 +352,38 @@ class Participation {
   }
 
   /**
+   * One tick with an ExpertPool: trim to the budget, grow by at most one slot,
+   * then report every slot that has something to say.
+   *
+   * Growth is one slot per tick and only while no slot is still being set up,
+   * so a big machine fills over a few polls rather than asking for eight
+   * shards at once — and each request's size is what fits after the slots
+   * already held, not a flat 64.
+   */
+  async tickPool(pool) {
+    pool.trim()
+    const window = pool.canHost() ? pool.nextWindow() : 0
+    if (window > 0) {
+      await this.volunteer({ model: this.model, maxExperts: window })
+      if (this.assignment) {
+        const a = this.assignment
+        pool.provision(a)
+          .then(() => this.poke())
+          .catch(() => { /* logged by the host; a later tick volunteers again */ })
+      }
+    } else if (!pool.busySlots().length) {
+      this.assignment = null
+    }
+    for (const r of pool.reports()) {
+      await this.reportCoverage(r.segments, {
+        model: this.model || r.model || (this.assignment && this.assignment.model),
+        workerId: r.workerId,
+        url: r.url,
+      })
+    }
+  }
+
+  /**
    * Run the next poll now instead of waiting out the interval. Called when the
    * wallet is unlocked: the loop was almost certainly parked on "wallet is
    * locked", and making the operator wait a further minute to see their node
@@ -372,7 +426,7 @@ class Participation {
     if (this.running) {
       if (this.lastError === 'wallet is locked') phase = 'awaiting_unlock'
       else if (!hasToken) phase = 'authenticating'
-      else if (this.host && this.host.phase === 'serving') phase = 'serving'
+      else if (this.host && (this.host.phase ?? this.host.status().phase) === 'serving') phase = 'serving'
       else if (this.assignment) phase = 'assigned'
       else phase = 'volunteering'
     }

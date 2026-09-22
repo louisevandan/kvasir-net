@@ -8,9 +8,9 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
-const { executors, expertsForBudget, locateExecutor, setInstalledExecutor, KNOWN: KNOWN_EXECUTORS } = require('./executors.cjs')
+const { executors, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes, expertExecutor, setInstalledExecutor } = require('./executors.cjs')
 const { CudaPack } = require('./cudaPack.cjs')
-const { ExpertHost } = require('./expertHost.cjs')
+const { ExpertHost, ExpertPool } = require('./expertHost.cjs')
 const { RelayTunnel } = require('./relay.cjs')
 const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
@@ -580,13 +580,21 @@ let lastGpuFreeBytes = null
 // not report per-process GPU memory.
 function ownWorkerGpuBytes() {
   const m = expertMemoryModel()
-  if (!m || !expertHost || expertHost.phase !== 'serving') return 0
-  return m.fixedBytes + m.scratchBytes + expertHost.heldExperts() * m.residentBytesPerExpert
+  if (!m || !expertPool) return 0
+  return expertPool.slots.filter((s) => s.phase === 'serving')
+    .reduce((sum, s) => sum + slotBytes(m, s.heldExperts()), 0)
 }
 
+// This platform's expert executor — CUDA on Windows/Linux, Metal on a Mac —
+// and its measured memory model. Not a fixed id: the Mac has its own entry.
 function expertMemoryModel() {
-  const worker = KNOWN_EXECUTORS.find((k) => k.id === 'linkcpp-expert-worker')
-  return worker && worker.memoryModel ? worker.memoryModel : null
+  const { entry } = expertExecutor()
+  return entry && entry.memoryModel ? entry.memoryModel : null
+}
+
+/** Free GPU memory the node may still use, or null where it is not knowable (unified memory). */
+function availableGpuBytes() {
+  return lastGpuFreeBytes == null ? null : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes() - SYSTEM_VRAM_RESERVE)
 }
 
 /**
@@ -606,16 +614,13 @@ function vramBudgetBytes() {
 }
 
 /**
- * Experts to volunteer for now. With no GPU probe yet, fall back to the most
- * the bridge will ship in one shard rather than to "no cap" — asking for a
- * whole layer before we even know the card size is how the unlimited request
- * happened.
+ * Experts this machine can hold in total at the current budget, across slots
+ * of at most one shard each. This is what the slider shows. With no GPU probe
+ * yet it is one shard's worth, not "no cap" — asking for a whole layer before
+ * we even know the card size is how the unlimited request happened.
  */
 function maxExpertsForBudget(budget = vramBudgetBytes()) {
-  const available = lastGpuFreeBytes == null
-    ? null
-    : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes() - SYSTEM_VRAM_RESERVE)
-  return expertsForBudget(budget, expertMemoryModel(), available)
+  return capacityForBudget(budget, expertMemoryModel(), availableGpuBytes()).experts
 }
 async function refreshGpuTotal() {
   try {
@@ -635,12 +640,17 @@ setInstalledExecutor('linkcpp-expert-worker', () => cudaPack.workerPath())
 // Turns an assignment into a served segment: shard download, the worker, the
 // relay. Declared before participation, which drives it.
 let participation = null
-const expertHost = new ExpertHost({
-  baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
-  token: () => participation.ensureToken(),
-  workerBinary: () => locateExecutor('linkcpp-expert-worker'),
-  shardDir: path.join(app.getPath('userData'), 'shards'),
-  log: (line) => console.log(line),
+const expertPool = new ExpertPool({
+  makeHost: () => new ExpertHost({
+    baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+    token: () => participation.ensureToken(),
+    workerBinary: () => expertExecutor().path,
+    shardDir: path.join(app.getPath('userData'), 'shards'),
+    log: (line) => console.log(line),
+  }),
+  workerId: () => participation.workerIdFn(),
+  nextWindow: (held) => nextSlotWindow(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held),
+  fits: (held) => slotsThatFit(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held),
 })
 participation = new Participation({
   baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
@@ -651,7 +661,7 @@ participation = new Participation({
   sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), activeKeypair().secretKey),
   store: nodeTokenStore,
   log: (line) => console.log(line),
-  host: expertHost,
+  host: expertPool,
 })
 const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }
@@ -685,6 +695,9 @@ async function nodeStatus({ inspect = false } = {}) {
     compute: await refreshGpuTotal(),
     vramBudgetBytes: vramBudgetBytes(),
     maxExperts: maxExpertsForBudget(),
+    // Held across slots (one shard, one worker each) vs what the budget allows.
+    expertSlots: capacityForBudget(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes()).slots,
+    heldExperts: expertPool.heldExperts(),
     // So the slider's live preview uses the same conversion as the offer.
     expertMemoryModel: expertMemoryModel(),
     vramReserveBytes: SYSTEM_VRAM_RESERVE,
@@ -923,5 +936,5 @@ app.whenReady().then(() => {
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}); expertHost.release('quitting') })
+app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

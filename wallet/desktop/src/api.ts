@@ -65,15 +65,27 @@ export type ExpertMemoryModel = {
 }
 
 export const MAX_EXPERTS_PER_REQUEST = 64
+export const MAX_SLOTS = 8
 
-/** Mirrors expertsForBudget in electron/main.cjs — keep the two identical. */
-export function expertsForBudget(budget: number | null, model: ExpertMemoryModel | null | undefined,
-  availableBytes: number | null): number {
-  if (budget == null || !model) return MAX_EXPERTS_PER_REQUEST
-  const usable = availableBytes == null ? budget : Math.min(budget, availableBytes)
-  const n = Math.floor((usable - model.fixedBytes - model.scratchBytes - model.headroomBytes)
-    / model.residentBytesPerExpert)
-  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+/**
+ * Mirrors capacityForBudget in electron/executors.cjs — keep the two identical.
+ * What the machine holds in total: slots (one worker, one shard of <= 64
+ * experts each), each paying its own fixed cost, headroom kept once.
+ */
+export function capacityForBudget(budget: number | null, model: ExpertMemoryModel | null | undefined,
+  availableBytes: number | null): { experts: number; slots: number } {
+  if (budget == null || !model) return { experts: MAX_EXPERTS_PER_REQUEST, slots: 1 }
+  let left = (availableBytes == null ? budget : Math.min(budget, availableBytes)) - model.headroomBytes
+  let experts = 0
+  let slots = 0
+  while (slots < MAX_SLOTS) {
+    const n = Math.min(MAX_EXPERTS_PER_REQUEST, Math.floor((left - model.fixedBytes - model.scratchBytes) / model.residentBytesPerExpert))
+    if (n < 1) break
+    experts += n
+    slots += 1
+    left -= model.fixedBytes + model.scratchBytes + n * model.residentBytesPerExpert
+  }
+  return { experts, slots }
 }
 
 export interface NodeStatus {
@@ -98,11 +110,13 @@ export interface NodeStatus {
   vramBudgetBytes?: number | null
   maxExperts?: number | null
   // The executor's measured cost of hosting experts, so the slider previews
-  // with the same conversion the app uses for its offer (see expertsForBudget).
+  // with the same conversion the app uses for its offer (see capacityForBudget).
   expertMemoryModel?: ExpertMemoryModel | null
   vramReserveBytes?: number
   ownWorkerGpuBytes?: number
   cudaPack?: CudaPackStatus
+  expertSlots?: number
+  heldExperts?: number
   debugWallet?: string | null
   // Whether the network can reach this machine. The agent binds loopback, so
   // without a tunnel the node runs and is never given work.
@@ -279,7 +293,7 @@ function makeMock(): KvasirAPI {
       const expertMemoryModel: ExpertMemoryModel = {
         residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB,
       }
-      const maxExperts = () => expertsForBudget(vramBudgetBytes, expertMemoryModel, null)
+      const maxExperts = () => capacityForBudget(vramBudgetBytes, expertMemoryModel, null).experts
       const noPack: CudaPackStatus = { available: false, version: null, bytes: 0, installed: false, phase: 'idle', received: 0, total: 0, error: 'browser preview' }
       const compute: NodeCompute = {
         executors: [

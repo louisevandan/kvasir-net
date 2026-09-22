@@ -4,7 +4,7 @@ import { useI18n } from '../i18n'
 import { Card, MetricRow, CopyButton } from '../components'
 import { QR } from '../qr'
 import { Staking } from '../services'
-import { api, expertsForBudget, isElectron, NODE_GUIDE_URL } from '../api'
+import { api, capacityForBudget, isElectron, NODE_GUIDE_URL } from '../api'
 import type { NodeStatus } from '../api'
 
 const osLabel = (os: string) => ({ macos: 'macOS', windows: 'Windows', linux: 'Linux' }[os] || os)
@@ -69,7 +69,8 @@ function CudaPackRow({ status }: { status: NodeStatus | null }) {
   const pack = status?.cudaPack
   const compute = status?.compute
   const expert = compute?.executors.find((e) => e.id === 'linkcpp-expert-worker')
-  if (!pack || !compute?.gpu.ready || expert?.runnable) return null
+  // pack.version is null where no CUDA pack exists (a Mac uses Metal, bundled).
+  if (!pack || !pack.version || !compute?.gpu.ready || expert?.runnable) return null
   const busy = pack.phase === 'downloading' || pack.phase === 'verifying' || pack.phase === 'installing'
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
@@ -123,7 +124,9 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
   // measured memory model.
   const own = status?.ownWorkerGpuBytes ?? 0
   const available = Math.max(0, gpu.freeBytes + own - (status?.vramReserveBytes ?? 0))
-  const experts = expertsForBudget(current, status?.expertMemoryModel, available)
+  // Total across slots, not one shard's window: a machine lending 4 GiB holds
+  // several shards, and the slider should say what it will actually take.
+  const experts = capacityForBudget(current, status?.expertMemoryModel, available).experts
   const usedByOthers = Math.max(0, gpu.usedBytes - own)
   const overFree = current > available
   const pct = (b: number) => `${Math.min(100, Math.max(0, (b / gpu.totalBytes) * 100))}%`

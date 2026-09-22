@@ -12,7 +12,7 @@ const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
 const { WebSocketServer } = require('ws')
-const { ExpertHost, readGgufMetadata } = require('./expertHost.cjs')
+const { ExpertHost, ExpertPool, readGgufMetadata } = require('./expertHost.cjs')
 
 const TOKEN = 'test-node-token'
 
@@ -239,6 +239,61 @@ test('the same assignment twice does not restart; a new one replaces it', async 
     assert.equal(hits.shard, 2)
     assert.ok(host.lines.some((l) => /using cached shard/.test(l)))
     host.release()
+  })
+})
+
+function makePool(base, dir, { window = () => 64, fits = (held) => held.length } = {}) {
+  const hosts = []
+  const pool = new ExpertPool({
+    makeHost: () => { const h = makeHost(base, dir); hosts.push(h); return h },
+    workerId: () => 'desktop-abc',
+    nextWindow: (held) => window(held),
+    fits: (held) => fits(held),
+  })
+  pool.hosts = hosts
+  return pool
+}
+
+test('a pool holds several shards as separate identities', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eh-'))
+  const sessions = []
+  await withGateway({ shard: serveShard, relay: (ws, u) => sessions.push(u.searchParams.get('session')) }, async (base) => {
+    const pool = makePool(base, dir)
+    // Slot 0 reports even before holding anything: census presence.
+    assert.deepEqual(pool.reports().map((r) => r.workerId), ['desktop-abc'])
+    await pool.provision({ model: 'm', layer: 3, experts: [0, 64], n_embd: 4096 })
+    const second = pool.provision({ model: 'm', layer: 9, experts: [64, 128], n_embd: 4096 })
+    assert.equal(pool.nextWindow(), 0, 'no growth while a slot is still being set up')
+    await second
+    const reps = pool.reports()
+    assert.deepEqual(reps.map((r) => r.workerId), ['desktop-abc', 'desktop-abc-2'])
+    assert.deepEqual(reps.map((r) => r.segments), [[[3, 0, 64]], [[9, 64, 128]]])
+    assert.deepEqual(reps.map((r) => r.url), ['relay:expert-desktop-abc', 'relay:expert-desktop-abc-2'])
+    assert.equal(pool.heldExperts(), 128)
+    assert.notEqual(pool.hosts[0].port, pool.hosts[1].port)
+    await until(() => sessions.length >= 2)
+    assert.deepEqual([...new Set(sessions)].sort(), ['expert-desktop-abc', 'expert-desktop-abc-2'])
+    assert.equal(pool.status().servingSlots, 2)
+    pool.release('test over')
+    assert.equal(pool.heldExperts(), 0)
+  })
+})
+
+test('trim releases the newest slots first', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eh-'))
+  await withGateway({ shard: serveShard, relay: () => {} }, async (base) => {
+    let keep = 3
+    const pool = makePool(base, dir, { fits: () => keep })
+    await pool.provision({ model: 'm', layer: 3, experts: [0, 8], n_embd: 4096 })
+    await pool.provision({ model: 'm', layer: 4, experts: [0, 8], n_embd: 4096 })
+    await pool.provision({ model: 'm', layer: 5, experts: [0, 8], n_embd: 4096 })
+    keep = 1
+    pool.trim()
+    assert.deepEqual(pool.heldSegments(), [[3, 0, 8]])
+    // The freed slot is reused by the next assignment, under its own id.
+    await pool.provision({ model: 'm', layer: 6, experts: [0, 8], n_embd: 4096 })
+    assert.deepEqual(pool.reports().filter((r) => r.segments.length).map((r) => r.workerId), ['desktop-abc', 'desktop-abc-2'])
+    pool.release()
   })
 })
 

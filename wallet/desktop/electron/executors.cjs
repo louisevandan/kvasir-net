@@ -314,10 +314,97 @@ function expertsForBudget(budget, model, availableBytes) {
   return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
 }
 
+// ---- holding more than one shard's worth --------------------------------------
+//
+// One worker process serves one GGUF of one layer (--layer is fixed at load and
+// the dispatch wire has no layer field), and one shard carries at most 64
+// experts. So a machine that can hold more than 64 does it as several slots:
+// separate worker processes, each with its own worker id and relay session.
+// Every slot pays its own fixed cost (F + S — a CUDA context each), while the
+// headroom H is kept once for the machine.
+
+// Slots per machine. The bridge has one relay listen port per worker id and a
+// span of 60 for the whole fleet, so a single desktop taking dozens would
+// leave other devices unable to open a relay. Raise together with that span.
+const MAX_SLOTS = 8
+
+/** Bytes one slot of `experts` experts costs, headroom excluded. */
+function slotBytes(model, experts) {
+  return model.fixedBytes + model.scratchBytes + experts * model.residentBytesPerExpert
+}
+
+/**
+ * What the machine can hold in total: slots of up to 64 experts, packed until
+ * the budget runs out. This — not one shard's window — is what the slider
+ * shows. No budget or model yet: one shard's worth, never "unlimited".
+ */
+function capacityForBudget(budget, model, availableBytes, { maxSlots = MAX_SLOTS } = {}) {
+  if (budget == null || !model) return { experts: MAX_EXPERTS_PER_REQUEST, slots: 1 }
+  let left = (availableBytes == null ? budget : Math.min(budget, availableBytes)) - model.headroomBytes
+  let experts = 0
+  let slots = 0
+  while (slots < maxSlots) {
+    const n = Math.min(MAX_EXPERTS_PER_REQUEST, Math.floor((left - model.fixedBytes - model.scratchBytes) / model.residentBytesPerExpert))
+    if (n < 1) break
+    experts += n
+    slots += 1
+    left -= slotBytes(model, n)
+  }
+  return { experts, slots }
+}
+
+/**
+ * The window to ask for next, given the slots already held (their expert
+ * counts): what still fits after them, as one more slot, clamped to 64.
+ * 0 means "do not volunteer". Unknown budget or model: one slot of 64 at most.
+ */
+function nextSlotWindow(budget, model, availableBytes, heldCounts, { maxSlots = MAX_SLOTS } = {}) {
+  if (heldCounts.length >= maxSlots) return 0
+  if (budget == null || !model) return heldCounts.length ? 0 : MAX_EXPERTS_PER_REQUEST
+  const usable = (availableBytes == null ? budget : Math.min(budget, availableBytes)) - model.headroomBytes
+  const used = heldCounts.reduce((s, n) => s + slotBytes(model, n), 0)
+  const n = Math.floor((usable - used - model.fixedBytes - model.scratchBytes) / model.residentBytesPerExpert)
+  return Math.max(0, Math.min(n, MAX_EXPERTS_PER_REQUEST))
+}
+
+/**
+ * How many of the held slots (oldest first) still fit the budget. A lowered
+ * budget releases the newest slots beyond this.
+ */
+function slotsThatFit(budget, model, availableBytes, heldCounts) {
+  if (budget == null || !model) return heldCounts.length
+  const usable = (availableBytes == null ? budget : Math.min(budget, availableBytes)) - model.headroomBytes
+  let used = 0
+  for (let i = 0; i < heldCounts.length; i++) {
+    used += slotBytes(model, heldCounts[i])
+    if (used > usable) return i
+  }
+  return heldCounts.length
+}
+
 /** Path of an installed executor binary, or null. Does not start it. */
 function locateExecutor(id) {
   const k = KNOWN.find((x) => x.id === id)
   return k ? findBinary(k.locate()) : null
 }
 
-module.exports = { executors, expertsForBudget, locateExecutor, setInstalledExecutor, gpuReadiness, KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST }
+/**
+ * The expert executor for this platform (CUDA on Windows/Linux, Metal on a
+ * Mac): the KNOWN entry, and its binary if installed. Prefers one that is
+ * installed, so a stale entry never shadows a working one.
+ */
+function expertExecutor() {
+  const mine = KNOWN.filter((k) => k.id.startsWith('linkcpp-expert-worker')
+    && (!k.platforms || k.platforms.includes(process.platform)))
+  for (const k of mine) {
+    const bin = findBinary(k.locate())
+    if (bin) return { entry: k, path: bin }
+  }
+  return { entry: mine[0] || null, path: null }
+}
+
+module.exports = {
+  executors, expertsForBudget, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes,
+  expertExecutor, locateExecutor, setInstalledExecutor, gpuReadiness,
+  KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST, MAX_SLOTS,
+}

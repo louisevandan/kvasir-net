@@ -400,4 +400,107 @@ function canConnect(port) {
   })
 }
 
-module.exports = { ExpertHost, ExpertHostError, readGgufMetadata }
+/**
+ * Several ExpertHosts — slots — so a machine can hold more than one shard.
+ *
+ * One worker serves one layer's shard of at most 64 experts, so a machine
+ * lending, say, 4 GiB holds its share as several slots. Each slot is its own
+ * identity to the bridge: worker id, relay session, coverage post. Slot 0 is
+ * the machine's plain id (desktop-XXXXXXXX), so a single-slot machine looks
+ * exactly as it did before; further slots are <id>-2, <id>-3, … All report the
+ * same owner wallet, so rewards land in one place.
+ *
+ * Separate identities are what make growing safe: a held slot never asks for
+ * work again (the bridge would hand that id a different range every poll),
+ * while the next slot volunteers as a newcomer.
+ */
+class ExpertPool {
+  /**
+   * @param {object} o
+   * @param {(index: number) => ExpertHost} o.makeHost  builds slot `index`
+   * @param {() => string} o.workerId    the machine's id (slot 0's)
+   * @param {(heldCounts: number[]) => number} o.nextWindow  experts to ask for next, 0 = none
+   * @param {(heldCounts: number[]) => number} o.fits  how many held slots still fit
+   */
+  constructor({ makeHost, workerId, nextWindow, fits }) {
+    this.makeHost = makeHost
+    this.workerIdFn = workerId
+    this.nextWindowFn = nextWindow
+    this.fitsFn = fits
+    this.slots = []
+  }
+
+  slot(i) {
+    while (this.slots.length <= i) this.slots.push(this.makeHost(this.slots.length))
+    return this.slots[i]
+  }
+
+  slotId(i) {
+    const base = this.workerIdFn()
+    return i === 0 ? base : `${base}-${i + 1}`
+  }
+
+  canHost() { return this.slot(0).canHost() }
+
+  /** Held or being fetched, in slot order. */
+  busySlots() { return this.slots.filter((s) => s.busy()) }
+
+  heldCounts() { return this.busySlots().map((s) => s.heldExperts()) }
+
+  heldExperts() { return this.heldCounts().reduce((a, b) => a + b, 0) }
+
+  /** Experts to volunteer for now; 0 while a slot is still being set up. */
+  nextWindow() {
+    if (this.slots.some((s) => s.phase === 'downloading' || s.phase === 'starting')) return 0
+    return this.nextWindowFn(this.heldCounts())
+  }
+
+  /** Release the newest slots the budget no longer covers. */
+  trim(why = 'the VRAM budget no longer fits it') {
+    const busy = this.busySlots()
+    const keep = this.fitsFn(busy.map((s) => s.heldExperts()))
+    for (let i = busy.length - 1; i >= keep; i--) busy[i].release(why)
+  }
+
+  /** Put an assignment in the first free slot. */
+  provision(assignment) {
+    let i = 0
+    while (this.slot(i).busy()) i++
+    return this.slot(i).provision(assignment, { workerId: this.slotId(i) })
+  }
+
+  /**
+   * One coverage report per slot to send this tick. Slot 0 always reports,
+   * holding or not — that is what keeps the machine in the census; a free
+   * slot beyond it has nothing to say.
+   */
+  reports() {
+    const out = []
+    this.slot(0)
+    this.slots.forEach((s, i) => {
+      if (i === 0 || s.busy()) {
+        out.push({ workerId: this.slotId(i), segments: s.heldSegments(), url: s.coverageUrl(),
+          model: s.held ? s.held.model : null })
+      }
+    })
+    return out
+  }
+
+  /** Compatibility with single-host callers. */
+  heldSegments() { return this.slots.flatMap((s) => s.heldSegments()) }
+
+  release(why = 'released') { for (const s of this.slots) s.release(why) }
+
+  status() {
+    const slots = this.slots.map((s, i) => ({ workerId: this.slotId(i), ...s.status() }))
+    const serving = slots.filter((s) => s.phase === 'serving')
+    return {
+      phase: serving.length ? 'serving' : (slots.find((s) => s.phase !== 'idle') || { phase: 'idle' }).phase,
+      slots,
+      heldExperts: this.heldExperts(),
+      servingSlots: serving.length,
+    }
+  }
+}
+
+module.exports = { ExpertHost, ExpertPool, ExpertHostError, readGgufMetadata }

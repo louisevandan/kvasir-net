@@ -397,6 +397,93 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
+  // A pool double with the ExpertPool surface the loop uses.
+  function fakePool({ capacitySlots = 3, window = 64 } = {}) {
+    const slots = []
+    return {
+      slots, provisioned: [], trimmed: 0,
+      canHost: () => true,
+      busySlots() { return slots.filter((s) => s.phase === 'serving') },
+      heldExperts() { return slots.reduce((a, s) => a + (s.end - s.begin), 0) },
+      nextWindow() { return slots.length < capacitySlots ? window : 0 },
+      trim() { this.trimmed++ },
+      async provision(a) {
+        this.provisioned.push(a)
+        slots.push({ phase: 'serving', layer: a.layer, begin: a.experts[0], end: a.experts[1] })
+      },
+      reports() {
+        const out = [{ workerId: 'w', segments: [], url: '' }]
+        slots.forEach((s, i) => {
+          const r = { workerId: i === 0 ? 'w' : `w-${i + 1}`, segments: [[s.layer, s.begin, s.end]], url: `relay:expert-${i === 0 ? 'w' : `w-${i + 1}`}` }
+          if (i === 0) out[0] = r
+          else out.push(r)
+        })
+        return out
+      },
+      release() { slots.length = 0 },
+      status() { return { phase: slots.length ? 'serving' : 'idle' } },
+    }
+  }
+
+  await test('a pool grows one slot per tick and reports each slot under its own id', async () => {
+    const volunteers = []
+    const br = await fakeBridge(marketRoutes(volunteers))
+    try {
+      const pool = fakePool({ capacitySlots: 2, window: 40 })
+      const p = client(br.base, { host: pool })
+      p.pollMs = 45_000
+      // Ticks run one at a time here; poke()'s early tick is the loop's own
+      // business and would interleave with the ones this test drives.
+      p.poke = () => {}
+      for (let i = 0; i < 4; i++) {
+        p.running = true
+        await p.tick()
+        await new Promise((r) => setImmediate(r))
+        if (p.timer) { clearTimeout(p.timer); p.timer = null }
+      }
+      p.running = false
+      // Capacity for two slots: two volunteers, each sized by nextWindow, then none.
+      assert.strictEqual(volunteers.length, 2)
+      assert.deepStrictEqual(volunteers.map((v) => v.max_experts), [40, 40])
+      assert.strictEqual(pool.provisioned.length, 2)
+      assert.ok(pool.trimmed >= 4, 'trim runs every tick')
+      const last = br.seen.filter((x) => x.key === 'POST /api/expert-coverage').slice(-2).map((x) => x.body)
+      assert.deepStrictEqual(last.map((b) => b.worker_id), ['w', 'w-2'])
+      assert.deepStrictEqual(last.map((b) => b.url), ['relay:expert-w', 'relay:expert-w-2'])
+      assert.ok(last.every((b) => b.owner === WALLET), 'every slot pays the same wallet')
+      assert.ok(last.every((b) => b.model === 'step'))
+    } finally { await br.close() }
+  })
+
+  await test('a poke during a tick runs after it, never alongside', async () => {
+    const volunteers = []
+    let release
+    const gate = new Promise((r) => { release = r })
+    const routes = marketRoutes(volunteers)
+    const slow = routes['POST /api/expert-volunteer']
+    let inFlight = 0
+    let overlapped = false
+    routes['POST /api/expert-volunteer'] = (b) => {
+      inFlight++
+      if (inFlight > 1) overlapped = true
+      inFlight--
+      return slow(b)
+    }
+    const br = await fakeBridge(routes)
+    try {
+      const p = client(br.base)
+      p.running = true; p.maxExpertsFn = () => 64; p.pollMs = 45_000
+      const first = p.tick()
+      p.poke()              // lands while the first tick is still awaiting the bridge
+      await first
+      await new Promise((r) => setTimeout(r, 50))
+      p.stop()
+      assert.strictEqual(overlapped, false)
+      assert.strictEqual(volunteers.length, 2, 'the poke still ran, after the first tick')
+      release()
+    } finally { await br.close() }
+  })
+
   console.log('\nbridge participation')
   console.log(results.join('\n'))
   console.log(`\n${passed}/${results.length} passed`)
