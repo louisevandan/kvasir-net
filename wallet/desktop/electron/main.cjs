@@ -662,6 +662,14 @@ participation = new Participation({
   store: nodeTokenStore,
   log: (line) => console.log(line),
   host: expertPool,
+  // What the ledger should record this machine as. The backend follows the
+  // expert executor actually in use (CUDA or Metal).
+  platform: () => ({
+    os: { win32: 'windows', darwin: 'macos', linux: 'linux' }[process.platform] || process.platform,
+    device_kind: 'desktop',
+    accelerator: 'gpu',
+    backend: process.platform === 'darwin' ? 'metal' : 'cuda',
+  }),
 })
 const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }

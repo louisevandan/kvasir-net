@@ -139,6 +139,8 @@ test('a node signs in, takes two slots, and reports each under its own id', asyn
     assert.deepEqual([...new Set(held.map((c) => c.worker_id))].sort(), [node.workerId, `${node.workerId}-2`])
     assert.ok(held.every((c) => c.owner === address), 'rewards go to the key file wallet')
     assert.ok(held.every((c) => c.url === `relay:expert-${c.worker_id}`))
+    // Recorded as what it is, not left for the bridge to guess (it assumed "phone").
+    assert.ok(held.every((c) => c.device_kind === 'server' && c.accelerator === 'gpu' && c.os && c.backend))
     // Two 8-expert slots use the budget up (16 MiB each + 8 MiB headroom); no third ask.
     await new Promise((r) => setTimeout(r, 300))
     assert.equal(assigned, 2, 'the budget fits two slots; it stops asking')

@@ -67,7 +67,7 @@ class ParticipationError extends Error {
  * @param {(line:string)=>void} [opts.log]
  */
 class Participation {
-  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null }) {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null, platform = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.walletFn = wallet
     // Same identity the settlement side already uses for this machine
@@ -90,6 +90,11 @@ class Participation {
     // What turns an assignment into something held (expertHost.cjs). Without
     // one this machine volunteers and reports nothing, which is the truth.
     this.host = host
+    // What this machine is — { os, device_kind, accelerator, backend } — sent
+    // with every coverage report so the bridge can carry it into the ledger
+    // instead of assuming. Without it a relay-credited desktop or server was
+    // recorded as a phone.
+    this.platformFn = typeof platform === 'function' ? platform : () => platform
   }
 
   // ---- token ---------------------------------------------------------------
@@ -249,6 +254,12 @@ class Participation {
     // Relay wiring only happens for a "relay:<session>" url, and an empty one
     // leaves this worker unwired — correct until there is something to serve.
     if (url) body.url = url
+    const platform = this.platformFn()
+    if (platform) {
+      for (const k of ['os', 'device_kind', 'accelerator', 'backend']) {
+        if (platform[k]) body[k] = String(platform[k])
+      }
+    }
     return this.authed((token) => this.post(COVERAGE_PATH, body, token))
   }
 
