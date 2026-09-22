@@ -148,37 +148,41 @@ const KNOWN = [
       ],
     }),
     probeArgs: ['--help'],
-    // Measured, on an M4 Pro, with four shard sizes on an otherwise quiet
-    // machine. The figures these replace were reasoned from the CUDA row —
-    // "Metal holds the same quantized bytes, so R is the same" — and that
-    // reasoning was wrong by 68%.
+    // Measured on an M4 Pro, four shard sizes, quiet machine, with `footprint`
+    // — which on unified memory counts the process's Metal buffers as well as
+    // its resident pages.
     //
-    //   experts    at rest    under load
-    //         2     49 MiB       180 MiB
-    //         8    141           423
-    //        32    509           727
-    //        64    999          1277
+    //   experts    at rest    serving
+    //         2     44 MiB      175 MiB
+    //         8     99          373
+    //        32    316          590
+    //        64    606          877
     //
-    // Dead linear: 15.32 MiB per expert, intercept 18 MiB. One expert's weights
-    // are 9.06 MiB, so the process holds about 1.7x what it serves. Whatever
-    // ggml's Metal backend does with the bytes on the way in, it is consistent
-    // and it is real memory, and a model that assumes otherwise over-commits
-    // every Mac by two thirds.
+    // 9.060 MiB per expert, intercept 26 MiB. The per-expert figure is the
+    // served size to three decimal places, which is the answer one would have
+    // guessed — but it was not true until f64d2b6. Before that the loader read
+    // each tensor whole into host memory on the way to the backend, and on
+    // unified memory that copy is the same RAM as the buffer it feeds, so a
+    // slot cost 15.32 MiB per expert: 1.69x what it served. The guess was right
+    // and the machine was not doing what the guess assumed.
     //
-    // The scratch does NOT come back. Settled equals peak at every size, so
-    // 282 MiB is a floor a serving slot sits at rather than a spike it passes
-    // through — unlike the Linux/CUDA case, where it is released. Anyone
-    // carrying Linux intuition across will read a peak as an idle figure.
+    // The scratch figure is the MAX OBSERVED rather than a constant. Serving
+    // minus rest was 131 / 274 / 274 / 271 MiB across the four sizes — flat
+    // enough to look fixed, but four points cannot prove it, and the smallest
+    // shard is the odd one out. Taking the maximum is the conservative reading.
     //
-    // Not counted here, and worth knowing: the shard file's page cache is
-    // another 9.06 MiB per expert on the same RAM. It is clean and evictable,
-    // so the machine gets it back under pressure without harm — but on a
-    // unified-memory box it is not free either, and a node that lends most of
-    // the machine will feel it.
+    // These are SETTLED figures, not peaks: see the note above the CUDA entry.
+    // Nothing here is released between requests.
+    //
+    // Not counted, and worth knowing: the shard file's page cache is another
+    // 9.06 MiB per expert on the same RAM. It is clean, so the machine reclaims
+    // it under pressure — but a node lending most of a Mac will feel it, and
+    // the slot-duplication fix (a53a55e) doubled it for multi-slot nodes by
+    // making them hold distinct shards instead of the same one twice.
     memoryModel: {
-      residentBytesPerExpert: 16_067_146,   // 15.32 MiB, measured slope
-      fixedBytes: 128 * MIB,                // 18 MiB intercept, rounded up for the runtime
-      scratchBytes: 320 * MIB,              // 282 MiB measured, settled and kept
+      residentBytesPerExpert: 9_499_993,   // 9.060 MiB, measured slope
+      fixedBytes: 64 * MIB,                // 26 MiB intercept, rounded up
+      scratchBytes: 320 * MIB,             // max observed 274 MiB, settled and kept
       headroomBytes: 256 * MIB,
     },
   },
