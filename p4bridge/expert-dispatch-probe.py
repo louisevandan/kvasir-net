@@ -33,6 +33,15 @@ docstring exists to prevent.
 and indexes them from zero, so a router holding global ids subtracts
 `kvasir.expert_shard.expert_begin`.
 
+Two things about `sel` are easy to get wrong and silent when n_used is 1:
+
+  order   one TOKEN's n_used ids are contiguous, because ggml's ids tensor is
+          [n_used, n_tokens] with n_used fastest. In numpy C order that is
+          shape (n_tokens, n_used) — the transpose of the obvious one.
+  repeats no token may name the same expert twice. A top-k router cannot, and
+          the worker refuses a request that does: ggml's CUDA path asserts on a
+          duplicate and the worker dies with every slot it was serving.
+
 Usage:
     expert-dispatch-probe.py --bridge http://127.0.0.1:19000 --token-env P4_BRIDGE_TOKEN
                              [--session S] [--tokens 8] [--shard path.gguf]
@@ -65,7 +74,7 @@ def sessions(bridge: str, token: str) -> list[dict]:
 def dispatch(port: int, host: str, hidden: np.ndarray, sel: np.ndarray, timeout: float) -> np.ndarray:
     """Listen for the bridge, send one batch, read the answer."""
     n_tokens, n_embd = hidden.shape
-    n_used = sel.shape[0]
+    n_used = sel.shape[1]
 
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -98,7 +107,8 @@ def dispatch(port: int, host: str, hidden: np.ndarray, sel: np.ndarray, timeout:
         got += len(chunk)
     conn.close()
     listener.close()
-    return np.frombuffer(b"".join(chunks), dtype=np.float32).reshape(n_used, n_tokens, n_embd)
+    # out is f32[n_embd, n_used, n_tokens] on the wire; n_embd is fastest.
+    return np.frombuffer(b"".join(chunks), dtype=np.float32).reshape(n_tokens, n_used, n_embd)
 
 
 def oracle(shard: str, hidden: np.ndarray, sel: np.ndarray) -> np.ndarray:
@@ -109,13 +119,13 @@ def oracle(shard: str, hidden: np.ndarray, sel: np.ndarray) -> np.ndarray:
     deq = lambda n: quants.dequantize(part[n].data, part[n].tensor_type).astype(np.float64)
     gate, up, down = deq("ffn_gate_exps"), deq("ffn_up_exps"), deq("ffn_down_exps")
     silu = lambda x: x / (1.0 + np.exp(-x))
-    n_used, n_tokens = sel.shape
-    out = np.zeros((n_used, n_tokens, hidden.shape[1]))
-    for u in range(n_used):
-        for t in range(n_tokens):
-            e = int(sel[u, t])
-            x = hidden[t].astype(np.float64)
-            out[u, t] = (silu(x @ gate[e].T) * (x @ up[e].T)) @ down[e].T
+    n_tokens, n_used = sel.shape
+    out = np.zeros((n_tokens, n_used, hidden.shape[1]))
+    for t in range(n_tokens):
+        x = hidden[t].astype(np.float64)
+        for u in range(n_used):
+            e = int(sel[t, u])
+            out[t, u] = (silu(x @ gate[e].T) * (x @ up[e].T)) @ down[e].T
     return out
 
 
@@ -156,7 +166,17 @@ def main():
     rng = np.random.default_rng(args.seed)
     n_embd = 4096
     hidden = (rng.standard_normal((args.tokens, n_embd)) * 0.1).astype(np.float32)
-    sel = rng.integers(0, n_local, size=(args.n_used, args.tokens)).astype(np.int32)
+    # sel is [n_used * n_tokens] with ONE TOKEN'S ids contiguous — ggml's ids
+    # tensor is 2d [n_used, n_tokens] with n_used fastest, which in C order is
+    # shape (n_tokens, n_used). The transpose of the obvious one, and invisible
+    # while n_used == 1, which is why this was wrong here for a long time.
+    #
+    # Drawn without replacement per token because a top-k router never selects
+    # the same expert twice for one token, and the worker refuses a request
+    # that does — ggml's CUDA path asserts on a duplicate and takes the worker
+    # down with it.
+    sel = np.stack([rng.choice(n_local, size=args.n_used, replace=False)
+                    for _ in range(args.tokens)], axis=0).astype(np.int32)
 
     got = dispatch(chosen["listen_port"], "127.0.0.1", hidden, sel, args.timeout)
     print(f"  received {got.size} floats, shape {got.shape}", file=sys.stderr)
@@ -166,8 +186,8 @@ def main():
         return
     want = oracle(args.shard, hidden, sel)
     cos = np.array([
-        np.dot(want[u, t], got[u, t]) / (np.linalg.norm(want[u, t]) * np.linalg.norm(got[u, t]) + 1e-30)
-        for u in range(sel.shape[0]) for t in range(sel.shape[1])
+        np.dot(want[t, u], got[t, u]) / (np.linalg.norm(want[t, u]) * np.linalg.norm(got[t, u]) + 1e-30)
+        for t in range(sel.shape[0]) for u in range(sel.shape[1])
     ])
     print(f"  cosine min {cos.min():.6f} mean {cos.mean():.6f} over {cos.size} outputs")
     print(f"  max relative error {np.max(np.abs(want - got)) / (np.max(np.abs(want)) + 1e-30):.3e}")
