@@ -35,6 +35,12 @@
  * once) and worker (the exe). A worker update is then only the worker.
  * cudart is linked statically. The arch list starts at 6.1, as before.
  *
+ * Known and not yet fixed: the exe embeds this machine's source paths (ggml's
+ * assert messages carry __FILE__), so a shipped pack names the build account
+ * and checkout layout. It is not a runtime dependency. Mapping them away needs
+ * a prefix map on both compilers — /pathmap for MSVC, -Xcompiler for nvcc's
+ * host pass — which is the next change to this build.
+ *
  * Needs: Visual Studio Build Tools (C++), and a CUDA 12.x toolkit — the
  * installer, or NVIDIA's redist zips unpacked into one tree — at CUDA_PATH or
  * KVASIR_CUDA_ROOT.
