@@ -33,6 +33,13 @@
  * (`brew install mingw-w64`). Without them this says so and stops, rather than
  * producing a Windows package with no agent in it.
  *
+ * ## Linux: built on Debian bullseye
+ *
+ * The agent links glibc dynamically, and a binary only runs where glibc is at
+ * least as new as the one it was linked against. Built on a current distro it
+ * refuses to start on Ubuntu 20.04/22.04. From a non-Linux host this builds
+ * inside Docker's rust:1-bullseye (glibc 2.31); needs Docker.
+ *
  * ## Where p4 comes from
  *
  * A separate repository. Point `KVASIR_P4_SRC` at a checkout or leave it beside
@@ -84,7 +91,21 @@ const quiet = (cmd, args) => {
   catch { return '' }
 }
 
+/** Linux from macOS/Windows: build in a bullseye container for an old glibc. */
+function buildLinuxInDocker(source, exe) {
+  console.log('\n=== x86_64-unknown-linux-gnu (docker, rust:1-bullseye)')
+  const out = 'target/linux-bullseye'
+  run('docker', ['run', '--rm', '-v', `${path.resolve(source)}:/src`, '-v', 'p4-cargo:/usr/local/cargo/registry',
+    '-w', '/src', '-e', `CARGO_TARGET_DIR=/src/${out}`, 'rust:1-bullseye',
+    'cargo', 'build', '--release', '-p', 'p4-agent', '--bin', 'p4-agent'],
+  { env: { ...process.env, MSYS_NO_PATHCONV: '1' } })
+  const built = path.join(source, out, 'release', exe)
+  if (!fs.existsSync(built)) throw new Error(`docker build reported success but ${built} is missing`)
+  return built
+}
+
 function buildTarget(source, target, exe) {
+  if (target.includes('linux') && process.platform !== 'linux') return buildLinuxInDocker(source, exe)
   console.log(`\n=== ${target}`)
   try {
     // A static CRT keeps the MSVC build free of the Visual C++ redistributable.

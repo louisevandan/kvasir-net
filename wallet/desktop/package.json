@@ -65,6 +65,7 @@
     "productName": "Kvasir Wallet",
     "artifactName": "Kvasir-Wallet-${version}-${os}-${arch}.${ext}",
     "afterPack": "scripts/afterPack.cjs",
+    "artifactBuildCompleted": "scripts/fixLinuxModes.cjs",
     "npmRebuild": false,
     "directories": {
       "output": "release",
