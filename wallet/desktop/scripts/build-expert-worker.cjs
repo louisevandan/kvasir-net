@@ -85,7 +85,10 @@ function build() {
   const configure = [
     'cmake', '-S', `"${REPO}"`, '-B', `"${BUILD}"`, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     '-DLINKCPP_EXPERT_WORKER_ONLY=ON', '-DGGML_NATIVE=OFF', '-DBUILD_SHARED_LIBS=OFF',
-    '-DGGML_CUDA=ON', '-DGGML_CUDA_FORCE_CUBLAS=ON', '-DGGML_STATIC=ON', '-DGGML_OPENMP=OFF',
+    // NCCL OFF explicitly: ggml turns it on whenever the build machine has
+    // NCCL, and a worker that needs libnccl will not start on a user's PC.
+    // The first linux-x64 build picked it up exactly that way.
+    '-DGGML_CUDA=ON', '-DGGML_CUDA_FORCE_CUBLAS=ON', '-DGGML_CUDA_NCCL=OFF', '-DGGML_STATIC=ON', '-DGGML_OPENMP=OFF',
     '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded', `"-DCMAKE_CUDA_ARCHITECTURES=${ARCHS}"`,
     `-DCUDAToolkit_ROOT=${cuda}`, `-DCMAKE_CUDA_COMPILER=${cuda}/bin/nvcc.exe`,
   ].join(' ')
