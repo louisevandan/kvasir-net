@@ -30,6 +30,13 @@ const { timingSafeEqual } = require('./nodeauth');
 /** How long a worker's coverage claim stands without a heartbeat. The clients
  *  beat every 15s; the margin is for a backgrounded phone, not for slack. */
 const WORKER_STALE_MS = 120_000;
+// How long a handed-out window counts as taken before the node that asked for
+// it has reported holding it. It has to cover the shard download — 64 experts
+// is 608 MB, about a minute on a good link and several on a domestic one — and
+// it must not be so long that a device which never comes back keeps a scarce
+// range reserved. Two minutes matches the census staleness for the same reason:
+// past that, a machine has stopped being a machine we are waiting for.
+const PENDING_ASSIGNMENT_MS = 120_000;
 /** Replicas wanted per expert segment before it stops being under-covered. */
 const TARGET_REPLICAS = Number(process.env.KVR_EXPERT_TARGET_REPLICAS ?? 2);
 /** Contribution units per megabyte carried over a relay. */
@@ -89,6 +96,14 @@ class Participation {
     this.workers = new Map();
     /** session -> {host, port, model, layer, experts, owner, nodeId, ts} */
     this.relayTargets = new Map();
+    // Windows handed out but not yet reported held. Without this, a node with
+    // room for several slots is given the same range twice: it asks, downloads
+    // for a minute, and asks again before the first shard is serving — and the
+    // census still shows those experts as scarce because nothing holds them
+    // yet. Both slots then spend their memory on identical weights and the
+    // network gains nothing. Measured on a two-slot node: both took layer 3
+    // experts 0-64, 147 ms apart.
+    this.pending = new Map();
     /** session -> {opened, closed, ws2tcp, tcp2ws, creditedBytes} */
     this.relayStats = new Map();
     /** worker_id -> port, so a reconnecting worker keeps its coordinator port */
@@ -130,6 +145,50 @@ class Participation {
    * A run is what a volunteer is handed, so that a node takes a contiguous
    * expert window rather than a scattered set it would have to fetch piecemeal.
    */
+  /** Claims still inside their window; expired ones are dropped as we pass. */
+  livePending() {
+    const cutoff = Date.now() - PENDING_ASSIGNMENT_MS;
+    const live = [];
+    for (const [key, claim] of this.pending) {
+      if (claim.ts >= cutoff) live.push(claim);
+      else this.pending.delete(key);
+    }
+    return live;
+  }
+
+  /**
+   * Remember a window just handed out. Keyed by owner and range, so a node
+   * that asks again for what it already asked for refreshes its claim rather
+   * than taking a second copy — a retry after a dropped response is the same
+   * intent, not a new one.
+   */
+  claim(owner, model, layer, experts) {
+    if (!owner) return;
+    // Canonical id on both ends. A claim is made from the catalog entry while a
+    // coverage report carries whatever the client called the model — usually
+    // the shard's file name — so comparing them raw would never match and the
+    // claim would sit there until it expired, holding a range nobody needed.
+    const id = this.modelInfo(model)?.id ?? String(model);
+    this.pending.set(`${owner}|${id}|${layer}|${experts[0]}-${experts[1]}`,
+      { owner, model: id, layer, experts, ts: Date.now() });
+  }
+
+  /**
+   * Drop the claims a coverage report has made good on. Once the census counts
+   * the range, the claim would count it a second time and the segment would
+   * look better covered than it is.
+   */
+  settle(owner, model, segments) {
+    if (!owner) return;
+    const id = this.modelInfo(model)?.id ?? String(model);
+    for (const [key, claim] of this.pending) {
+      if (claim.owner !== owner || claim.model !== id) continue;
+      const held = segments.some(([layer, begin, end]) =>
+        layer === claim.layer && begin <= claim.experts[0] && end >= claim.experts[1]);
+      if (held) this.pending.delete(key);
+    }
+  }
+
   coverage(model) {
     const info = this.modelInfo(model);
     if (!info) return [];
@@ -155,6 +214,21 @@ class Participation {
         }
       }
     }
+
+    // A window that has been promised is not scarce any more. Counting only
+    // what is already held means a node that asks again while its first shard
+    // is still downloading is told the same range is still the scarcest thing
+    // on the network — which it is, and which it will stop being in a minute,
+    // by that node's own doing.
+    for (const claim of this.livePending()) {
+      if (claim.model !== info.id) continue;
+      const replicas = replicasFor.get(claim.layer);
+      if (!replicas) continue;
+      for (let e = Math.max(0, claim.experts[0]); e < Math.min(claim.experts[1], info.nExpert); e += 1) {
+        replicas[e] += 1;
+      }
+    }
+
     return [...replicasFor.entries()].map(([layer, replicas]) => {
       const segments = [];
       let start = 0;
@@ -297,6 +371,9 @@ class Participation {
       }
       const [begin, endFull] = best.seg.experts;
       const end = maxExperts > 0 ? Math.min(endFull, begin + maxExperts) : endFull;
+      // Taken, as far as the next caller is concerned, until it is reported
+      // held or the claim lapses.
+      this.claim(who.wallet ?? '', best.model.id, best.layer, [begin, end]);
       // n_embd is not decoration: both clients abort the assignment when it is
       // missing rather than guess a hidden size and produce silent garbage.
       return json(res, 200, {
@@ -346,6 +423,11 @@ class Participation {
         accelerator: String(body?.accelerator ?? '') || previous?.platform?.accelerator || '',
         backend: String(body?.backend ?? '') || previous?.platform?.backend || '',
       };
+      // Settled against the authenticated wallet, not the body's `owner`. The
+      // token already proves who is reporting; a field the client fills in can
+      // be omitted — and then a promise outlives the report that fulfilled it,
+      // and the range counts twice.
+      this.settle(who.wallet ?? owner, model.split('/').pop(), segments);
       this.workers.set(workerId, {
         model: model.split('/').pop(),
         nLayer: Number(body?.n_layer ?? 0),

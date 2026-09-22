@@ -360,6 +360,56 @@ test('the market offers the scarcest window, and coverage shrinks it', async (t)
   assert.equal(overlaps, false, 'the market handed out the same window twice');
 });
 
+test('a second slot is not handed the window the first is still fetching', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const wallet = makeWallet();
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: wallet.address } });
+  const { body: { node_token: token } } = await call(port, 'POST', '/api/auth/node-token', {
+    body: { wallet: wallet.address, nonce: challenge.body.nonce, signature: wallet.sign(challenge.body.message) },
+  });
+
+  // The gap this covers: a node with room for several slots asks, spends a
+  // minute downloading 600 MB, and asks again before the first shard is
+  // serving. Nothing has reported coverage yet, so a market that counts only
+  // what is held says the same experts are still the scarcest thing going —
+  // and both slots spend their memory on identical weights. Seen on a real
+  // two-slot node: layer 3 experts 0-64 twice, 147 ms apart.
+  const first = await call(port, 'POST', '/api/expert-volunteer', {
+    token, body: { model: '', max_experts: 4 },
+  });
+  const second = await call(port, 'POST', '/api/expert-volunteer', {
+    token, body: { model: '', max_experts: 4 },
+  });
+  assert.equal(first.body.assigned, true);
+  assert.equal(second.body.assigned, true);
+  const overlaps = second.body.layer === first.body.layer
+    && second.body.experts[0] < first.body.experts[1]
+    && first.body.experts[0] < second.body.experts[1];
+  assert.equal(overlaps, false,
+    'the second slot was sent to fetch what the first is already fetching');
+
+  // And the promise must not outlive the report: once the worker says it holds
+  // the range, the claim has to go, or the segment counts twice and looks
+  // better covered than it is.
+  await call(port, 'POST', '/api/expert-coverage', {
+    token,
+    body: {
+      worker_id: 'slot-1',
+      model: MODEL.id,
+      n_layer: MODEL.nLayer,
+      n_expert: MODEL.nExpert,
+      segments: [[first.body.layer, first.body.experts[0], first.body.experts[1]]],
+      url: 'relay:expert-slot-1',
+    },
+  });
+  const held = participation.coverage(MODEL.id)
+    .find((row) => row.layer === first.body.layer)
+    .segments.find((seg) => seg.experts[0] === first.body.experts[0]);
+  assert.equal(held.replicas, 1, 'a reported range must be counted once, not once per promise');
+});
+
 test('an unauthenticated market call is refused with a readable body', async (t) => {
   const { server, participation } = startBridge();
   const port = await listen(server);
