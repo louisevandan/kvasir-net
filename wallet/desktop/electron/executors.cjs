@@ -108,10 +108,19 @@ const KNOWN = [
     // workspace and FP32 activations). Values below round those up.
     // This is ggml's model: it computes on the quantized bytes as served. An
     // executor that expands weights (e.g. to fp16) must report its own R.
+    // Every figure in both entries is measured as SETTLED, not as a peak: the
+    // reading is taken after a request finishes, and it does not fall back
+    // between requests. ggml's backends grow their pool and keep it, so
+    // "scratch" is a floor a serving slot sits at for as long as the worker
+    // lives, not a spike it passes through. The two backends agree on that and
+    // differ only in scale. Both F and S are charged per slot (see slotBytes),
+    // so which of them a number lives in changes nothing arithmetically — it
+    // records where the number came from. Reading either as transient is the
+    // mistake this paragraph exists to prevent.
     memoryModel: {
       residentBytesPerExpert: 9_568_256,   // 9.125 MiB
       fixedBytes: 128 * MIB,
-      scratchBytes: 160 * MIB,             // cuBLAS + FP32, up to 512 tokens x 8 experts per request
+      scratchBytes: 160 * MIB,             // cuBLAS + FP32 at 512 tokens x 8, settled and kept
       headroomBytes: 128 * MIB,
     },
   },
@@ -169,7 +178,7 @@ const KNOWN = [
     memoryModel: {
       residentBytesPerExpert: 16_067_146,   // 15.32 MiB, measured slope
       fixedBytes: 128 * MIB,                // 18 MiB intercept, rounded up for the runtime
-      scratchBytes: 320 * MIB,              // 282 MiB measured, and retained
+      scratchBytes: 320 * MIB,              // 282 MiB measured, settled and kept
       headroomBytes: 256 * MIB,
     },
   },
