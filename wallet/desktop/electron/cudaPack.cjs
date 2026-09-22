@@ -30,15 +30,30 @@ const { execFile } = require('node:child_process')
  */
 const PACKS = {
   win32: {
-    version: '2026.09.22-eb20920f',
-    url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-expert-worker-win-x64-cuda12-2026.09.22-eb20920f.zip',
-    sha256: '4ae7c1505d765ee34f7bd0b0323c84a8843f2354130e0bb9a2da25dfbe0d851e',
-    bytes: 176_377_760,
+    version: '2026.09.22-00b6887e',
     worker: 'linkcpp-expert-worker.exe',
-    // The worker computes with ggml's MMQ kernels, which need DP4A (6.1).
-    // Older GPUs would fall back to cuBLAS, which the pack does not carry.
+    // cuBLAS + FP32 for wide batches, ggml's vector kernels for T <= 8. The
+    // arch list starts at 6.1; older GPUs are refused before any download.
     minComputeCapability: 6.1,
     minCudaMajor: 12,
+    parts: [
+      {
+        id: 'runtime',
+        version: 'cublas12-2d5628eb470e',   // content hash of the two DLLs
+        url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-cuda-runtime-win-x64-cublas12-2d5628eb470e.zip',
+        sha256: 'f8b2d46f6238b8b16d5c0b86be567ec79035f2a2821318e9d329a2d0672acba9',
+        bytes: 552_860_542,
+        files: ['cublas64_12.dll', 'cublasLt64_12.dll'],
+      },
+      {
+        id: 'worker',
+        version: '2026.09.22-00b6887e',
+        url: 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/expert-worker/kvasir-expert-worker-win-x64-cuda12-2026.09.22-00b6887e.zip',
+        sha256: '80fae064d65cb4d599248c4ffc9ffc75954414eafbd3df50798fe0d7c277fcfc',
+        bytes: 167_449_119,
+        files: ['linkcpp-expert-worker.exe'],
+      },
+    ],
   },
 }
 
