@@ -149,14 +149,25 @@ class Bridge {
    * The gateway reads both out of the same ledger, so the owner has to travel
    * with the entry rather than be assumed.
    */
-  creditRelay(nodeId, units, { owner = '', model = '' } = {}) {
+  creditRelay(nodeId, units, { owner = '', model = '', os = '', deviceKind = '', accelerator = '', backend = '' } = {}) {
     if (!(units > 0)) return;
+    // The defaults date from when the only relay participants were phones. They
+    // are now what a machine is called when it does not say — and everything
+    // current does say, so they should be reached rarely and never silently
+    // relabel a server. The values are applied on every credit rather than only
+    // at creation, so a node that was first seen before its client reported a
+    // platform is corrected on its next contribution instead of staying a phone
+    // for the life of the row.
     const current = this.contributions.get(nodeId) ?? {
       units: 0, rows: 0, requests: 0, agent: null, tps: null,
       owner, model, backend: 'relay', os: 'mobile', accelerator: 'gpu', deviceKind: 'phone',
     };
     current.units += units;
     if (owner) current.owner = owner;
+    if (os) current.os = os;
+    if (deviceKind) current.deviceKind = deviceKind;
+    if (accelerator) current.accelerator = accelerator;
+    if (backend) current.backend = backend;
     this.contributions.set(nodeId, current);
   }
 

@@ -199,6 +199,7 @@ class Participation {
       this.credit(target.nodeId ?? session, (fresh / 1e6) * UNITS_PER_MB, {
         owner: target.owner ?? '',
         model: target.model ?? '',
+        ...(target.platform ?? {}),
       });
     }
   }
@@ -334,6 +335,17 @@ class Participation {
       // A heartbeat must not clobber an owner the relay dial has since adopted,
       // or the node stops being paid halfway through its own session.
       const owner = String(body?.owner ?? '') || previous?.owner || '';
+      // What the machine actually is. Clients have reported this since the
+      // desktop and node-cli started sending it; the bridge was dropping it, so
+      // every expert node reached the ledger as a phone — a headless Linux
+      // server with an RTX 4060 included. Kept from the previous report when a
+      // heartbeat omits it, for the same reason `owner` is.
+      const platform = {
+        os: String(body?.os ?? '') || previous?.platform?.os || '',
+        deviceKind: String(body?.device_kind ?? '') || previous?.platform?.deviceKind || '',
+        accelerator: String(body?.accelerator ?? '') || previous?.platform?.accelerator || '',
+        backend: String(body?.backend ?? '') || previous?.platform?.backend || '',
+      };
       this.workers.set(workerId, {
         model: model.split('/').pop(),
         nLayer: Number(body?.n_layer ?? 0),
@@ -341,6 +353,7 @@ class Participation {
         segments,
         url,
         owner,
+        platform,
         ts: Date.now(),
       });
 
@@ -360,6 +373,7 @@ class Participation {
             layer: segments[0]?.[0] ?? 0,
             experts: segments[0] ? [segments[0][1], segments[0][2]] : [0, 0],
             owner: owner || prior?.owner || '',
+            platform,
             nodeId: workerId,
             ts: Date.now(),
           });
