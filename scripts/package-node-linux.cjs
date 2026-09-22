@@ -196,10 +196,14 @@ function index() {
       out.version = node[2]
       continue
     }
-    const worker = /^kvasir-expert-worker-linux-(x64|arm64)-(.+)\.tar\.gz$/.exec(name)
+    const worker = /^kvasir-expert-worker-linux-(x64|arm64)-cuda(\d+)-(.+)\.tar\.gz$/.exec(name)
     if (worker) {
       out[`worker-linux-${worker[1]}`] = name
       out[`worker-linux-${worker[1]}-sha256`] = sha256(path.join(OUT, name))
+      // The driver floor, read off the filename rather than tracked separately
+      // so the two cannot disagree. A CUDA 13 build fails at cuInit on an R550
+      // driver, and `worker --install` checks this before spending 500 MB.
+      out[`worker-linux-${worker[1]}-cuda`] = Number(worker[2])
     }
   }
   const file = path.join(OUT, 'latest.json')

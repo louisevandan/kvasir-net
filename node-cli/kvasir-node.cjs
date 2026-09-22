@@ -247,6 +247,27 @@ function fetchJson(url) {
  * The hash is checked. This writes an executable that will be handed model
  * weights and run on the operator's GPU.
  */
+/**
+ * The CUDA version this machine's driver can run, or null if we cannot tell.
+ *
+ * A CUDA 13 binary needs an R580 or newer driver and fails at cuInit on
+ * anything older — which is most LTS server fleets, pinned to R535 or R550.
+ * Finding that out AFTER half a gigabyte has been downloaded is a poor way to
+ * learn it, so `nvidia-smi` is asked first. Its header carries the highest
+ * CUDA version the driver supports, which is exactly the question.
+ */
+function driverCudaVersion() {
+  try {
+    const out = execFileSync('nvidia-smi', [], { encoding: 'utf8', timeout: 10_000 })
+    const m = /CUDA Version:\s*([0-9]+)\.([0-9]+)/.exec(out)
+    return m ? { major: Number(m[1]), minor: Number(m[2]), text: `${m[1]}.${m[2]}` } : null
+  } catch {
+    // No nvidia-smi at all: no driver, or not on PATH. Either way we cannot
+    // check, and refusing on that basis would block a machine that works.
+    return null
+  }
+}
+
 async function installWorker(opts) {
   const arch = { x64: 'x64', arm64: 'arm64' }[process.arch]
   if (process.platform !== 'linux' || !arch) {
@@ -264,6 +285,20 @@ async function installWorker(opts) {
       + 'this command only saves you the build.')
   }
   if (!want) throw new Error(`the index has no checksum for ${name}; refusing to install it`)
+
+  // Before the download, not after it.
+  const need = Number(index[`${key}-cuda`] || 0)
+  const have = driverCudaVersion()
+  if (need && have && have.major < need) {
+    throw new Error(
+      `this worker needs CUDA ${need} or newer and the driver here supports ${have.text}.\n`
+      + 'Update the NVIDIA driver, or build the worker against your CUDA version\n'
+      + 'from apps/linkcpp-expert-worker and pass it with --worker <path>.')
+  }
+  if (need && !have) {
+    console.warn(`could not read nvidia-smi, so the driver's CUDA version is unknown; `
+      + `this build needs ${need} or newer`)
+  }
 
   const dir = opts.dir || WORKER_DIR
   fs.mkdirSync(dir, { recursive: true })
