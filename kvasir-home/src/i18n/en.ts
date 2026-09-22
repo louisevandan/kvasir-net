@@ -366,7 +366,7 @@ export const en = {
     mobile: [
       { title: "Install the app", body: "Install Kvasir Wallet from {0}. Use the button above to open the store page. A recent device with a GPU/NPU is recommended.", note: "" },
       { title: "Create / restore a wallet", body: "Open the app and choose Create new wallet or Restore from recovery phrase. Keep your 12-word phrase safe and set a passphrase — the same account restores on desktop and other devices from this phrase. Keys are non-custodial, stored only on the device.", note: "" },
-      { title: "Configure the node", body: "In Mobile node settings pick a compute backend (GPU · OpenCL/Vulkan · CPU) and Local shard (recommended). Expected throughput (tok/s) and memory / thermal / performance impact are shown.", note: "" },
+      { title: "Configure the node", body: "In Mobile node settings pick a compute backend and Local shard (recommended). The GPU choice differs by platform — Android uses the Adreno GPU through OpenCL or Vulkan, iOS the Apple GPU through MLX — and either can fall back to the CPU. Expected throughput (tok/s) and memory / thermal / performance impact are shown.", note: "" },
       { title: "Stake & rewards", body: "In Staking & node rewards, stake KVR and check / claim the claimable rewards your node accrues. Node status shows your performance tier and contribution.", note: "Mobile local-shard inference participation is rolling out; today the main compute nodes are GPU/CPU machines running the agent." },
     ],
     viewGithub: "View on GitHub",

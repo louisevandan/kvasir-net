@@ -357,7 +357,7 @@ export const es: Dict = {
     mobile: [
       { title: "Instala la app", body: "Instala Kvasir Wallet desde {0}. Usa el botón de arriba para abrir la página de la tienda. Se recomienda un dispositivo reciente con GPU/NPU.", note: "" },
       { title: "Crea o restaura una wallet", body: "Abre la app y elige Crear nueva wallet o Restaurar desde frase de recuperación. Guarda tu frase de 12 palabras en un lugar seguro y establece una contraseña — la misma cuenta se restaura en el escritorio y otros dispositivos a partir de esta frase. Las claves son no custodiales y se guardan solo en el dispositivo.", note: "" },
-      { title: "Configura el nodo", body: "En Configuración de nodo móvil, elige un backend de cómputo (GPU · OpenCL/Vulkan · CPU) y Shard local (recomendado). Se muestran el rendimiento esperado (tok/s) y el impacto en memoria / temperatura / rendimiento.", note: "" },
+      { title: "Configura el nodo", body: "En Configuración de nodo móvil, elige un backend de cómputo y Shard local (recomendado). La opción de GPU varía según la plataforma: Android usa la GPU Adreno mediante OpenCL o Vulkan, e iOS la GPU de Apple mediante MLX; ambas pueden recurrir a la CPU. Se muestran el rendimiento esperado (tok/s) y el impacto en memoria / temperatura / rendimiento.", note: "" },
       { title: "Staking y recompensas", body: "En Staking y recompensas de nodo, haz staking de KVR y consulta / reclama las recompensas reclamables que acumula tu nodo. El estado del nodo muestra tu nivel de rendimiento y tu contribución.", note: "La participación en inferencia con shard local en móviles se está implementando gradualmente; hoy los principales nodos de cómputo son máquinas GPU/CPU que ejecutan el agente." },
     ],
     viewGithub: "Ver en GitHub",

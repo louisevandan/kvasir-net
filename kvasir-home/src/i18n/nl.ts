@@ -364,7 +364,7 @@ export const nl: Dict = {
     mobile: [
       { title: "Installeer de app", body: "Installeer Kvasir Wallet vanuit {0}. Gebruik de knop hierboven om de winkelpagina te openen. Een recent apparaat met een GPU/NPU wordt aanbevolen.", note: "" },
       { title: "Wallet aanmaken / herstellen", body: "Open de app en kies Nieuwe wallet aanmaken of Herstellen via herstelzin. Bewaar je zin van 12 woorden veilig en stel een wachtwoordzin in — met deze zin herstel je hetzelfde account op desktop en andere apparaten. Sleutels zijn non-custodial en worden alleen op het apparaat opgeslagen.", note: "" },
-      { title: "Configureer de node", body: "Kies in Mobiele node-instellingen een compute-backend (GPU · OpenCL/Vulkan · CPU) en Lokale shard (aanbevolen). De verwachte doorvoer (tok/s) en de impact op geheugen / temperatuur / prestaties worden weergegeven.", note: "" },
+      { title: "Configureer de node", body: "Kies in Mobiele node-instellingen een compute-backend en Lokale shard (aanbevolen). De GPU-keuze verschilt per platform: Android gebruikt de Adreno-GPU via OpenCL of Vulkan, iOS de Apple-GPU via MLX; beide kunnen terugvallen op de CPU. De verwachte doorvoer (tok/s) en de impact op geheugen / temperatuur / prestaties worden weergegeven.", note: "" },
       { title: "Staken & beloningen", body: "Stake in Staking & node-beloningen je KVR en bekijk / claim de opeisbare beloningen die je node opbouwt. Node-status toont je prestatie-tier en bijdrage.", note: "Deelname aan mobiele local-shard-inferentie wordt geleidelijk uitgerold; op dit moment zijn de belangrijkste compute-nodes GPU/CPU-machines waarop de agent draait." },
     ],
     viewGithub: "Bekijk op GitHub",

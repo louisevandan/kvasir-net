@@ -357,7 +357,7 @@ export const id: Dict = {
     mobile: [
       { title: "Instal aplikasinya", body: "Instal Kvasir Wallet dari {0}. Gunakan tombol di atas untuk membuka halaman store. Perangkat yang cukup baru dengan GPU/NPU direkomendasikan.", note: "" },
       { title: "Buat / pulihkan dompet", body: "Buka aplikasi dan pilih Create new wallet atau Restore from recovery phrase. Jaga keamanan frasa 12 kata Anda dan atur passphrase — akun yang sama dapat dipulihkan di desktop dan perangkat lain menggunakan frasa ini. Kunci bersifat non-kustodian, hanya disimpan di perangkat.", note: "" },
-      { title: "Konfigurasi node", body: "Di Mobile node settings, pilih backend komputasi (GPU · OpenCL/Vulkan · CPU) dan Local shard (recommended). Perkiraan throughput (tok/s) serta dampak memori / termal / performa akan ditampilkan.", note: "" },
+      { title: "Konfigurasi node", body: "Di Mobile node settings, pilih backend komputasi dan Local shard (recommended). Pilihan GPU berbeda per platform: Android memakai GPU Adreno lewat OpenCL atau Vulkan, iOS memakai GPU Apple lewat MLX; keduanya bisa turun ke CPU. Perkiraan throughput (tok/s) serta dampak memori / termal / performa akan ditampilkan.", note: "" },
       { title: "Stake & imbalan", body: "Di Staking & node rewards, stake KVR dan periksa / klaim imbalan yang terkumpul dari node Anda. Node status menampilkan tier performa dan kontribusi Anda.", note: "Partisipasi inferensi local-shard di perangkat mobile sedang diluncurkan bertahap; saat ini node komputasi utama adalah mesin GPU/CPU yang menjalankan agent." },
     ],
     viewGithub: "Lihat di GitHub",
