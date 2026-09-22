@@ -25,7 +25,7 @@ import type { Dict } from "../i18n/types";
    ========================================================================== */
 
 type Guide = Dict["guide"];
-type Platform = "desktop" | "mobile";
+type Platform = "desktop" | "mobile" | "server";
 
 const fill = (s: string, v: string) => s.replace("{0}", v);
 
@@ -166,6 +166,64 @@ KVR_SERVICE=https://gate.kvasir-ai.net \\
 KVR_OWNER=<your wallet address> \\
   node solana/node-client/connect.js`;
 
+/* ---- a command, the way an operator will paste it ---- */
+function Cmd({ children }: { children: string }) {
+  return (
+    <pre className="overflow-x-auto rounded-xl bg-surface-2/70 p-4 text-[0.8rem] leading-relaxed text-ink ring-1 ring-line">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+/*
+  The server panel has no screenshots, because the machine it describes has no
+  screen. Its media are the commands themselves, which is also what makes this
+  page testable: every one of these was run on a bare server with no Node
+  installed, and the words below say what actually happened rather than what
+  was intended.
+*/
+function ServerGuide({ g }: { g: Guide }) {
+  const media: (ReactNode | null)[] = [
+    <Cmd>{"curl -fsSL https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/node/install.sh | sh"}</Cmd>,
+    <Cmd>{"~/.local/share/kvasir-node/kvasir-node worker --install"}</Cmd>,
+    <Cmd>{"${EDITOR:-nano} ~/.config/systemd/user/kvasir-node.service\n#   ExecStart=... run --key ... --budget REPLACE_ME\n#                                        ^^^^^^^^^^ GiB, e.g. 8"}</Cmd>,
+    <Cmd>{"systemctl --user daemon-reload\nsystemctl --user enable --now kvasir-node\nsystemctl --user status kvasir-node"}</Cmd>,
+    <Cmd>{"curl -s https://gate.kvasir-ai.net/api/node/status/<your address>"}</Cmd>,
+  ];
+  return (
+    <div className="mt-10">
+      <Card className="p-6 sm:p-8">
+        <div className="text-sm font-semibold text-ink">{g.serverTitle}</div>
+        <div className="mt-1 text-sm text-ink-muted">{g.serverSub}</div>
+        <div className="mt-6 text-sm font-semibold text-ink">{g.serverReqTitle}</div>
+        <ul className="mt-3 space-y-2 text-[0.95rem] leading-relaxed text-ink-muted">
+          {g.serverReq.map((line, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-4 text-sm text-ink-faint">{g.serverNoRoot}</p>
+      </Card>
+
+      <div className="mt-12">
+        {g.server.map((step, i) => (
+          <Step key={i} n={i + 1} title={step.title} media={media[i]}>
+            <p>{step.body}</p>
+            {step.body2 && <p>{step.body2}</p>}
+            {i === 4 && (
+              <p className="rounded-xl bg-surface-2/60 p-4 text-sm text-ink ring-1 ring-line">
+                {g.serverKeyWarn}
+              </p>
+            )}
+          </Step>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ============================ platform panels ============================ */
 
 function DesktopGuide({ g, base }: { g: Guide; base: string }) {
@@ -295,6 +353,7 @@ export default function RunNodePage() {
   const tabs: { id: Platform; label: string; icon: string }[] = [
     { id: "desktop", label: g.tabDesktop, icon: "🖥" },
     { id: "mobile", label: g.tabMobile, icon: "📱" },
+    { id: "server", label: g.tabServer, icon: "🗄" },
   ];
 
   return (
@@ -358,6 +417,7 @@ export default function RunNodePage() {
 
         {platform === "desktop" && <DesktopGuide g={g} base={base} />}
         {platform === "mobile" && <MobileGuide g={g} base={base} />}
+        {platform === "server" && <ServerGuide g={g} />}
 
         {/* bottom CTA */}
         <div className="mt-16 flex flex-wrap gap-3">
