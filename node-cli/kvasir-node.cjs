@@ -19,13 +19,24 @@
  * file on purpose: a key or mnemonic on the command line ends up in shell
  * history and in `ps` for every user on the machine.
  */
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 const nacl = require('tweetnacl')
 const WebSocket = require('ws')
 
-const DESKTOP = path.join(__dirname, '..', 'wallet', 'desktop', 'electron')
+// Two layouts, one resolution. In a checkout the market/shard/worker logic is
+// required straight out of wallet/desktop/electron so a server and a desktop
+// provably run the same code. A published tarball has no desktop app in it, so
+// the packager copies those three files to lib/ beside this one. Checking for
+// the packaged layout first means an installed node never reaches back toward a
+// repo that is not there.
+const PACKAGED = path.join(__dirname, 'lib')
+const DESKTOP = fs.existsSync(path.join(PACKAGED, 'participation.cjs'))
+  ? PACKAGED
+  : path.join(__dirname, '..', 'wallet', 'desktop', 'electron')
 const { Participation } = require(path.join(DESKTOP, 'participation.cjs'))
 const { ExpertHost, ExpertPool } = require(path.join(DESKTOP, 'expertHost.cjs'))
 const executorsMod = require(path.join(DESKTOP, 'executors.cjs'))
@@ -129,7 +140,17 @@ function createNode(opts) {
   const log = opts.log || ((line) => console.log(`${new Date().toISOString()} ${line}`))
   const { entry } = executorsMod.expertExecutor()
   const model = opts.memoryModel || (entry && entry.memoryModel) || null
-  const workerBinary = () => opts.worker || process.env.KVASIR_EXPERT_WORKER || executorsMod.expertExecutor().path
+  const workerBinary = () => {
+    // In order: what the operator named, the environment, what `worker
+    // --install` put on disk, and finally a build executors.cjs knows how to
+    // find in a checkout. The installed copy comes before the checkout so a
+    // server that was set up by the installer never depends on a repo.
+    const installed = path.join(WORKER_DIR, 'linkcpp-expert-worker')
+    return opts.worker
+      || process.env.KVASIR_EXPERT_WORKER
+      || (fs.existsSync(installed) ? installed : null)
+      || executorsMod.expertExecutor().path
+  }
   const budget = opts.budgetBytes
   let participation = null
   const pool = new ExpertPool({
@@ -167,6 +188,11 @@ function createNode(opts) {
   return { participation, pool, workerId, address: key.address, gateway, workerBinary, model, budget, log }
 }
 
+// Flags that stand alone. Everything else takes a value, and a missing one is
+// an error rather than a silent `true` — `--budget --name x` should not quietly
+// lend an undefined amount of memory.
+const BARE_FLAGS = new Set(['install', 'help'])
+
 function parseArgs(argv) {
   const [cmd, ...rest] = argv
   const opts = {}
@@ -174,6 +200,7 @@ function parseArgs(argv) {
     const a = rest[i]
     if (!a.startsWith('--')) throw new Error(`unexpected argument ${a}`)
     const k = a.slice(2)
+    if (BARE_FLAGS.has(k)) { opts[k] = true; continue }
     const v = rest[i + 1]
     if (v == null || v.startsWith('--')) throw new Error(`--${k} needs a value`)
     opts[k] = v
@@ -184,6 +211,8 @@ function parseArgs(argv) {
 
 const USAGE = `usage:
   kvasir-node keygen --out <file>
+  kvasir-node address --key <file>
+  kvasir-node worker --install [--dir <dir>]
   kvasir-node run --key <file> [--budget <GiB>] [--worker <path>] [--name <id>]
                   [--gateway <url>] [--data <dir>] [--poll <seconds>]
 
@@ -193,11 +222,85 @@ const USAGE = `usage:
   --name     this machine in the node id (default: hostname).
 `
 
+/** Where a downloaded worker lives, and where `run` looks for one. */
+const WORKER_DIR = path.join(os.homedir(), '.local', 'share', 'kvasir-node', 'worker')
+
+const DOWNLOAD_BASE = (process.env.KVASIR_DOWNLOAD_BASE
+  || 'https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/node').replace(/\/+$/, '')
+
+function fetchJson(url) {
+  return fetch(url, { redirect: 'follow' }).then((r) => {
+    if (!r.ok) throw new Error(`${url} answered ${r.status}`)
+    return r.json()
+  })
+}
+
+/**
+ * Fetch the expert worker for this machine.
+ *
+ * It is a separate download from the node itself for the same reason the
+ * desktop app downloads its CUDA pack rather than shipping it: the compute
+ * binary is specific to the GPU vendor and the instruction set, and carrying
+ * every combination would make a 1 MB install a several-hundred-MB one for
+ * machines that will use one of them.
+ *
+ * The hash is checked. This writes an executable that will be handed model
+ * weights and run on the operator's GPU.
+ */
+async function installWorker(opts) {
+  const arch = { x64: 'x64', arm64: 'arm64' }[process.arch]
+  if (process.platform !== 'linux' || !arch) {
+    throw new Error(`no worker build for ${process.platform}-${process.arch}`)
+  }
+  const index = await fetchJson(`${DOWNLOAD_BASE}/latest.json`)
+  const key = `worker-linux-${arch}`
+  const name = index[key]
+  const want = index[`${key}-sha256`]
+  if (!name) {
+    throw new Error(
+      `no expert worker has been published for linux-${arch} yet.\n`
+      + 'Until one is, build it from apps/linkcpp-expert-worker in the repository\n'
+      + 'and point the node at it with --worker <path>. The node runs fine that way;\n'
+      + 'this command only saves you the build.')
+  }
+  if (!want) throw new Error(`the index has no checksum for ${name}; refusing to install it`)
+
+  const dir = opts.dir || WORKER_DIR
+  fs.mkdirSync(dir, { recursive: true })
+  const url = `${DOWNLOAD_BASE}/${name}`
+  console.log(`downloading ${url}`)
+  const reply = await fetch(url, { redirect: 'follow' })
+  if (!reply.ok) throw new Error(`${url} answered ${reply.status}`)
+  const bytes = Buffer.from(await reply.arrayBuffer())
+  const got = crypto.createHash('sha256').update(bytes).digest('hex')
+  if (got !== want) throw new Error(`checksum mismatch: expected ${want}, got ${got}`)
+
+  const archive = path.join(dir, name.split('/').pop())
+  fs.writeFileSync(archive, bytes)
+  execFileSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'inherit' })
+  fs.rmSync(archive, { force: true })
+  const bin = path.join(dir, 'linkcpp-expert-worker')
+  if (!fs.existsSync(bin)) throw new Error(`${name} unpacked without linkcpp-expert-worker in it`)
+  fs.chmodSync(bin, 0o755)
+  console.log(`\ninstalled ${bin}`)
+  console.log('`run` finds it here on its own; --worker is only for a build of your own.')
+}
+
 async function main(argv) {
   const { cmd, opts } = parseArgs(argv)
   if (cmd === 'keygen') {
     if (!opts.out) throw new Error('keygen needs --out <file>')
     console.log(`wrote ${opts.out}\naddress ${keygen(opts.out)}`)
+    return
+  }
+  if (cmd === 'address') {
+    if (!opts.key) throw new Error('address needs --key <file>')
+    console.log(loadKey(opts.key).address)
+    return
+  }
+  if (cmd === 'worker') {
+    if (!('install' in opts)) { process.stdout.write(USAGE); process.exitCode = 2; return }
+    await installWorker(opts)
     return
   }
   if (cmd !== 'run') { process.stdout.write(USAGE); process.exitCode = cmd ? 2 : 0; return }
