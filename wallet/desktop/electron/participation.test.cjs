@@ -401,7 +401,8 @@ function client(base, extra = {}) {
   function fakePool({ capacitySlots = 3, window = 64 } = {}) {
     const slots = []
     return {
-      slots, provisioned: [], trimmed: 0,
+      slots, provisioned: [], trimmed: 0, wiredIds: [],
+      wired(id) { this.wiredIds.push(id) },
       canHost: () => true,
       busySlots() { return slots.filter((s) => s.phase === 'serving') },
       heldExperts() { return slots.reduce((a, s) => a + (s.end - s.begin), 0) },
@@ -452,6 +453,8 @@ function client(base, extra = {}) {
       assert.deepStrictEqual(last.map((b) => b.url), ['relay:expert-w', 'relay:expert-w-2'])
       assert.ok(last.every((b) => b.owner === WALLET), 'every slot pays the same wallet')
       assert.ok(last.every((b) => b.model === 'step'))
+      // Each slot is told its relay is wired only after its own report was accepted.
+      assert.ok(pool.wiredIds.includes('w') && pool.wiredIds.includes('w-2'))
     } finally { await br.close() }
   })
 

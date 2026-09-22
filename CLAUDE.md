@@ -84,6 +84,9 @@ These are not style preferences. Each one was found the expensive way.
   `gatewayAuth.js` is SIWS + TOTP for the admin surface.
 - `wallet/` — `desktop/` (Electron + Vite + React + TS), `ios/` (Swift), `android/`
   (Kotlin/Gradle), `shared-spec/` (constants shared by all three, and by the gateway).
+- `node-cli/` — `kvasir-node`, the headless expert node for Linux servers. It requires the
+  desktop's `wallet/desktop/electron/{participation,expertHost,executors}.cjs` rather than
+  copying them, so keep those three free of Electron.
 - `kvasir-home/` — the public site. `src/wiki/entries.ts` and `src/tech/articles.ts` are the
   **English sources of truth**; `tr-<lang>.ts` files are merged over them per locale and must
   keep the same block sequence, because image positions are language-neutral.

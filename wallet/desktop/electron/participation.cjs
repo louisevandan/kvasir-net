@@ -333,10 +333,12 @@ class Participation {
         }
         // Report every tick, assignment or not: the census keys on heartbeat
         // freshness, so staying silent drops this machine out of the market.
-        await this.reportCoverage(this.heldSegments(), {
+        const url = host ? host.coverageUrl() : ''
+        const resp = await this.reportCoverage(this.heldSegments(), {
           model: this.model || (host && host.held && host.held.model),
-          url: host ? host.coverageUrl() : '',
+          url,
         })
+        if (url && resp && resp.wired && typeof host.wired === 'function') host.wired()
         this.lastError = null
         failed = false
       } catch (e) {
@@ -375,11 +377,13 @@ class Participation {
       this.assignment = null
     }
     for (const r of pool.reports()) {
-      await this.reportCoverage(r.segments, {
+      const resp = await this.reportCoverage(r.segments, {
         model: this.model || r.model || (this.assignment && this.assignment.model),
         workerId: r.workerId,
         url: r.url,
       })
+      // The relay session exists only once the bridge has taken this report.
+      if (r.url && resp && resp.wired && typeof pool.wired === 'function') pool.wired(r.workerId)
     }
   }
 

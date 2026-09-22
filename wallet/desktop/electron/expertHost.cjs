@@ -12,8 +12,11 @@
  *   2. start linkcpp-expert-worker --serve on it, on a loopback port;
  *   3. report the segment only once the worker is actually serving, with a
  *      "relay:<session>" url so the bridge wires a relay target for it;
- *   4. dial /api/expert-relay and pipe the WebSocket to the worker's port.
- *      The bridge splices that socket to the backbone's dispatch listener.
+ *   4. once the bridge answers that report with wired: true, dial
+ *      /api/expert-relay and pipe the WebSocket to the worker's port. The
+ *      bridge splices that socket to the backbone's dispatch listener.
+ *      Dialling before the report lands only earns a 4404 (unknown session)
+ *      and a backoff, which is how a fresh slot used to start.
  *
  * A segment is reported only in step 3 and only while the worker process
  * lives. Reporting an assignment that is still downloading would count a
@@ -181,7 +184,8 @@ class ExpertHost {
       if (gen !== this.generation) return
       this.phase = 'serving'
       this.log(`expert host: serving ${want.model} layer ${want.layer} experts ${want.begin}-${want.end} on 127.0.0.1:${this.port}`)
-      this.dialRelay(gen)
+      // The relay is dialled from wired(), once the coverage report naming
+      // this session has been accepted.
     } catch (e) {
       if (gen !== this.generation) return
       this.lastError = e.message
@@ -305,6 +309,16 @@ class ExpertHost {
 
   // ---- relay ---------------------------------------------------------------
 
+  /**
+   * The bridge accepted a coverage report for this slot with wired: true, so
+   * its relay session exists. Start dialling if not already. Called every
+   * tick; a no-op while a dial or its retry timer is in flight.
+   */
+  wired() {
+    if (this.phase !== 'serving' || this.relay.ws || this.relay.timer || this.relay.dialing) return
+    this.dialRelay(this.generation)
+  }
+
   relayUrl(token) {
     const ws = this.base.replace(/^http/, 'ws')
     const q = new URLSearchParams({ session: this.session, token })
@@ -312,9 +326,17 @@ class ExpertHost {
   }
 
   async dialRelay(gen) {
+    this.relay.timer = null   // this is the retry firing (or the first dial)
     if (gen !== this.generation || this.phase !== 'serving') return
+    // Covers the await below, when neither ws nor timer is set yet.
+    this.relay.dialing = true
     let token
-    try { token = await this.tokenFn() } catch (e) { return this.scheduleRelay(gen, `no token: ${e.message}`) }
+    try { token = await this.tokenFn() } catch (e) {
+      this.relay.dialing = false
+      return this.scheduleRelay(gen, `no token: ${e.message}`)
+    }
+    this.relay.dialing = false
+    if (gen !== this.generation || this.phase !== 'serving') return
     const ws = new this.WebSocket(this.relayUrl(token), { headers: { 'User-Agent': 'kvasir-wallet-desktop' } })
     this.relay.ws = ws
     let tcp = null
@@ -463,10 +485,48 @@ class ExpertPool {
   }
 
   /** Put an assignment in the first free slot. */
-  provision(assignment) {
+  async provision(assignment) {
     let i = 0
     while (this.slot(i).busy()) i++
-    return this.slot(i).provision(assignment, { workerId: this.slotId(i) })
+    try {
+      return await this.slot(i).provision(assignment, { workerId: this.slotId(i) })
+    } finally {
+      this.pruneShards()
+    }
+  }
+
+  /** The bridge wired the relay session for this worker id: let that slot dial. */
+  wired(workerId) {
+    const i = this.slots.findIndex((_, k) => this.slotId(k) === workerId)
+    if (i >= 0) this.slots[i].wired()
+  }
+
+  /**
+   * Keep the shard cache from growing without bound. Every slot's shard is
+   * ~600 MB, and slots come and go as the budget moves, so files pile up. Kept:
+   * every shard a slot holds, plus the most recent `keepSpare` others (so a
+   * restart that is handed the same range again does not download it again).
+   */
+  pruneShards(keepSpare = 2) {
+    const dir = this.slots[0] && this.slots[0].shardDir
+    if (!dir || !fs.existsSync(dir)) return
+    const held = new Set(this.slots.map((s) => s.held && s.held.path).filter(Boolean).map((p) => path.resolve(p)))
+    const files = []
+    for (const model of fs.readdirSync(dir)) {
+      const sub = path.join(dir, model)
+      let names = []
+      try { names = fs.readdirSync(sub) } catch { continue }
+      for (const n of names) {
+        if (!n.endsWith('.gguf')) continue
+        const f = path.resolve(sub, n)
+        if (held.has(f)) continue
+        try { files.push({ f, t: fs.statSync(f).mtimeMs }) } catch { /* raced away */ }
+      }
+    }
+    files.sort((a, b) => b.t - a.t)
+    for (const { f } of files.slice(keepSpare)) {
+      try { fs.rmSync(f, { force: true }) } catch { /* in use elsewhere; next time */ }
+    }
   }
 
   /**
