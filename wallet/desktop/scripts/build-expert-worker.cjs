@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 /**
- * Build the Windows CUDA expert worker and the pack the app downloads.
+ * Build the expert worker for the platform this runs on.
  *
- * The worker is not in the installer (see electron/cudaPack.cjs). This builds
- * it from apps/linkcpp-expert-worker and zips it as the versioned pack whose
- * SHA-256 the app pins. Windows only: CUDA for Windows needs MSVC and nvcc on
- * the host — there is no cross-compile.
+ * The same source, apps/linkcpp-expert-worker, but delivered two different
+ * ways, because the two backends are not remotely the same size.
+ *
+ *   Windows (CUDA)   190 MB, so it is NOT in the installer: this zips it as
+ *                    the versioned pack whose SHA-256 the app pins and fetches
+ *                    on demand (electron/cudaPack.cjs).
+ *   macOS (Metal)    2.2 MB, because Metal needs no redistributable runtime.
+ *                    Small enough to bundle, so it goes into resources/ and
+ *                    ships inside the .app — nothing to download, nothing to
+ *                    pin, nothing to host.
+ *
+ * Neither cross-compiles: CUDA for Windows needs MSVC and nvcc on the host,
+ * and Metal needs Xcode's toolchain. Each platform builds its own.
  *
  * ## No NVIDIA DLLs in the pack
  *
@@ -25,8 +34,8 @@
  * KVASIR_CUDA_ROOT.
  *
  * Usage:
- *   node scripts/build-expert-worker.cjs            build + pack
- *   node scripts/build-expert-worker.cjs --no-pack  build, copy into resources/ for dev
+ *   node scripts/build-expert-worker.cjs            build (Windows: + pack)
+ *   node scripts/build-expert-worker.cjs --no-pack  build only; skip the Windows pack
  */
 const { execFileSync } = require('node:child_process')
 const crypto = require('node:crypto')
@@ -36,7 +45,9 @@ const path = require('node:path')
 const HERE = __dirname
 const REPO = path.resolve(HERE, '..', '..', '..')
 const BUILD = path.join(REPO, 'build', 'win-cuda-pack')
+const METAL_BUILD = path.join(REPO, 'build-mac-metal')
 const EXE = 'linkcpp-expert-worker.exe'
+const MACH_O = 'linkcpp-expert-worker'
 const ARCHS = '61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real'
 
 function vcvars() {
@@ -83,6 +94,67 @@ function build() {
   return { exe, cuda }
 }
 
+/**
+ * The macOS worker: one static arm64 executable against the system frameworks.
+ *
+ * Three flags here are load-bearing and each was chosen against an alternative
+ * that also builds:
+ *
+ *   BUILD_SHARED_LIBS=OFF   The default leaves five libggml*.dylib beside the
+ *     binary, found through @rpath. That is five more files to sign, notarise
+ *     and keep in step, and a worker that dies at spawn if any is missing. The
+ *     static link is 2.2 MB and self-contained, which is also the shape the
+ *     Windows build already has.
+ *
+ *   GGML_METAL_EMBED_LIBRARY=ON   Otherwise ggml loads default.metallib from
+ *     disk at runtime, relative to the executable — which is not where it ends
+ *     up inside an .app bundle. Embedding it removes the question.
+ *
+ *   GGML_NATIVE=OFF   On by default it tunes for the build machine's CPU. An
+ *     M4 build would then fault on an M1. The Metal path does the arithmetic
+ *     anyway, so there is nothing to win and a whole class of Mac to lose.
+ *
+ * Verified after those changes against a float64 reference over real gateway
+ * shards (layer 4, experts 0-2): cosine 1.000000 at one token, 0.999962 at 256
+ * — unchanged from the shared-library build, as it should be.
+ */
+function buildMetal() {
+  if (process.arch !== 'arm64') {
+    throw new Error('the Metal worker is Apple Silicon only; this is ' + process.arch)
+  }
+  const configure = [
+    '-S', REPO, '-B', METAL_BUILD, '-DCMAKE_BUILD_TYPE=Release',
+    '-DLINKCPP_EXPERT_WORKER_ONLY=ON', '-DBUILD_SHARED_LIBS=OFF', '-DGGML_STATIC=ON',
+    '-DGGML_METAL=ON', '-DGGML_METAL_EMBED_LIBRARY=ON',
+    '-DGGML_NATIVE=OFF', '-DGGML_OPENMP=OFF',
+    '-DCMAKE_OSX_ARCHITECTURES=arm64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0',
+  ]
+  execFileSync('cmake', configure, { stdio: 'inherit' })
+  execFileSync('cmake', ['--build', METAL_BUILD, '--target', 'linkcpp-expert-worker',
+    '-j', String(require('node:os').cpus().length)], { stdio: 'inherit' })
+  const bin = path.join(METAL_BUILD, 'apps', 'linkcpp-expert-worker', MACH_O)
+  if (!fs.existsSync(bin)) throw new Error(`build reported success but ${bin} is missing`)
+
+  // A dynamic link here would mean the three flags above did not take, and the
+  // failure would otherwise surface as a worker that will not spawn on someone
+  // else's Mac. Cheaper to catch it now than in a shipped .app.
+  const linked = execFileSync('otool', ['-L', bin], { encoding: 'utf8' })
+  const foreign = linked.split('\n').slice(1)
+    .map((l) => l.trim().split(' ')[0]).filter(Boolean)
+    .filter((l) => !l.startsWith('/usr/lib/') && !l.startsWith('/System/'))
+  if (foreign.length) throw new Error(`not self-contained, links ${foreign.join(', ')}`)
+
+  // resources/expert-worker/<platform> is where executors.cjs looks in a dev
+  // checkout, and package.json ships this directory as the .app's
+  // Resources/expert-worker.
+  const dest = path.join(HERE, '..', 'resources', 'expert-worker', 'darwin')
+  fs.mkdirSync(dest, { recursive: true })
+  fs.copyFileSync(bin, path.join(dest, MACH_O))
+  fs.chmodSync(path.join(dest, MACH_O), 0o755)
+  console.log(`\nbundled: ${path.join(dest, MACH_O)}  ${fs.statSync(bin).size} bytes`)
+  console.log('It ships inside the app; there is no pack to publish and no hash to pin.')
+}
+
 function pack({ exe, cuda }) {
   const rev = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim()
   const now = new Date()
@@ -121,7 +193,10 @@ function pack({ exe, cuda }) {
 }
 
 function main() {
-  if (process.platform !== 'win32') throw new Error('the CUDA worker for Windows can only be built on Windows')
+  if (process.platform === 'darwin') return buildMetal()
+  if (process.platform !== 'win32') {
+    throw new Error(`no expert-worker build is defined for ${process.platform}`)
+  }
   const built = build()
   const dev = path.join(HERE, '..', 'resources', 'expert-worker', 'win32')
   fs.mkdirSync(dev, { recursive: true })

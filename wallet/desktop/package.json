@@ -92,8 +92,13 @@
         {
           "from": "resources/p4/darwin",
           "to": "p4"
+        },
+        {
+          "from": "resources/expert-worker/darwin",
+          "to": "expert-worker"
         }
-      ]
+      ],
+      "singleArchFiles": "Contents/Resources/expert-worker/linkcpp-expert-worker"
     },
     "dmg": {
       "title": "Kvasir Wallet ${version}"
