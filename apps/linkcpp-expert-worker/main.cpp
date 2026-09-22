@@ -151,21 +151,32 @@ struct expert_shard {
         if (!f) return false;
         const size_t data_off = gguf_get_data_offset(gguf);
         const int n = gguf_get_n_tensors(gguf);
-        std::vector<uint8_t> tmp;
+        // One fixed staging buffer, not one tensor's worth. Reading a whole
+        // tensor first cost host memory equal to the shard: a 64-expert slice
+        // asked for ~600 MB of RAM on top of the same bytes in the backend,
+        // and the allocator kept it. On a discrete GPU that is wasted RAM; on
+        // unified memory (Apple, GB10) it is charged twice against the same
+        // pool, which is what made a Mac measure 15.3 MiB per expert against
+        // 9.06 MiB of weights.
+        constexpr size_t STAGE_BYTES = 8u << 20;
+        std::vector<uint8_t> tmp(STAGE_BYTES);
         for (int i = 0; i < n; ++i) {
             const char * tname = gguf_get_tensor_name(gguf, i);
             ggml_tensor * t = ggml_get_tensor(meta, tname);
             const size_t sz  = ggml_nbytes(t);
             const size_t off = data_off + gguf_get_tensor_offset(gguf, i);
-            tmp.resize(sz);
             // A multi-layer slice passes 2 GiB; long is 32-bit on Windows.
 #ifdef _WIN32
             if (_fseeki64(f, (__int64) off, SEEK_SET) != 0) { std::fclose(f); return false; }
 #else
             if (fseeko(f, (off_t) off, SEEK_SET) != 0) { std::fclose(f); return false; }
 #endif
-            if (std::fread(tmp.data(), 1, sz, f) != sz) { std::fclose(f); return false; }
-            ggml_backend_tensor_set(t, tmp.data(), 0, sz);
+            for (size_t done = 0; done < sz; ) {
+                const size_t want = std::min(STAGE_BYTES, sz - done);
+                if (std::fread(tmp.data(), 1, want, f) != want) { std::fclose(f); return false; }
+                ggml_backend_tensor_set(t, tmp.data(), done, want);
+                done += want;
+            }
         }
         std::fclose(f);
         return true;
