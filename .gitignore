@@ -41,3 +41,5 @@ wallet/ios/build/
 
 # Local Metal build of the expert worker (see scripts/build-expert-worker.cjs).
 build-mac-metal/
+
+node-cli/node_modules/

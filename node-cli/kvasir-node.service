@@ -1,0 +1,26 @@
+# Example systemd unit. Copy to /etc/systemd/system/kvasir-node.service,
+# adjust User, paths and --budget, then:
+#   systemctl daemon-reload && systemctl enable --now kvasir-node
+#
+# Restart=on-failure matters: the bridge drops a node from its census after
+# 120 s without a heartbeat, so a crashed node should be back well inside that.
+[Unit]
+Description=Kvasir expert node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kvasir
+ExecStart=/usr/bin/node /opt/kvasir-net/node-cli/kvasir-node.cjs run \
+  --key /home/kvasir/.config/kvasir/node-key.json \
+  --worker /opt/kvasir/linkcpp-expert-worker \
+  --budget 16
+Restart=on-failure
+RestartSec=10
+# SIGTERM releases every slot's worker and leaves the market cleanly.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
