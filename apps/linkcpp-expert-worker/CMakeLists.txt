@@ -11,9 +11,10 @@ add_executable(linkcpp-expert-worker main.cpp)
 # worker must do: an MMQ build has to keep every graph under the batch-width
 # cliff, and a cuBLAS build must NOT, because chunking would throw away exactly
 # the speed the larger binary was chosen for. See MMVQ_MAX_BATCH_SIZE.
+# (Applied to linkcpp-expert further down, once that target exists: CMake
+# refuses definitions for a target not yet declared.)
 if (GGML_CUDA_FORCE_CUBLAS)
     target_compile_definitions(linkcpp-expert-worker PRIVATE LINKCPP_CUDA_CUBLAS)
-    target_compile_definitions(linkcpp-expert PRIVATE LINKCPP_CUDA_CUBLAS)
 endif()
 
 target_link_libraries(linkcpp-expert-worker PRIVATE ggml)
@@ -34,6 +35,9 @@ set_target_properties(linkcpp-expert-worker PROPERTIES CXX_STANDARD 17 CXX_STAND
 # from a worker thread instead of spawning the binary — mirrors linkcpp-stage.
 add_library(linkcpp-expert STATIC main.cpp)
 target_compile_definitions(linkcpp-expert PRIVATE LINKCPP_EXPERT_NO_MAIN)
+if (GGML_CUDA_FORCE_CUBLAS)
+    target_compile_definitions(linkcpp-expert PRIVATE LINKCPP_CUDA_CUBLAS)
+endif()
 target_link_libraries(linkcpp-expert PRIVATE ggml)
 if (WIN32)
     target_link_libraries(linkcpp-expert INTERFACE ws2_32)

@@ -101,15 +101,17 @@ const KNOWN = [
     // What hosting N experts costs on the GPU, as N = (budget - F - S - H) / R.
     // Measured on an RTX 4060 (CUDA 12.9, sm_89 build, 2026-09-22) by loading
     // 2, 8 and 64 experts and then serving batches of 1, 64 and 512 tokens x 8
-    // experts: +110 / +167 / +675 MiB after load, +28 MiB more at 512 tokens.
-    // So R ~ 9.11 MiB (the served bytes, 9.06 MiB, plus allocator rounding),
-    // F ~ 92 MiB (CUDA context and ggml buffers). Values below round those up.
+    // experts: +110 / +167 / +675 MiB after load. R ~ 9.11 MiB (the served
+    // bytes, 9.06 MiB, plus allocator rounding), F ~ 92 MiB (CUDA context and
+    // ggml buffers). Scratch depends on the kernels: the MMQ build took +28 MiB
+    // at 512 tokens, the cuBLAS + FP32 build that ships takes +107 MiB (its
+    // workspace and FP32 activations). Values below round those up.
     // This is ggml's model: it computes on the quantized bytes as served. An
     // executor that expands weights (e.g. to fp16) must report its own R.
     memoryModel: {
       residentBytesPerExpert: 9_568_256,   // 9.125 MiB
       fixedBytes: 128 * MIB,
-      scratchBytes: 64 * MIB,              // up to 512 tokens x 8 experts per request
+      scratchBytes: 160 * MIB,             // cuBLAS + FP32, up to 512 tokens x 8 experts per request
       headroomBytes: 128 * MIB,
     },
   },

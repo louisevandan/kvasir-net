@@ -138,6 +138,31 @@ async function extractZip(file, dest) {
   } finally { fs.closeSync(fd) }
 }
 
+/**
+ * A pack is one or more parts, each its own zip with its own pinned hash:
+ *
+ *   runtime  the NVIDIA libraries (cuBLAS). Hundreds of MB, versioned by the
+ *            CUDA release, so fetched once and kept across worker updates.
+ *   worker   our binary. Changes with every worker fix.
+ *
+ * Splitting them means an update to the worker does not make a volunteer
+ * download the NVIDIA libraries again: the size that loses installs on home
+ * connections is paid once. Parts install into <dir>/<id>/<version>/; the
+ * runtime's files are then hard-linked (copied if linking is refused) next to
+ * the worker, where Windows looks for a DLL first, so nothing depends on PATH.
+ *
+ * A single-zip pack (url/sha256/bytes at the top level, as first published)
+ * is read as one worker part at <dir>/<version>, so an installed older pack
+ * keeps working.
+ */
+function partsOf(pack) {
+  if (!pack) return []
+  if (Array.isArray(pack.parts)) return pack.parts
+  return pack.url || pack.sha256
+    ? [{ id: 'worker', version: pack.version, url: pack.url, sha256: pack.sha256, bytes: pack.bytes, files: [pack.worker] }]
+    : []
+}
+
 class CudaPack {
   /**
    * @param {object} o
@@ -150,28 +175,48 @@ class CudaPack {
   constructor({ dir, pack = PACKS[process.platform] || null, fetch = null, log = () => {}, check = eligibility }) {
     this.dir = dir
     this.pack = pack
+    this.parts = partsOf(pack)
+    this.split = Boolean(pack && Array.isArray(pack.parts))
     this.fetch = fetch || globalThis.fetch
     this.log = log
     this.check = check
-    this.state = { phase: 'idle', received: 0, total: pack ? pack.bytes : 0, error: null }
+    this.state = { phase: 'idle', received: 0, total: this.missingBytes(), error: null }
     this.abort = null
   }
 
-  installDir() { return this.pack ? path.join(this.dir, this.pack.version) : null }
+  partDir(part) {
+    return this.split ? path.join(this.dir, part.id, part.version) : path.join(this.dir, part.version)
+  }
 
-  /** The worker binary, if this version is fully installed. */
+  partInstalled(part) {
+    const d = this.partDir(part)
+    return (part.files || []).every((f) => fs.existsSync(path.join(d, f)))
+  }
+
+  workerPart() { return this.parts.find((p) => p.id === 'worker') || null }
+
+  missingBytes() { return this.parts.filter((p) => !this.partInstalled(p)).reduce((s, p) => s + (p.bytes || 0), 0) }
+
+  /** The worker binary, if every part is installed and the runtime sits beside it. */
   workerPath() {
-    const d = this.installDir()
-    if (!d) return null
-    const p = path.join(d, this.pack.worker)
-    return fs.existsSync(p) ? p : null
+    const w = this.workerPart()
+    if (!w || !this.parts.every((p) => this.partInstalled(p))) return null
+    const dir = this.partDir(w)
+    for (const p of this.parts) {
+      if (p === w) continue
+      for (const f of p.files || []) if (!fs.existsSync(path.join(dir, f))) return null
+    }
+    const exe = path.join(dir, this.pack.worker)
+    return fs.existsSync(exe) ? exe : null
   }
 
   status() {
     return {
-      available: Boolean(this.pack && this.pack.url),
+      available: this.parts.length > 0 && this.parts.every((p) => p.url),
       version: this.pack ? this.pack.version : null,
-      bytes: this.pack ? this.pack.bytes : 0,
+      // What installing would download now. A worker update after the
+      // runtime is in place is only the worker part.
+      bytes: this.missingBytes(),
       installed: Boolean(this.workerPath()),
       ...this.state,
     }
@@ -181,62 +226,127 @@ class CudaPack {
 
   async install() {
     const pack = this.pack
-    if (!pack) throw new Error(`no CUDA pack for ${process.platform}`)
-    if (!pack.url) throw new Error('the CUDA pack has not been published yet')
+    if (!pack || !this.parts.length) throw new Error(`no CUDA pack for ${process.platform}`)
+    if (!this.parts.every((p) => p.url)) throw new Error('the CUDA pack has not been published yet')
     if (this.workerPath()) return this.workerPath()
-    if (this.state.phase === 'downloading' || this.state.phase === 'installing') throw new Error('already installing')
+    if (['downloading', 'verifying', 'installing'].includes(this.state.phase)) throw new Error('already installing')
     const elig = await this.check(pack)
     if (!elig.ok) { this.state = { ...this.state, phase: 'failed', error: elig.reason }; throw new Error(elig.reason) }
     fs.mkdirSync(this.dir, { recursive: true })
-    const zip = path.join(this.dir, `${pack.version}.zip.part`)
-    const tmp = path.join(this.dir, `${pack.version}.tmp`)
+    const todo = this.parts.filter((p) => !this.partInstalled(p))
+    this.state = { phase: 'downloading', received: 0, total: todo.reduce((s, p) => s + p.bytes, 0), error: null }
+    let base = 0
     try {
-      this.state = { phase: 'downloading', received: 0, total: pack.bytes, error: null }
-      await this.download(pack, zip)
-      this.state.phase = 'verifying'
-      const digest = await sha256File(zip)
-      if (digest !== pack.sha256) {
-        fs.rmSync(zip, { force: true })   // a bad archive must not be resumed from
-        throw new Error(`the downloaded pack does not match its expected hash (${digest.slice(0, 12)}…)`)
+      for (const part of todo) {
+        await this.installPart(part, base)
+        base += part.bytes
       }
-      this.state.phase = 'installing'
-      fs.rmSync(tmp, { recursive: true, force: true })
-      await extractZip(zip, tmp)
-      if (!fs.existsSync(path.join(tmp, pack.worker))) throw new Error('the pack has no worker binary')
-      fs.rmSync(this.installDir(), { recursive: true, force: true })
-      fs.renameSync(tmp, this.installDir())
-      fs.rmSync(zip, { force: true })
-      this.state = { phase: 'installed', received: pack.bytes, total: pack.bytes, error: null }
+      this.linkRuntime()
+      if (!this.workerPath()) throw new Error('the pack installed but its worker is not complete')
+      this.state = { phase: 'installed', received: this.state.total, total: this.state.total, error: null }
       this.log(`cuda pack: installed ${pack.version}`)
+      this.prune()
       return this.workerPath()
     } catch (e) {
-      fs.rmSync(tmp, { recursive: true, force: true })
       this.state = { ...this.state, phase: 'failed', error: e.name === 'AbortError' ? 'cancelled' : e.message }
       this.log(`cuda pack: ${this.state.error}`)
       throw e
     } finally { this.abort = null }
   }
 
+  async installPart(part, base) {
+    const zip = path.join(this.dir, `${part.id}-${part.version}.zip.part`)
+    const tmp = `${this.partDir(part)}.tmp`
+    try {
+      this.state.phase = 'downloading'
+      await this.download(part, zip, base)
+      this.state.phase = 'verifying'
+      const digest = await sha256File(zip)
+      if (digest !== part.sha256) {
+        fs.rmSync(zip, { force: true })   // a bad archive must not be resumed from
+        throw new Error(`the downloaded ${part.id} does not match its expected hash (${digest.slice(0, 12)}...)`)
+      }
+      this.state.phase = 'installing'
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await extractZip(zip, tmp)
+      for (const f of part.files || []) {
+        if (!fs.existsSync(path.join(tmp, f))) throw new Error(`the ${part.id} archive has no ${f}`)
+      }
+      fs.mkdirSync(path.dirname(this.partDir(part)), { recursive: true })
+      fs.rmSync(this.partDir(part), { recursive: true, force: true })
+      fs.renameSync(tmp, this.partDir(part))
+      fs.rmSync(zip, { force: true })
+    } catch (e) {
+      fs.rmSync(tmp, { recursive: true, force: true })
+      throw e
+    }
+  }
+
+  /** Put the runtime's files beside the worker: a hard link, or a copy if refused. */
+  linkRuntime() {
+    const w = this.workerPart()
+    const dest = this.partDir(w)
+    for (const p of this.parts) {
+      if (p === w) continue
+      for (const f of p.files || []) {
+        const to = path.join(dest, f)
+        if (fs.existsSync(to)) continue
+        const from = path.join(this.partDir(p), f)
+        try { fs.linkSync(from, to) } catch { fs.copyFileSync(from, to) }
+      }
+    }
+  }
+
+  /**
+   * Remove versions this pack no longer names, including a first-generation
+   * single-zip install at <dir>/<version>. Best effort: a worker still
+   * running from an old version holds its files open on Windows, and those go
+   * on a later install instead.
+   */
+  prune() {
+    if (!this.split) return
+    const keep = new Set(this.parts.map((p) => path.resolve(this.partDir(p))))
+    const ids = new Set(this.parts.map((p) => p.id))
+    const candidates = []
+    for (const id of ids) {
+      let names = []
+      try { names = fs.readdirSync(path.join(this.dir, id)) } catch { continue }
+      for (const n of names) candidates.push(path.resolve(this.dir, id, n))
+    }
+    // Legacy top-level version directories (anything but a part id or a download).
+    try {
+      for (const n of fs.readdirSync(this.dir)) {
+        if (!ids.has(n) && !n.endsWith('.part')) candidates.push(path.resolve(this.dir, n))
+      }
+    } catch { /* no dir */ }
+    for (const d of candidates) {
+      if (keep.has(d)) continue
+      try { if (fs.statSync(d).isDirectory()) fs.rmSync(d, { recursive: true, force: true }) } catch { /* in use; next time */ }
+    }
+  }
+
   /** Resumes a previous .part with a Range request when the server allows it. */
-  async download(pack, dest) {
+  async download(part, dest, base = 0) {
     let have = fs.existsSync(dest) ? fs.statSync(dest).size : 0
-    if (have > pack.bytes) { fs.rmSync(dest); have = 0 }
-    if (have === pack.bytes) { this.state.received = have; return }
+    if (have > part.bytes) { fs.rmSync(dest); have = 0 }
+    if (have === part.bytes) { this.state.received = base + have; return }
     this.abort = new AbortController()
     const headers = { 'User-Agent': 'kvasir-wallet-desktop' }
     if (have) headers.Range = `bytes=${have}-`
-    const res = await this.fetch(pack.url, { headers, signal: this.abort.signal })
+    const res = await this.fetch(part.url, { headers, signal: this.abort.signal })
     if (res.status === 200 && have) { have = 0 }             // server ignored the range: start over
-    else if (!(res.status === 200 || res.status === 206)) throw new Error(`pack download answered ${res.status}`)
+    else if (!(res.status === 200 || res.status === 206)) throw new Error(`${part.id} download answered ${res.status}`)
     const out = fs.createWriteStream(dest, { flags: have ? 'a' : 'w' })
-    this.state.received = have
+    let got = have
+    this.state.received = base + got
     try {
       for await (const chunk of res.body) {
-        this.state.received += chunk.length
+        got += chunk.length
+        this.state.received = base + got
         if (!out.write(chunk)) await new Promise((r) => out.once('drain', r))
       }
     } finally { await new Promise((r) => out.end(r)) }
-    if (this.state.received !== pack.bytes) throw new Error(`download ended at ${this.state.received} of ${pack.bytes} bytes — try again to resume`)
+    if (got !== part.bytes) throw new Error(`download ended at ${got} of ${part.bytes} bytes; try again to resume`)
   }
 }
 
@@ -247,4 +357,4 @@ function sha256File(file) {
   })
 }
 
-module.exports = { CudaPack, PACKS, eligibility, extractZip, readZipEntries, sha256File }
+module.exports = { CudaPack, PACKS, partsOf, eligibility, extractZip, readZipEntries, sha256File }
