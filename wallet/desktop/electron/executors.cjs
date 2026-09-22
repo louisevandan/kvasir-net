@@ -139,15 +139,37 @@ const KNOWN = [
       ],
     }),
     probeArgs: ['--help'],
-    // Unified memory, so these are shares of system RAM rather than of a card.
-    // R is the served size plus allocator rounding, as on CUDA: Metal holds the
-    // same quantized bytes. F is smaller — no CUDA context — but the headroom
-    // is larger, because over-committing here slows the whole machine and not
-    // just this process.
+    // Measured, on an M4 Pro, with four shard sizes on an otherwise quiet
+    // machine. The figures these replace were reasoned from the CUDA row —
+    // "Metal holds the same quantized bytes, so R is the same" — and that
+    // reasoning was wrong by 68%.
+    //
+    //   experts    at rest    under load
+    //         2     49 MiB       180 MiB
+    //         8    141           423
+    //        32    509           727
+    //        64    999          1277
+    //
+    // Dead linear: 15.32 MiB per expert, intercept 18 MiB. One expert's weights
+    // are 9.06 MiB, so the process holds about 1.7x what it serves. Whatever
+    // ggml's Metal backend does with the bytes on the way in, it is consistent
+    // and it is real memory, and a model that assumes otherwise over-commits
+    // every Mac by two thirds.
+    //
+    // The scratch does NOT come back. Settled equals peak at every size, so
+    // 282 MiB is a floor a serving slot sits at rather than a spike it passes
+    // through — unlike the Linux/CUDA case, where it is released. Anyone
+    // carrying Linux intuition across will read a peak as an idle figure.
+    //
+    // Not counted here, and worth knowing: the shard file's page cache is
+    // another 9.06 MiB per expert on the same RAM. It is clean and evictable,
+    // so the machine gets it back under pressure without harm — but on a
+    // unified-memory box it is not free either, and a node that lends most of
+    // the machine will feel it.
     memoryModel: {
-      residentBytesPerExpert: 9_568_256,
-      fixedBytes: 64 * MIB,
-      scratchBytes: 64 * MIB,
+      residentBytesPerExpert: 16_067_146,   // 15.32 MiB, measured slope
+      fixedBytes: 128 * MIB,                // 18 MiB intercept, rounded up for the runtime
+      scratchBytes: 320 * MIB,              // 282 MiB measured, and retained
       headroomBytes: 256 * MIB,
     },
   },
