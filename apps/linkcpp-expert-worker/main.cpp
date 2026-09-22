@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <thread>
@@ -179,9 +180,69 @@ struct expert_shard {
 
 // One expert-FFN evaluation for `layer`: (hidden[n_embd,n_used,n_tokens],
 // ids[n_used,n_tokens] local) -> out[n_embd,n_used,n_tokens].
-bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
-             int n_embd, int n_ff, int n_used, int n_tokens,
-             const float * hidden, const int32_t * ids, std::vector<float> & out) {
+// ---- the batch-width cliff --------------------------------------------------
+//
+// ggml picks a kernel for mul_mat_id by how many batch columns it is given: at
+// or below MMVQ_MAX_BATCH_SIZE it runs MMVQ, above it MMQ. Both quantize the
+// activations to q8_1 — but only MMQ's wide path loses enough to matter, and it
+// loses it silently.
+//
+// Measured against a float64 reference on real gateway shards, minimum cosine
+// over the batch (a mean hides this — a failing run still averages ~0.9998):
+//
+//               T=8        T=9        T=64       T=256
+//   CUDA 4060   0.999923   0.998879   0.997950   0.997950  (8 of 256 under 0.999)
+//   CUDA GB10   0.999932   —          —          0.998684  (5 of 256)
+//   Metal M4    1.000000   —          0.999966   0.999962
+//
+// The step lands exactly between 8 and 9 on both CUDA cards. Metal's wide path
+// degrades too, just not past the line. This was shipping: the Windows pack
+// builds with GGML_CUDA_FORCE_MMQ=ON, so every request over 8 tokens was
+// answered slightly wrong, and the check that would have caught it compared two
+// MMQ builds against each other rather than against arithmetic.
+//
+// So a backend that falls off the cliff is never given a graph wider than it.
+// The alternative for CUDA was building against cuBLAS with FP32 accumulation,
+// also exact, but it drags ~550 MB of NVIDIA DLLs back into a pack that is
+// 176 MB today.
+//
+// It is NOT applied everywhere, because it is not free. Measured on an M4 Pro,
+// 64-expert shard, n_used=8, tok/s:
+//
+//               T=1    T=16    T=64    T=256   T=512
+//   unchunked   727    1667    4498    13873   13432
+//   chunked     577    1529    2085     2087    2078
+//
+// Chunked throughput goes flat at ~0.48 ms/token: each block pays for its own
+// graph and allocator, so the work stops amortizing. At T=512 that is 38 ms
+// against 246 ms. Buying Metal an accuracy it already has, at six times the
+// cost, is not a trade worth making — so the width is per backend, and a
+// backend only pays when its arithmetic is actually short.
+static constexpr int MMVQ_MAX_BATCH_SIZE = 8;
+static constexpr int NO_CHUNKING = 1 << 24;
+
+/** How wide a graph this backend may be given.
+ *
+ *  Keyed off the backend name rather than a build flag because one binary can
+ *  carry several backends and picks at runtime — a CUDA build that falls back
+ *  to CPU should not chunk, and does not. KVASIR_EXPERT_CHUNK overrides it, so
+ *  the cost of chunking can be measured on any backend without a rebuild;
+ *  that is how the table above was produced. */
+inline int chunk_width(ggml_backend_t backend) {
+    if (const char * env = std::getenv("KVASIR_EXPERT_CHUNK")) {
+        const int n = std::atoi(env);
+        if (n > 0) return n;
+    }
+    const char * name = ggml_backend_name(backend);
+    // CUDA's MMQ path is the one measured short; Metal's wide path loses far
+    // less and stays inside the bar, and CPU does not use these kernels at all.
+    return (name && std::strstr(name, "CUDA")) ? MMVQ_MAX_BATCH_SIZE : NO_CHUNKING;
+}
+
+/** One graph, at most MMVQ_MAX_BATCH_SIZE tokens wide. Call run_ffn. */
+bool run_ffn_block(const expert_shard & shard, ggml_backend_t backend, int layer,
+                   int n_embd, int n_ff, int n_used, int n_tokens,
+                   const float * hidden, const int32_t * ids, std::vector<float> & out) {
     const std::string p = "blk." + std::to_string(layer) + ".ffn_";
     ggml_tensor * up_exps   = shard.find(p + "up_exps.weight");
     ggml_tensor * gate_exps = shard.find(p + "gate_exps.weight");
@@ -256,10 +317,30 @@ bool recv_all(sock_t fd, void * p, size_t n) {
     return true;
 }
 
+/** hidden [n_embd,n_used,n_tokens], ids [n_used,n_tokens] -> [n_embd,n_used,n_tokens].
+ *  The token axis is outermost in all three, so a block of tokens is contiguous
+ *  in each and a chunk is a pointer offset rather than a gather. */
+bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
+             int n_embd, int n_ff, int n_used, int n_tokens,
+             const float * hidden, const int32_t * ids, std::vector<float> & out) {
+    out.resize((size_t) n_embd * n_used * n_tokens);
+    const int width = chunk_width(backend);
+    std::vector<float> block;
+    for (int t0 = 0; t0 < n_tokens; t0 += width) {
+        const int nt = std::min(width, n_tokens - t0);
+        if (!run_ffn_block(shard, backend, layer, n_embd, n_ff, n_used, nt,
+                           hidden + (size_t) t0 * n_used * n_embd,
+                           ids    + (size_t) t0 * n_used, block)) return false;
+        std::memcpy(out.data() + (size_t) t0 * n_used * n_embd,
+                    block.data(), block.size() * sizeof(float));
+    }
+    return true;
+}
+
 // cur [n_embd,1,n_tokens], sel [n_used,n_tokens] -> experts [n_embd,n_used,n_tokens]
-bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int layer,
-                      int n_embd, int n_used, int n_tokens,
-                      const float * cur, const int32_t * sel, std::vector<float> & out) {
+bool compute_block(const expert_shard & shard, ggml_backend_t backend, int layer,
+                   int n_embd, int n_used, int n_tokens,
+                   const float * cur, const int32_t * sel, std::vector<float> & out) {
     const std::string p = "blk." + std::to_string(layer) + ".ffn_";
     ggml_tensor * up_exps   = shard.find(p + "up_exps.weight");
     ggml_tensor * gate_exps = shard.find(p + "gate_exps.weight");
@@ -291,6 +372,25 @@ bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int la
     ggml_gallocr_free(alloc);
     ggml_free(ctx);
     return ok;
+}
+
+/** The serve path's entry: same contract as compute_block, any number of
+ *  tokens, never handing one graph more than the cliff's width. */
+bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int layer,
+                      int n_embd, int n_used, int n_tokens,
+                      const float * cur, const int32_t * sel, std::vector<float> & out) {
+    out.resize((size_t) n_embd * n_used * n_tokens);
+    const int width = chunk_width(backend);
+    std::vector<float> block;
+    for (int t0 = 0; t0 < n_tokens; t0 += width) {
+        const int nt = std::min(width, n_tokens - t0);
+        if (!compute_block(shard, backend, layer, n_embd, n_used, nt,
+                           cur + (size_t) t0 * n_embd,
+                           sel + (size_t) t0 * n_used, block)) return false;
+        std::memcpy(out.data() + (size_t) t0 * n_used * n_embd,
+                    block.data(), block.size() * sizeof(float));
+    }
+    return true;
 }
 
 // One connection's request loop. `compute_mu` serializes the actual GPU work —
