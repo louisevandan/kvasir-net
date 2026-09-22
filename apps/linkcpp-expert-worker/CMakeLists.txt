@@ -5,6 +5,17 @@
 
 add_executable(linkcpp-expert-worker main.cpp)
 
+# Whether this build computes through cuBLAS rather than ggml's own quantized
+# kernels. The worker cannot ask ggml at runtime — GGML_CUDA_FORCE_CUBLAS is a
+# ggml-internal define and does not reach here — but the answer changes what the
+# worker must do: an MMQ build has to keep every graph under the batch-width
+# cliff, and a cuBLAS build must NOT, because chunking would throw away exactly
+# the speed the larger binary was chosen for. See MMVQ_MAX_BATCH_SIZE.
+if (GGML_CUDA_FORCE_CUBLAS)
+    target_compile_definitions(linkcpp-expert-worker PRIVATE LINKCPP_CUDA_CUBLAS)
+    target_compile_definitions(linkcpp-expert PRIVATE LINKCPP_CUDA_CUBLAS)
+endif()
+
 target_link_libraries(linkcpp-expert-worker PRIVATE ggml)
 if (WIN32)
     target_link_libraries(linkcpp-expert-worker PRIVATE ws2_32)

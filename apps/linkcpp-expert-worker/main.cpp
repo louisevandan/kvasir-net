@@ -233,10 +233,44 @@ inline int chunk_width(ggml_backend_t backend) {
         const int n = std::atoi(env);
         if (n > 0) return n;
     }
+#ifdef LINKCPP_CUDA_CUBLAS
+    // Built against cuBLAS with FP32 accumulation, which is exact at every
+    // width (measured 1.000000 at T=256 and over 4096 outputs at 512x8). MMQ is
+    // never reached, so there is no cliff to stay under — and chunking here
+    // would cost 3-6x on wide batches to buy nothing.
+    (void) backend;
+    return NO_CHUNKING;
+#else
     const char * name = ggml_backend_name(backend);
     // CUDA's MMQ path is the one measured short; Metal's wide path loses far
     // less and stays inside the bar, and CPU does not use these kernels at all.
     return (name && std::strstr(name, "CUDA")) ? MMVQ_MAX_BATCH_SIZE : NO_CHUNKING;
+#endif
+}
+
+/**
+ * Make the cuBLAS build accumulate in FP32, without anyone having to remember.
+ *
+ * FP16 accumulation is not enough on its own — measured 0.998918 minimum on a
+ * Qwen3.5 shard, under the bar — so this build is only correct with
+ * GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F set. Leaving that to whoever spawns the
+ * worker means the app, node-cli and anyone running it by hand each have to
+ * know, and the one who forgets gets slightly wrong answers with no symptom.
+ *
+ * So the worker sets it for itself, before any backend is created, and only
+ * when it is unset: an operator who deliberately exports 0 to compare builds
+ * still gets what they asked for.
+ */
+inline void force_fp32_accumulation() {
+#ifdef LINKCPP_CUDA_CUBLAS
+    if (!std::getenv("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F")) {
+#ifdef _WIN32
+        _putenv_s("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F", "1");
+#else
+        setenv("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F", "1", 0);
+#endif
+    }
+#endif
 }
 
 /** One graph, at most MMVQ_MAX_BATCH_SIZE tokens wide. Call run_ffn. */
@@ -626,6 +660,7 @@ void bench_run(const expert_shard & shard, ggml_backend_t backend, int layer, in
 // thread. Mirrors main's --serve branch: pick a backend, load the slice, run
 // the blocking serve loop. n_embd is supplied by the caller (per model).
 extern "C" int linkcpp_expert_run(const char * model_path, int port, int layer, int n_embd) {
+    force_fp32_accumulation();   // same contract as main: correct before any device exists
     ggml_backend_t backend = nullptr;
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
@@ -665,6 +700,7 @@ int main(int argc, char ** argv) {
     // GPU, so ggml_backend_init_by_type(GPU) misses them and silently falls back to
     // CPU. Selecting any non-CPU device is robust across discrete and integrated parts
     // (verified on GB10 sm_121a: CUDA0 backend, cosine 1.0 vs ROCm gfx90a).
+    force_fp32_accumulation();   // before any device is initialised
     ggml_backend_t backend = nullptr;
     if (!force_cpu) {
         for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
@@ -696,7 +732,11 @@ int main(int argc, char ** argv) {
     if (arg_value(argc, argv, "--bench")
         || (argc > 1 && std::string(argv[argc - 1]) == "--bench")) {
         const int layer  = std::atoi(arg_value(argc, argv, "--layer")  ? arg_value(argc, argv, "--layer")  : "0");
-        const int n_embd = std::atoi(arg_value(argc, argv, "--n-embd") ? arg_value(argc, argv, "--n-embd") : "0");
+        int n_embd = std::atoi(arg_value(argc, argv, "--n-embd") ? arg_value(argc, argv, "--n-embd") : "0");
+        // The slice is self-describing; --bench was the one path that did not
+        // use that, so omitting --n-embd built a zero-width graph and asserted
+        // inside ggml_mul_mat_id rather than saying what was missing.
+        if (n_embd <= 0) n_embd = shard.n_embd;
         const int n_used = std::atoi(arg_value(argc, argv, "--n-used") ? arg_value(argc, argv, "--n-used") : "8");
         bench_run(shard, backend, layer, n_embd, n_used);
         ggml_backend_free(backend);
