@@ -38,3 +38,6 @@ bin/cloudflared
 
 # Xcode build products and result bundles from device runs
 wallet/ios/build/
+
+# Local Metal build of the expert worker (see scripts/build-expert-worker.cjs).
+build-mac-metal/
