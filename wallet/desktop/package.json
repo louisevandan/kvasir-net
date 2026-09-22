@@ -86,7 +86,7 @@
         }
       ],
       "category": "public.app-category.finance",
-      "x64ArchFiles": "Contents/Resources/p4/p4-agent",
+      "x64ArchFiles": "Contents/Resources/{p4/p4-agent,expert-worker/linkcpp-expert-worker}",
       "identity": null,
       "extraResources": [
         {
@@ -97,8 +97,7 @@
           "from": "resources/expert-worker/darwin",
           "to": "expert-worker"
         }
-      ],
-      "singleArchFiles": "Contents/Resources/expert-worker/linkcpp-expert-worker"
+      ]
     },
     "dmg": {
       "title": "Kvasir Wallet ${version}"
