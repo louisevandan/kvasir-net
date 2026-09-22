@@ -48,6 +48,7 @@
  *
  * Usage:
  *   node scripts/build-expert-worker.cjs            build (Windows: + pack)
+ *   node scripts/build-expert-worker.cjs --linux    linux-x64 CUDA pack, in Docker
  *   node scripts/build-expert-worker.cjs --no-pack  build only; skip the Windows pack
  */
 const { execFileSync } = require('node:child_process')
@@ -272,7 +273,97 @@ function pack({ exe, cuda }) {
   console.log(JSON.stringify(pin, null, 2))
 }
 
+// Linux x64 CUDA worker. Built in a container, so any host with Docker can
+// make it — which is the point: the machine that builds it should be the
+// machine that can run it, and ours has the GPU.
+//
+//   base     nvidia/cuda:13.0.1-devel-ubi8. RHEL 8 is the oldest base NVIDIA
+//            ships CUDA 13 for (glibc 2.28), and the floor decides which
+//            servers can run the result. The image's own gcc is 8.5 with no
+//            /opt/rh, so gcc-toolset-13 is installed inside the container.
+//   linking  cuBLAS, cuBLASLt and cudart static, plus -static-libstdc++ and
+//            -static-libgcc: the binary then needs only libcuda.so.1 from the
+//            driver, and carries no GLIBCXX floor. It is ~720 MB unpacked.
+//   paths    -ffile-prefix-map, the counterpart of /d1trimfile on Windows.
+//
+// Four checks afterwards, each for a binary that once ran only where it was
+// built: an unresolved library that is not the driver, an RPATH/RUNPATH, a
+// GLIBCXX dependency, or a glibc floor above the base's.
+const LINUX_IMAGE = 'nvidia/cuda:13.0.1-devel-ubi8'
+const LINUX_GLIBC_MAX = '2.28'
+const LINUX_ARCHS = '75-real;80-real;86-real;89-real;90-real;120-real;120-virtual'
+
+function buildLinux() {
+  const out = path.join(REPO, 'build', 'linux-cuda')
+  fs.rmSync(out, { recursive: true, force: true })
+  fs.mkdirSync(out, { recursive: true })
+  const script = `#!/bin/bash
+set -e
+dnf -y -q install gcc-toolset-13 cmake make >/dev/null
+source /opt/rh/gcc-toolset-13/enable
+gcc --version | head -1; cmake --version | head -1; nvcc --version | tail -2 | head -1
+cmake -S /src -B /tmp/b -DCMAKE_BUILD_TYPE=Release \\
+  -DLINKCPP_EXPERT_WORKER_ONLY=ON -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \\
+  -DGGML_CUDA=ON -DGGML_CUDA_FORCE_CUBLAS=ON -DGGML_CUDA_NCCL=OFF \\
+  -DCMAKE_CUDA_ARCHITECTURES="${LINUX_ARCHS}" \\
+  -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \\
+  -DCMAKE_C_FLAGS_INIT="-ffile-prefix-map=/src=." \\
+  -DCMAKE_CXX_FLAGS_INIT="-ffile-prefix-map=/src=." \\
+  -DCMAKE_CUDA_FLAGS_INIT="-Xcompiler=-ffile-prefix-map=/src=." > /tmp/conf.log 2>&1 || { tail -25 /tmp/conf.log; exit 1; }
+cmake --build /tmp/b --target linkcpp-expert-worker -j "$(nproc)" > /tmp/build.log 2>&1 || { tail -25 /tmp/build.log; exit 1; }
+B=/tmp/b/apps/linkcpp-expert-worker/${MACH_O}
+
+missing=$(ldd "$B" | grep 'not found' | grep -v libcuda || true)
+[ -z "$missing" ] || { echo "unresolved beyond the driver: $missing"; exit 1; }
+readelf -d "$B" | grep -Eqi 'rpath|runpath' && { echo "has RPATH/RUNPATH"; exit 1; } || true
+objdump -T "$B" | grep -q GLIBCXX && { echo "depends on libstdc++ (GLIBCXX)"; exit 1; } || true
+floor=$(objdump -T "$B" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1 | cut -d_ -f2)
+[ "$(printf '%s\\n' "$floor" "${LINUX_GLIBC_MAX}" | sort -V | tail -1)" = "${LINUX_GLIBC_MAX}" ] \\
+  || { echo "glibc floor $floor is above ${LINUX_GLIBC_MAX}"; exit 1; }
+echo "glibc floor: $floor · no GLIBCXX · no RUNPATH · driver-only"
+cp "$B" /out/
+`
+  const sh = path.join(out, 'build.sh')
+  fs.writeFileSync(sh, script.replace(/\r\n/g, '\n'))
+  execFileSync('docker', ['run', '--rm',
+    '-v', `${REPO}:/src:ro`, '-v', `${out}:/out`, '-v', `${sh}:/build.sh:ro`,
+    LINUX_IMAGE, 'bash', '/build.sh'],
+  { stdio: 'inherit', env: { ...process.env, MSYS_NO_PATHCONV: '1' } })
+  const bin = path.join(out, MACH_O)
+  if (!fs.existsSync(bin)) throw new Error(`the container reported success but ${bin} is missing`)
+  return bin
+}
+
+function packLinux(bin) {
+  const rev = execFileSync('git', ['-C', REPO, 'rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim()
+  const now = new Date()
+  const date = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((n) => String(n).padStart(2, '0')).join('.')
+  const version = `${date}-${rev}`
+  const stage = path.join(REPO, 'build', `expert-worker-linux-${version}`)
+  fs.rmSync(stage, { recursive: true, force: true })
+  fs.mkdirSync(stage, { recursive: true })
+  fs.copyFileSync(bin, path.join(stage, MACH_O))
+  fs.writeFileSync(path.join(stage, 'VERSION'), `${version}\n`)
+  fs.writeFileSync(path.join(stage, 'README.txt'), [
+    'Kvasir expert worker - Linux x64, NVIDIA CUDA',
+    `version ${version}, built from ${rev} in ${LINUX_IMAGE}`,
+    '',
+    'Needs only an NVIDIA driver supporting CUDA 13 (R580 or newer).',
+    `cuBLAS, cuBLASLt, cudart, libstdc++ and libgcc are linked statically; glibc floor ${LINUX_GLIBC_MAX}.`,
+    '',
+  ].join('\n'))
+  const tar = path.join(REPO, 'build', `kvasir-expert-worker-linux-x64-cuda13-${version}.tar.gz`)
+  fs.rmSync(tar, { force: true })
+  execFileSync(path.join(process.env.SystemRoot || '/usr', process.platform === 'win32' ? 'System32' : 'bin', process.platform === 'win32' ? 'tar.exe' : 'tar'),
+    ['-czf', tar, '-C', stage, '.'], { stdio: 'inherit' })
+  const bytes = fs.statSync(tar).size
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(tar)).digest('hex')
+  console.log(`\nlinux pack: ${tar}\n  commit ${rev}\n  bytes  ${bytes}\n  sha256 ${sha256}`)
+}
+
 function main() {
+  // Linux is built in a container, so it runs from any host with Docker.
+  if (process.argv.includes('--linux')) return packLinux(buildLinux())
   if (process.platform === 'darwin') return buildMetal()
   if (process.platform !== 'win32') {
     throw new Error(`no expert-worker build is defined for ${process.platform}`)
