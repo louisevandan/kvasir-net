@@ -84,6 +84,7 @@ const KNOWN = [
     // pack (cudaPack.cjs). It needs only the NVIDIA driver; a machine without
     // one fails to load nvcuda.dll, which probe() reports as a missing DLL.
     id: 'linkcpp-expert-worker',
+    platforms: ['win32', 'linux'],
     purpose: 'MoE expert FFN via ggml mul_mat_id — the executor a remote expert shard needs.',
     locate: () => candidates({
       id: 'linkcpp-expert-worker',
@@ -110,6 +111,42 @@ const KNOWN = [
       fixedBytes: 128 * MIB,
       scratchBytes: 64 * MIB,              // up to 512 tokens x 8 experts per request
       headroomBytes: 128 * MIB,
+    },
+  },
+  {
+    // The same program as above, built for Metal and shipped inside the macOS
+    // app rather than downloaded: it is 78 KB against the CUDA build's 190 MB,
+    // because Metal needs no redistributable runtime.
+    //
+    // It matters that this is the same source. Metal has k-quant kernels, so it
+    // computes on the served Q4_K/Q5_K bytes unchanged — no dequantisation to
+    // fp16, which would have tripled what one expert costs in memory and cut
+    // what a Mac can hold from about seven layers to two.
+    //
+    // Checked on an M4 Pro against a float64 reference over real gateway
+    // shards: cosine 1.000000 at one token, 0.999963 at 256.
+    id: 'linkcpp-expert-worker-metal',
+    platforms: ['darwin'],
+    purpose: 'MoE expert FFN on Apple Silicon (Metal) — the macOS expert executor.',
+    locate: () => candidates({
+      id: 'linkcpp-expert-worker-metal',
+      envVar: 'KVASIR_EXPERT_WORKER_METAL',
+      resourceDir: { dir: 'expert-worker', bin: 'linkcpp-expert-worker' },
+      devPaths: (file) => [
+        path.join(REPO, 'build-mac-metal', 'apps', 'linkcpp-expert-worker', file),
+      ],
+    }),
+    probeArgs: ['--help'],
+    // Unified memory, so these are shares of system RAM rather than of a card.
+    // R is the served size plus allocator rounding, as on CUDA: Metal holds the
+    // same quantized bytes. F is smaller — no CUDA context — but the headroom
+    // is larger, because over-committing here slows the whole machine and not
+    // just this process.
+    memoryModel: {
+      residentBytesPerExpert: 9_568_256,
+      fixedBytes: 64 * MIB,
+      scratchBytes: 64 * MIB,
+      headroomBytes: 256 * MIB,
     },
   },
 ]
@@ -167,6 +204,37 @@ const run = (cmd, args) => new Promise((resolve) => {
 
 /** Live GPU state. Not cached: free VRAM moves as other local services load models. */
 async function gpuReadiness() {
+  // Apple Silicon has no nvidia-smi and no separate VRAM. The GPU shares the
+  // machine's memory, and Metal publishes a recommended working set rather than
+  // a card size — ask for more than that and the whole system starts swapping,
+  // which is not how a discrete card fails. So it is reported as a vendor of
+  // its own, with the recommended set as the total, and the UI is expected to
+  // call it shared memory rather than VRAM.
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    const chip = (await run('sysctl', ['-n', 'machdep.cpu.brand_string']) || 'Apple Silicon').trim();
+    const ram = Number((await run('sysctl', ['-n', 'hw.memsize']) || '0').trim()) || 0;
+    // What Metal will recommend is ~75% of physical memory on these parts. It
+    // is readable exactly through MTLDevice, but that needs a native call this
+    // process cannot make; the fraction is stable enough to size a slider, and
+    // the executor refuses anything it cannot actually allocate.
+    const working = Math.floor(ram * 0.75);
+    return {
+      vendor: 'apple',
+      ready: ram > 0,
+      unifiedMemory: true,
+      gpus: ram ? [{
+        name: chip,
+        driver: null,
+        totalBytes: working,
+        usedBytes: 0,
+        // Unified memory is shared with everything else running, so "free" is
+        // not knowable the way it is on a card. The budget is the operator's
+        // choice, bounded by the recommended working set.
+        freeBytes: working,
+        utilizationPct: null,
+      }] : [],
+    };
+  }
   const out = await run('nvidia-smi', [
     '--query-gpu=name,driver_version,memory.total,memory.used,memory.free,utilization.gpu',
     '--format=csv,noheader,nounits',
@@ -194,6 +262,11 @@ async function gpuReadiness() {
 async function executors() {
   const results = []
   for (const k of KNOWN) {
+    // An executor that names its platforms is only looked for there. Without
+    // this the Metal build is reported "not installed" on Windows and the CUDA
+    // build on a Mac, which reads as something broken rather than something
+    // that was never meant to be there.
+    if (k.platforms && !k.platforms.includes(process.platform)) continue
     const searched = k.locate()
     const bin = findBinary(searched)
     if (!bin) {
@@ -205,7 +278,11 @@ async function executors() {
     results.push({ id: k.id, purpose: k.purpose, found: true, path: bin, ...p })
   }
   const gpu = await gpuReadiness()
-  const expert = results.find((r) => r.id === 'linkcpp-expert-worker')
+  // Whichever expert executor this platform ships. They are alternatives, not
+  // a set: prefer one that actually runs, so a machine that has both a stale
+  // copy and a working one is not judged by the stale one.
+  const experts = results.filter((r) => r.id.startsWith('linkcpp-expert-worker'))
+  const expert = experts.find((r) => r.runnable) ?? experts[0]
   const agent = results.find((r) => r.id === 'p4-agent')
   return {
     executors: results,
