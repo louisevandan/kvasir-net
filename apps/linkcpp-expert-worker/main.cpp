@@ -297,9 +297,70 @@ bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int la
 // the ggml backend is not safe for concurrent graph compute — while I/O (recv of
 // the next request, send of the last result) runs off-lock. Returning ends the
 // connection; a dead/half-open peer errors out here without wedging the worker.
+// ---- request validation ----------------------------------------------------
+//
+// Everything below this line arrives over a socket. The worker binds
+// 127.0.0.1, so the sender is on the same machine as the relay — which on a
+// desktop is the operator and nobody else, but on a headless server is *any
+// local user*. That is the deployment this exists for, so "the peer is
+// trusted" is not an assumption this code gets to make.
+//
+// Unvalidated, each field is its own failure:
+//   n_rows/n_pairs/n_used/n_tokens   negative or huge -> `(size_t) n_embd * n`
+//     wraps or asks for terabytes; std::vector aborts the process, and a
+//     negative count silently becomes an enormous size_t.
+//   ids/sel                          an expert id outside the shard indexes
+//     off the end of GPU memory: a wrong answer, or a crash inside the backend.
+//   ridx (v2/v2f16)                  used to index BOTH a read from `rows` and
+//     a write to `out` — `out[ridx[i] * n_embd] += ...` is an out-of-bounds
+//     WRITE into this process's heap, chosen by the caller. That is the one
+//     that turns a malformed request into someone else's code running.
+//
+// A bad request closes the connection rather than answering. There is no error
+// frame in this protocol, and the caller already treats a closed relay as a
+// failure to redial — so this reuses the one failure mode both ends understand.
+
+// Caps large enough for anything the market hands out (the bridge refuses more
+// than 64 experts per shard, and the memory model sizes scratch for 512 tokens
+// x 8 experts), small enough that the arithmetic below cannot overflow.
+static constexpr int MAX_REQ_EXPERTS = 64;
+static constexpr int MAX_REQ_TOKENS  = 8192;
+static constexpr int MAX_REQ_ROWS    = 8192;
+static constexpr int MAX_REQ_PAIRS   = MAX_REQ_ROWS * 8;
+
+static bool in_range(int v, int lo, int hi) { return v >= lo && v <= hi; }
+
+/** Every index lands inside [0, limit). Used for two different things: expert
+ *  ids, which are LOCAL to the shard (the router subtracts
+ *  kvasir.expert_shard.expert_begin before sending), and v2's row indices. */
+static bool all_indices_below(const int32_t * v, size_t n, int limit) {
+    for (size_t i = 0; i < n; ++i) if (v[i] < 0 || v[i] >= limit) return false;
+    return true;
+}
+
+/** No token may select the same expert twice.
+ *
+ *  This is not defensive tidiness: ggml's CUDA path asserts on it
+ *  (ids_to_sorted_host.size() == ne_get_rows) and the MMQ path reads out of
+ *  bounds, so one duplicate kills the worker and every slot it serves. A
+ *  top-k router cannot produce one, which is exactly why nothing upstream
+ *  checks — and why a single malformed request would otherwise be a way to
+ *  stop an operator earning. */
+static bool no_duplicate_experts(const int32_t * sel, int n_used, int n_tokens) {
+    if (n_used < 2) return true;
+    for (int t = 0; t < n_tokens; ++t) {
+        const int32_t * s = sel + (size_t) t * n_used;   // ids for one token
+        for (int a = 0; a < n_used; ++a)
+            for (int b = a + 1; b < n_used; ++b)
+                if (s[a] == s[b]) return false;
+    }
+    return true;
+}
+
 void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
                  int layer, int n_embd, std::mutex & compute_mu) {
     int one2 = 1; ::setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char *) &one2, sizeof(one2));
+    const int n_local = shard.expert_end - shard.expert_begin;
     for (;;) {
         int32_t hdr[2];
         if (!recv_all(c, hdr, sizeof(hdr))) break;
@@ -308,12 +369,16 @@ void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
             const int n_rows = hdr[1];
             int32_t n_pairs = 0;
             if (!recv_all(c, &n_pairs, sizeof(n_pairs))) break;
+            if (!in_range(n_rows, 1, MAX_REQ_ROWS) || !in_range(n_pairs, 1, MAX_REQ_PAIRS)) break;
             std::vector<ggml_fp16_t> rows16((size_t) n_embd * n_rows), probs16((size_t) n_pairs);
             std::vector<int32_t> ridx((size_t) n_pairs), ids((size_t) n_pairs);
             if (!recv_all(c, rows16.data(), rows16.size() * sizeof(ggml_fp16_t))) break;
             if (!recv_all(c, ridx.data(),  ridx.size()  * sizeof(int32_t)))       break;
             if (!recv_all(c, ids.data(),   ids.size()   * sizeof(int32_t)))       break;
             if (!recv_all(c, probs16.data(), probs16.size() * sizeof(ggml_fp16_t))) break;
+            // ridx indexes a read from rows and a write to out; ids index GPU memory.
+            if (!all_indices_below(ridx.data(), ridx.size(), n_rows)) break;
+            if (!all_indices_below(ids.data(),  ids.size(),  n_local)) break;
             std::vector<float> rows((size_t) n_embd * n_rows), probs((size_t) n_pairs);
             ggml_fp16_to_fp32_row(rows16.data(),  rows.data(),  (int64_t) n_embd * n_rows);
             ggml_fp16_to_fp32_row(probs16.data(), probs.data(), (int64_t) n_pairs);
@@ -345,6 +410,7 @@ void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
             const int n_rows = hdr[1];
             int32_t n_pairs = 0;
             if (!recv_all(c, &n_pairs, sizeof(n_pairs))) break;
+            if (!in_range(n_rows, 1, MAX_REQ_ROWS) || !in_range(n_pairs, 1, MAX_REQ_PAIRS)) break;
             std::vector<float>   rows((size_t) n_embd * n_rows);
             std::vector<int32_t> ridx((size_t) n_pairs);
             std::vector<int32_t> ids((size_t) n_pairs);
@@ -353,6 +419,8 @@ void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
             if (!recv_all(c, ridx.data(),  ridx.size()  * sizeof(int32_t))) break;
             if (!recv_all(c, ids.data(),   ids.size()   * sizeof(int32_t))) break;
             if (!recv_all(c, probs.data(), probs.size() * sizeof(float)))   break;
+            if (!all_indices_below(ridx.data(), ridx.size(), n_rows)) break;
+            if (!all_indices_below(ids.data(),  ids.size(),  n_local)) break;
             std::vector<float> h((size_t) n_embd * n_pairs);
             for (int i = 0; i < n_pairs; ++i)
                 std::memcpy(h.data() + (size_t) i * n_embd,
@@ -372,10 +440,13 @@ void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
             continue;
         }
         const int n_used = hdr[0], n_tokens = hdr[1];
+        if (!in_range(n_used, 1, MAX_REQ_EXPERTS) || !in_range(n_tokens, 1, MAX_REQ_TOKENS)) break;
         std::vector<float>   cur((size_t) n_embd * n_tokens);
         std::vector<int32_t> sel((size_t) n_used * n_tokens);
         if (!recv_all(c, cur.data(), cur.size() * sizeof(float)))   break;
         if (!recv_all(c, sel.data(), sel.size() * sizeof(int32_t))) break;
+        if (!all_indices_below(sel.data(), sel.size(), n_local)) break;
+        if (!no_duplicate_experts(sel.data(), n_used, n_tokens)) break;
         std::vector<float> out;
         { std::lock_guard<std::mutex> lk(compute_mu);
           if (!compute_dispatch(shard, backend, layer, n_embd, n_used, n_tokens, cur.data(), sel.data(), out)) break; }
@@ -430,7 +501,10 @@ void bench_run(const expert_shard & shard, ggml_backend_t backend, int layer, in
         std::vector<float>   cur((size_t) n_embd * B);
         std::vector<int32_t> sel((size_t) n_used * B);
         for (size_t i = 0; i < cur.size(); ++i) cur[i] = 0.05f * (float) ((int) (i % 97) - 48);
-        for (size_t i = 0; i < sel.size(); ++i) sel[i] = (int32_t) (i % 256);
+        // Local ids, so the modulus is what this shard holds — not 256, which
+        // made --bench abort on every shard smaller than a whole layer.
+        const int n_local = shard.expert_end - shard.expert_begin;
+        for (size_t i = 0; i < sel.size(); ++i) sel[i] = (int32_t) (i % (size_t) n_local);
         std::vector<float> out;
         compute_dispatch(shard, backend, layer, n_embd, n_used, B, cur.data(), sel.data(), out); // warmup
         const int iters = B >= 256 ? 5 : 20;
