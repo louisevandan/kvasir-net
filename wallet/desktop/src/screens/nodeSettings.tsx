@@ -157,7 +157,20 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
         <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>{t('ns.vramOverFree', gib1(available))}</div>
       )}
       <div className="small muted mono" style={{ marginTop: 6 }}>
-        {gpu.name} · {gpu.driver} · CUDA {status?.compute?.gpu.cudaVersion ?? '—'} · {gpu.utilizationPct}%
+        {/*
+          Only what this card actually knows. The line used to read
+          "<name> · <driver> · CUDA <version> · <util>%" for every machine, so a
+          Mac showed "Apple M4 Pro · · CUDA — · %" — a CUDA version on a Metal
+          GPU, with three empty fields around it. nvidia-smi supplies the driver,
+          CUDA version and utilisation; nothing does on Apple Silicon, and an
+          empty field is worse than an absent one.
+        */}
+        {[
+          gpu.name,
+          gpu.driver || null,
+          status?.compute?.gpu.cudaVersion ? `CUDA ${status.compute.gpu.cudaVersion}` : null,
+          gpu.utilizationPct != null ? `${gpu.utilizationPct}%` : null,
+        ].filter(Boolean).join(' · ')}
       </div>
     </Card>
   )

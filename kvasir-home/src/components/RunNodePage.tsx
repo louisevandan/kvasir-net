@@ -158,13 +158,10 @@ function FaucetNote({ g }: { g: Guide }) {
 
 /* The desktop app ships the p4 agent, so a contributor does not run anything by
    hand — this is only the headless path, for a machine with no desktop session. */
-const CLI = `# headless node · the desktop app does all of this for you
+const CLI = `# the layer-serving agent, which the app starts for you
 p4-agent 0.0.0.0:42011 tcp://<address other agents can dial>:42011
 
-# then link the machine to your wallet so its work is credited
-KVR_SERVICE=https://gate.kvasir-ai.net \\
-KVR_OWNER=<your wallet address> \\
-  node solana/node-client/connect.js`;
+# for a server with no screen, use the installer on the Server tab instead`;
 
 /* ---- a command, the way an operator will paste it ---- */
 function Cmd({ children }: { children: string }) {
@@ -236,14 +233,29 @@ function DesktopGuide({ g, base }: { g: Guide; base: string }) {
       <Shot src={`${d}/02-recovery.png`} alt={g.capRecovery} w="max-w-xs" />
       <Shot src={`${d}/03-passphrase.png`} alt={g.capPassphrase} w="max-w-xs" />
     </div>,
-    <div className="flex flex-wrap gap-4">
-      <Shot src={`${d}/04-receive.png`} alt={g.capReceive} w="max-w-[15rem]" />
-      <Shot src={`${d}/05-balances.png`} alt={g.capBalances} w="max-w-[15rem]" />
-      <Shot src={`${d}/06-staking.png`} alt={g.capStaking} w="max-w-md" />
-    </div>,
-    <div className="flex flex-wrap gap-4">
-      <Shot src={`${d}/07-backend.png`} alt={g.capBackend} w="max-w-sm" />
-      <Shot src={`${d}/08-mode.png`} alt={g.capMode} w="max-w-sm" />
+    /*
+      The balances shot showed a wallet holding 100,974 KVR, directly under a
+      heading that says a wallet holding none can run a node. The receive
+      address is the part of that screen the step actually needs.
+    */
+    <Shot src={`${d}/04-receive.png`} alt={g.capReceive} w="max-w-[15rem]" />,
+    /*
+      Two platforms, because this is the one screen where they differ in a way
+      that matters. A Mac finds its Metal engine already inside the app; a
+      Windows machine is offered a 720 MB download it has to accept. Showing
+      only one would leave half the readers looking for a control that is not
+      on their screen.
+
+      These three are captured in English on every locale, unlike the rest of
+      the set. The engine names, the GiB figures and the expert count — what the
+      step is actually about — read the same in any language.
+    */
+    <div className="space-y-4">
+      <Shot src={`${d}/12-engines-mac.png`} alt={g.capEnginesMac} w="max-w-md" />
+      <div className="flex flex-wrap gap-4">
+        <Shot src={`${d}/14-engine-offer.png`} alt={g.capEngineOffer} w="max-w-sm" />
+        <Shot src={`${d}/13-engines-win.png`} alt={g.capEnginesWin} w="max-w-sm" />
+      </div>
     </div>,
     <div className="space-y-4">
       <Shot src={`${d}/09-runlive.png`} alt={g.capRunlive} w="max-w-sm" />

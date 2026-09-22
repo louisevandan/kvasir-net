@@ -127,7 +127,16 @@ select { appearance: none; }
 .meter > span { display: block; height: 100%; border-radius: 6px; }
 
 /* tier badge */
-.tier { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; }
+/* A circle sized for one letter — S, A, B or C. It now also has to hold
+   "unrated", the tier a node gets when it has no measured throughput to grade,
+   which overflowed the circle and drew over the text beside it. So the badge
+   grows into a pill when its content needs the room and stays a circle when it
+   does not. */
+.tier {
+  min-width: 34px; height: 34px; padding: 0 10px;
+  border-radius: 17px; display: inline-grid; place-items: center;
+  color: #fff; font-weight: 800; white-space: nowrap; line-height: 1;
+}
 
 /* world map */
 .mapwrap { position: relative; width: 100%; background: radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--blue) 8%, var(--surface)) 0%, var(--surface) 70%); border-radius: 16px; overflow: hidden; }
