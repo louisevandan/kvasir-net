@@ -133,8 +133,9 @@ select { appearance: none; }
    grows into a pill when its content needs the room and stays a circle when it
    does not. */
 .tier {
-  min-width: 34px; height: 34px; padding: 0 10px;
-  border-radius: 17px; display: inline-grid; place-items: center;
+  /* Size, padding and radius come from TierBadge, so one letter stays a
+     circle and a word grows into a pill. */
+  box-sizing: border-box; display: inline-grid; place-items: center;
   color: #fff; font-weight: 800; white-space: nowrap; line-height: 1;
 }
 
