@@ -42,6 +42,23 @@ const TARGET_REPLICAS = Number(process.env.KVR_EXPERT_TARGET_REPLICAS ?? 2);
 /** Contribution units per megabyte carried over a relay. */
 const UNITS_PER_MB = Number(process.env.KVR_EXPERT_UNITS_PER_MB ?? 1);
 /** Coordinator listen ports handed to relay sessions, sticky per worker. */
+/**
+ * Hand out no new work, while staying up.
+ *
+ * Set KVR_EXPERT_FROZEN=1 on a coordinator being migrated away from. It keeps
+ * answering, keeps its node tokens valid, and keeps carrying the relays it
+ * already has, but every volunteer poll is told there is nothing for it. Rolling
+ * back is unsetting it and restarting — no redeploy, no routing change.
+ *
+ * What it is NOT for: this is not admission control and not a safety feature.
+ * Anything already assigned stays assigned until its worker goes stale, which
+ * is WORKER_STALE_MS after its last poll.
+ */
+// Read per call rather than at load, so a test can exercise the frozen path
+// and an operator can flip it without the flag's value being baked in at
+// require time. One regex per volunteer poll, and a node polls every 45 s.
+const frozen = () => /^(1|true|yes)$/i.test(String(process.env.KVR_EXPERT_FROZEN ?? ''));
+
 const PORT_BASE = 52_970;
 const PORT_SPAN = 60;
 
@@ -350,6 +367,19 @@ class Participation {
 
     if (req.method === 'POST' && path === '/api/expert-volunteer') {
       if (!needsNode()) return true;
+      // Frozen: reachable, authenticating, serving every relay it already has,
+      // and handing out nothing new. This is what a migration needs and what
+      // stopping the process cannot give it — the old bridge has to stay up to
+      // be rolled back to, and a bridge that is up hands out work.
+      //
+      // Freezing is deliberately not the same as cutting the route. Cutting the
+      // route makes the old bridge unreachable, which is also how you find out
+      // whether anything still depends on it: you don't. A frozen bridge still
+      // answers, so a node that is somehow still pointed at it says so in the
+      // logs instead of failing silently somewhere else.
+      if (frozen()) {
+        return json(res, 200, { assigned: false, reason: 'this coordinator is frozen for migration' }), true;
+      }
       const want = String(body?.model ?? '');
       const maxExperts = Number(body?.max_experts ?? 0) || 0;
       let best = null;

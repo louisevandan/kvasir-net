@@ -314,6 +314,40 @@ test('a layer with no experts is never offered, and an unread model offers nothi
   blind.stop();
 });
 
+test('a frozen coordinator stays up and hands out nothing', async (t) => {
+  // What a migration needs from the coordinator it is moving away from: still
+  // reachable, still authenticating, still carrying what it carries — and
+  // assigning nothing, so the replacement is the only one growing.
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); delete process.env.KVR_EXPERT_FROZEN; });
+  const wallet = makeWallet();
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: wallet.address } });
+  const { body: { node_token: token } } = await call(port, 'POST', '/api/auth/node-token', {
+    body: { wallet: wallet.address, nonce: challenge.body.nonce, signature: wallet.sign(challenge.body.message) },
+  });
+
+  const before = await call(port, 'POST', '/api/expert-volunteer', { token, body: { max_experts: 4 } });
+  assert.equal(before.body.assigned, true, 'unfrozen, the bridge assigns');
+
+  process.env.KVR_EXPERT_FROZEN = '1';
+  const during = await call(port, 'POST', '/api/expert-volunteer', { token, body: { max_experts: 4 } });
+  assert.equal(during.status, 200, 'frozen is an answer, not a refusal — a node must not see this as an outage');
+  assert.equal(during.body.assigned, false);
+  assert.match(during.body.reason, /frozen/);
+
+  // Authentication still works while frozen: the node keeps its token, so
+  // rolling back does not mean every node has to sign in again.
+  const stillAuthed = await call(port, 'POST', '/api/expert-coverage', {
+    token, body: { worker_id: 'w1', model: MODEL.id, segments: [], url: 'ws://127.0.0.1:1/x' },
+  });
+  assert.equal(stillAuthed.status, 200, 'a frozen bridge still accepts coverage from what it already has');
+
+  delete process.env.KVR_EXPERT_FROZEN;
+  const after = await call(port, 'POST', '/api/expert-volunteer', { token, body: { max_experts: 4 } });
+  assert.equal(after.body.assigned, true, 'unfreezing is the whole rollback');
+});
+
 test('the market offers the scarcest window, and coverage shrinks it', async (t) => {
   const { server, participation } = startBridge();
   const port = await listen(server);
