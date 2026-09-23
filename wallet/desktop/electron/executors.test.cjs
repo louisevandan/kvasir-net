@@ -133,6 +133,29 @@ test('the shipped CUDA model covers what the cuBLAS build was measured to take',
   assert.ok(shippedCuda.residentBytesPerExpert >= 9_502_720, 'R below the served bytes per expert')
 })
 
+test('a GPU that will not state its size is charged the dearer model, not refused', () => {
+  // A GB10 answers [N/A] to nvidia-smi's memory.total, and it does that BECAUSE
+  // its memory is the system's. The first version of this probe used that
+  // missing number as the discriminator, resolved UNKNOWN, and the headless
+  // node then refused to start — every five seconds, forever. Caught before
+  // deployment by the machine it would have taken out of the market.
+  const cuda = KNOWN.find((k) => k.id === 'linkcpp-expert-worker')
+  const perSlot = (m) => m.fixedBytes + m.scratchBytes
+  assert.ok(perSlot(cuda.memoryModels.unified) > perSlot(cuda.memoryModels.discrete),
+    'unified must be the dearer model, or falling back to it would not be the safe direction')
+})
+
+test('the operator can state the topology when the machine will not', () => {
+  const prior = process.env.KVASIR_MEMORY_TOPOLOGY
+  process.env.KVASIR_MEMORY_TOPOLOGY = 'discrete'
+  resolveMemoryTopology().then((t) => {
+    assert.equal(t, TOPOLOGY.DISCRETE, 'an explicit setting must win over any probe')
+    if (prior == null) delete process.env.KVASIR_MEMORY_TOPOLOGY
+    else process.env.KVASIR_MEMORY_TOPOLOGY = prior
+    console.log('ok - the operator can state the topology when the machine will not')
+  })
+})
+
 test('resolving the topology settles it, and the settled answer is usable', () => {
   // Async, so it runs after the synchronous tests; failures still surface
   // because an unhandled rejection fails the process.

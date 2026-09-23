@@ -218,11 +218,15 @@ const USAGE = `usage:
   kvasir-node worker --install [--dir <dir>]
   kvasir-node run --key <file> [--budget <GiB>] [--worker <path>] [--name <id>]
                   [--gateway <url>] [--data <dir>] [--poll <seconds>]
+                  [--memory unified|discrete]
 
   --key      Solana CLI keypair file (JSON, 64 bytes), mode 600. Rewards go here.
   --budget   GPU memory to lend, in GiB. Required on unified-memory machines.
   --worker   linkcpp-expert-worker binary (or KVASIR_EXPERT_WORKER).
   --name     this machine in the node id (default: hostname).
+  --memory   whether the GPU's memory IS this machine's memory. Probed by
+             default; state it when the probe cannot tell, which costs about
+             320 MiB per slot to get wrong.
 `
 
 /** Where a downloaded worker lives, and where `run` looks for one. */
@@ -349,13 +353,26 @@ async function main(argv) {
   // ~320 MiB more than on a card, and the same budget buys half as many
   // experts. Getting this after createNode would mean advertising the wrong
   // number first and correcting it.
+  // --memory is the operator's answer when the machine will not give one. It
+  // sets the same variable the probe reads, so there is one code path.
+  if (opts.memory) {
+    const want = String(opts.memory).toLowerCase()
+    if (want !== 'unified' && want !== 'discrete') {
+      throw new Error(`--memory must be unified or discrete, got ${opts.memory}`)
+    }
+    process.env.KVASIR_MEMORY_TOPOLOGY = want
+  }
   await executorsMod.resolveMemoryTopology()
   const node = createNode(opts)
   if (!node.workerBinary()) throw new Error('no expert worker binary: pass --worker <path> or set KVASIR_EXPERT_WORKER')
   if (!node.model) {
+    // Reachable only when no GPU answers at all, since an answering GPU that
+    // will not state its size is charged the dearer model rather than refused.
+    // Say how to override anyway: a node that cannot be told what it is
+    // running on is a node that cannot run, and this used to be a restart loop.
     throw new Error(`cannot tell what a slot costs on this machine: ${executorsMod.memoryTopologyReason()}. `
-      + 'The GPU memory model depends on whether the GPU shares the system\'s memory, and lending '
-      + 'against the wrong one would put this node over its budget. Fix the driver or GPU probe and retry.')
+      + 'Fix the driver, or state it with --memory unified|discrete (KVASIR_MEMORY_TOPOLOGY) '
+      + 'if you know which this machine is.')
   }
   const cap = executorsMod.capacityForBudget(node.budget, node.model, null)
   node.log(`kvasir-node ${node.workerId} · wallet ${node.address} · gateway ${node.gateway}`)

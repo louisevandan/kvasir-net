@@ -391,6 +391,15 @@ function systemMemoryBytes() {
  * of doing it here rather than at each call site.
  */
 async function resolveMemoryTopology() {
+  // An operator who knows may simply say so. This exists because the probe
+  // below reads a number that some unified parts do not publish, and a node
+  // that cannot be told what it is running on is a node that cannot run.
+  const told = String(process.env.KVASIR_MEMORY_TOPOLOGY ?? '').trim().toLowerCase()
+  if (told === TOPOLOGY.UNIFIED || told === TOPOLOGY.DISCRETE) {
+    topology = told
+    topologyReason = `set by the operator (KVASIR_MEMORY_TOPOLOGY=${told})`
+    return topology
+  }
   if (process.platform === 'darwin') {
     // Apple Silicon is unified and says so without being asked; the Metal
     // entry is measured on that basis and there is no second model to pick.
@@ -400,17 +409,44 @@ async function resolveMemoryTopology() {
   }
   const gpu = await gpuReadiness()
   const first = gpu && gpu.gpus && gpu.gpus[0]
-  const deviceTotal = first && Number(first.totalBytes)
+  const deviceTotal = Number(first && first.totalBytes)
   const hostTotal = systemMemoryBytes()
-  if (!deviceTotal || !hostTotal) {
+  const gib = (n) => `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`
+
+  // Nothing answering at all. There is no GPU to lend, so there is also
+  // nothing to be conservative about.
+  if (!first || !hostTotal) {
     topology = TOPOLOGY.UNKNOWN
-    topologyReason = gpu && gpu.reason
-      ? gpu.reason
-      : 'could not read the GPU and system memory totals'
+    topologyReason = (gpu && gpu.reason) || 'no GPU is answering'
     return topology
   }
+
+  // A GPU that will not say how big it is.
+  //
+  // This is the case the first version of this function got backwards. On a
+  // GB10, `nvidia-smi --query-gpu=memory.total` answers [N/A] — and it does
+  // that BECAUSE the memory is the system's, which resolveBudget() in the
+  // headless node has known and said out loud since before any of this
+  // existed: "the GPU reports no memory size (unified memory?)". Using that
+  // missing number as the discriminator asked a unified machine to prove it
+  // was unified with the very field being unified takes away.
+  //
+  // It is still not proof. A driver in trouble also reports nothing, so this
+  // does not claim a measurement — it charges the dearer of the two models and
+  // says it is assuming. That is the safe direction and the only asymmetry
+  // that matters here: the unified model on a card lends less than it could,
+  // while the discrete model on a Grace part hands out memory that is not
+  // there. Wrong-and-frugal is recoverable; wrong-and-generous takes the
+  // machine down.
+  if (!Number.isFinite(deviceTotal) || deviceTotal <= 0) {
+    topology = TOPOLOGY.UNIFIED
+    topologyReason = `${first.name || 'the GPU'} reports no memory size, which is what a unified part does`
+      + ' — assuming unified and charging the dearer model'
+      + ' (set KVASIR_MEMORY_TOPOLOGY=discrete if this is a card)'
+    return topology
+  }
+
   const ratio = Math.abs(deviceTotal - hostTotal) / hostTotal
-  const gib = (n) => `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`
   if (ratio <= SAME_MEMORY_TOLERANCE) {
     topology = TOPOLOGY.UNIFIED
     topologyReason = `GPU total ${gib(deviceTotal)} matches system memory ${gib(hostTotal)}`
