@@ -112,6 +112,11 @@ export interface NodeStatus {
   // The executor's measured cost of hosting experts, so the slider previews
   // with the same conversion the app uses for its offer (see capacityForBudget).
   expertMemoryModel?: ExpertMemoryModel | null
+  // Whether this GPU's memory is the machine's memory, which is what decides
+  // between the two CUDA models. 'unknown' means the app will not lend, and the
+  // reason is written for the operator rather than the log.
+  memoryTopology?: 'discrete' | 'unified' | 'unknown'
+  memoryTopologyReason?: string
   vramReserveBytes?: number
   ownWorkerGpuBytes?: number
   cudaPack?: CudaPackStatus

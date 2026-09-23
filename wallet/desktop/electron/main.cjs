@@ -8,7 +8,8 @@ const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
 const { P4Node } = require('./p4node.cjs')
 const { Participation } = require('./participation.cjs')
-const { executors, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes, expertExecutor, setInstalledExecutor } = require('./executors.cjs')
+const { executors, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes, expertExecutor, setInstalledExecutor,
+  resolveMemoryTopology, memoryTopology, memoryTopologyReason, expertMemoryModel: resolvedExpertMemoryModel } = require('./executors.cjs')
 const { CudaPack } = require('./cudaPack.cjs')
 const { ExpertHost, ExpertPool } = require('./expertHost.cjs')
 const { RelayTunnel } = require('./relay.cjs')
@@ -586,10 +587,17 @@ function ownWorkerGpuBytes() {
 }
 
 // This platform's expert executor — CUDA on Windows/Linux, Metal on a Mac —
-// and its measured memory model. Not a fixed id: the Mac has its own entry.
+// and its measured memory model, resolved for this machine's memory topology.
+// Null when the topology could not be established, and null means do not lend:
+// the CUDA models differ by ~320 MiB per slot between a card and a Grace part,
+// so guessing which applies is how a node ends up over the budget it was given.
 function expertMemoryModel() {
-  const { entry } = expertExecutor()
-  return entry && entry.memoryModel ? entry.memoryModel : null
+  return resolvedExpertMemoryModel()
+}
+
+/** Zero rather than a guess: what to offer when the model is unknown. */
+function knowsWhatASlotCosts() {
+  return expertMemoryModel() != null
 }
 
 /** Free GPU memory the node may still use, or null where it is not knowable (unified memory). */
@@ -620,6 +628,7 @@ function vramBudgetBytes() {
  * we even know the card size is how the unlimited request happened.
  */
 function maxExpertsForBudget(budget = vramBudgetBytes()) {
+  if (!knowsWhatASlotCosts()) return 0
   return capacityForBudget(budget, expertMemoryModel(), availableGpuBytes()).experts
 }
 async function refreshGpuTotal() {
@@ -649,8 +658,13 @@ const expertPool = new ExpertPool({
     log: (line) => console.log(line),
   }),
   workerId: () => participation.workerIdFn(),
-  nextWindow: (held) => nextSlotWindow(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held),
-  fits: (held) => slotsThatFit(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held),
+  // Both refuse outright when the memory model is unknown. capacityForBudget
+  // treats a null model as "not probed yet, show one shard's worth", which is
+  // the right answer for a slider preview and the wrong one for an offer.
+  nextWindow: (held) => (knowsWhatASlotCosts()
+    ? nextSlotWindow(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held) : 0),
+  fits: (held) => (knowsWhatASlotCosts()
+    ? slotsThatFit(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held) : 0),
 })
 participation = new Participation({
   baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
@@ -704,7 +718,12 @@ async function nodeStatus({ inspect = false } = {}) {
     vramBudgetBytes: vramBudgetBytes(),
     maxExperts: maxExpertsForBudget(),
     // Held across slots (one shard, one worker each) vs what the budget allows.
-    expertSlots: capacityForBudget(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes()).slots,
+    expertSlots: knowsWhatASlotCosts()
+      ? capacityForBudget(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes()).slots : 0,
+    // So the node screen can say why it is offering nothing, rather than
+    // showing a zero with no cause.
+    memoryTopology: memoryTopology(),
+    memoryTopologyReason: memoryTopologyReason(),
     heldExperts: expertPool.heldExperts(),
     // So the slider's live preview uses the same conversion as the offer.
     expertMemoryModel: expertMemoryModel(),
@@ -930,6 +949,14 @@ function createWindow() {
 app.whenReady().then(() => {
   register()
   createWindow()
+  // Settle the memory topology before anything computes a capacity. Until this
+  // finishes the node offers nothing, which is the intended behaviour: a slot's
+  // cost differs by ~320 MiB between a card and a Grace part, and an offer made
+  // on the wrong one is an offer the machine cannot honour. It is one
+  // nvidia-smi call, so the window is short.
+  resolveMemoryTopology()
+    .then(() => console.log(`memory topology: ${memoryTopology()} — ${memoryTopologyReason()}`))
+    .catch((e) => console.log(`memory topology: unknown — ${e && e.message}`))
   // Debug mode exists so participation can be tested without a human at the
   // lock screen — which is also what stands between the operator and the
   // "start node" button. Start the market loop directly; the local p4 agent is
@@ -938,7 +965,7 @@ app.whenReady().then(() => {
     debugIdentity()
     // Size the card first, so the first volunteer request already carries a
     // budget instead of asking for an entire layer.
-    refreshGpuTotal().finally(() => {
+    Promise.all([resolveMemoryTopology().catch(() => {}), refreshGpuTotal()]).finally(() => {
       participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
     })
   }

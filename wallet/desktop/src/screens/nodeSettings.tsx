@@ -126,6 +126,12 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
   const available = Math.max(0, gpu.freeBytes + own - (status?.vramReserveBytes ?? 0))
   // Total across slots, not one shard's window: a machine lending 4 GiB holds
   // several shards, and the slider should say what it will actually take.
+  // A null model means the app could not tell whether this GPU's memory is the
+  // machine's memory, and the two answers differ by ~320 MiB per slot. The
+  // node offers nothing in that state, so the slider must not promise a number
+  // either — showing the preview default here would be the one place the UI
+  // and the offer disagree.
+  const knowsCost = status?.expertMemoryModel != null
   const experts = capacityForBudget(current, status?.expertMemoryModel, available).experts
   const usedByOthers = Math.max(0, gpu.usedBytes - own)
   const overFree = current > available
@@ -151,7 +157,9 @@ function VramCard({ status, onChange }: { status: NodeStatus | null; onChange: (
         onTouchEnd={() => { if (value != null) onChange(value) }}
         style={{ width: '100%', padding: 0 }} />
       <div className="small" style={{ marginTop: 6 }}>
-        {current === 0 ? t('ns.vramNone') : t('ns.vramExperts', experts)}
+        {current === 0 ? t('ns.vramNone')
+          : knowsCost ? t('ns.vramExperts', experts)
+          : (status?.memoryTopologyReason || t('ns.vramUnknownCost'))}
       </div>
       {overFree && current > 0 && (
         <div className="small" style={{ color: 'var(--danger)', marginTop: 4 }}>{t('ns.vramOverFree', gib1(available))}</div>

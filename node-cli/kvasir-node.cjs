@@ -138,8 +138,11 @@ function createNode(opts) {
   // each would overwrite the other's census entry and relay session.
   const workerId = `server-${key.address.slice(0, 8)}-${slug(opts.name || os.hostname())}`
   const log = opts.log || ((line) => console.log(`${new Date().toISOString()} ${line}`))
-  const { entry } = executorsMod.expertExecutor()
-  const model = opts.memoryModel || (entry && entry.memoryModel) || null
+  // The model depends on whether this machine's GPU memory IS its system
+  // memory — resolveMemoryTopology() must have run, or this is null and the
+  // node refuses to start rather than lend against a cost it does not know.
+  const { entry, memoryModel } = executorsMod.expertExecutor()
+  const model = opts.memoryModel || memoryModel || null
   const workerBinary = () => {
     // In order: what the operator named, the environment, what `worker
     // --install` put on disk, and finally a build executors.cjs knows how to
@@ -342,12 +345,22 @@ async function main(argv) {
   if (!opts.key) throw new Error('run needs --key <file>')
   loadKey(opts.key)   // a bad key file is the first thing to hear about, not the budget
   opts.budgetBytes = await resolveBudget(opts)
+  // Before the capacity is computed, not after: on a Grace part a slot costs
+  // ~320 MiB more than on a card, and the same budget buys half as many
+  // experts. Getting this after createNode would mean advertising the wrong
+  // number first and correcting it.
+  await executorsMod.resolveMemoryTopology()
   const node = createNode(opts)
   if (!node.workerBinary()) throw new Error('no expert worker binary: pass --worker <path> or set KVASIR_EXPERT_WORKER')
-  if (!node.model) throw new Error('no memory model for this platform\'s expert executor')
+  if (!node.model) {
+    throw new Error(`cannot tell what a slot costs on this machine: ${executorsMod.memoryTopologyReason()}. `
+      + 'The GPU memory model depends on whether the GPU shares the system\'s memory, and lending '
+      + 'against the wrong one would put this node over its budget. Fix the driver or GPU probe and retry.')
+  }
   const cap = executorsMod.capacityForBudget(node.budget, node.model, null)
   node.log(`kvasir-node ${node.workerId} · wallet ${node.address} · gateway ${node.gateway}`)
   node.log(`worker ${node.workerBinary()} · lending ${(node.budget / GIB).toFixed(1)} GiB → up to ${cap.experts} experts in ${cap.slots} slot(s)`)
+  node.log(`memory: ${executorsMod.memoryTopology()} — ${executorsMod.memoryTopologyReason()}`)
   node.participation.start({ pollMs: (Number(opts.poll) || 45) * 1000 })
   const summary = setInterval(() => {
     const s = node.pool.status()

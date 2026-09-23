@@ -1,14 +1,17 @@
 'use strict'
 // node electron/executors.test.cjs
 const assert = require('node:assert/strict')
-const { expertsForBudget, capacityForBudget, nextSlotWindow, slotsThatFit, expertExecutor, KNOWN, MAX_SLOTS } = require('./executors.cjs')
+const { expertsForBudget, capacityForBudget, nextSlotWindow, slotsThatFit, expertExecutor, KNOWN, MAX_SLOTS,
+  memoryModelFor, memoryTopology, resolveMemoryTopology, TOPOLOGY } = require('./executors.cjs')
 
 const MIB = 1024 * 1024
 const GIB = 1024 * MIB
 // The arithmetic is tested on a fixed model, so re-measuring a backend does not
 // rewrite these expectations. The shipped models are checked separately below.
 const cuda = { residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB }
-const shippedCuda = KNOWN.find((k) => k.id === 'linkcpp-expert-worker').memoryModel
+const cudaEntry = KNOWN.find((k) => k.id === 'linkcpp-expert-worker')
+const shippedCuda = cudaEntry.memoryModels.discrete
+const shippedGrace = cudaEntry.memoryModels.unified
 let passed = 0
 const test = (name, fn) => { fn(); passed++; console.log('ok -', name) }
 
@@ -85,13 +88,63 @@ test('the expert executor is the one for this platform', () => {
   const { entry } = expertExecutor()
   assert.ok(entry, 'no expert executor for this platform')
   assert.ok(!entry.platforms || entry.platforms.includes(process.platform))
-  assert.ok(entry.memoryModel && entry.memoryModel.residentBytesPerExpert > 0)
+  // Either a single measured model (Metal) or one per memory topology (CUDA).
+  assert.ok(entry.memoryModel || entry.memoryModels, 'the entry carries no memory model at all')
+})
+
+test('an unresolved topology yields no CUDA model, so the node cannot lend', () => {
+  // The failure this guards is silent and expensive: a Grace part charged at a
+  // card's rates over-commits the machine by ~320 MiB per slot. Refusing to
+  // answer is the only safe thing to do before the probe has run.
+  assert.equal(memoryTopology.length, 0)
+  const unresolved = memoryModelFor({ memoryModels: cudaEntry.memoryModels })
+  const known = memoryTopology() !== TOPOLOGY.UNKNOWN
+  if (!known) assert.equal(unresolved, null, 'an unknown topology must not pick a model')
+  // And a null model must produce no offer, not the "one shard's worth" a
+  // slider preview shows.
+  assert.equal(capacityForBudget(8 * GIB, null, null).experts, 64,
+    'the preview default is unchanged — callers that lend must check for null themselves')
+})
+
+test('the two CUDA models differ by the host cost a card does not pay', () => {
+  const perSlot = (m) => m.fixedBytes + m.scratchBytes
+  const extra = perSlot(shippedGrace) - perSlot(shippedCuda)
+  // Measured on a GB10: 174.93 MiB of private host pages at rest and 150.4
+  // more while serving, none of which exists on a discrete card.
+  assert.ok(extra >= 300 * MIB, `Grace charges only ${extra / MIB} MiB more per slot`)
+  assert.equal(shippedGrace.residentBytesPerExpert, shippedCuda.residentBytesPerExpert,
+    'R is the served bytes on both; only the fixed and scratch terms move')
+})
+
+test('the Grace model halves what a 1.8 GiB budget offers', () => {
+  // The GB10 node advertised 124 experts in 2 slots on the discrete model and
+  // was 27% over its budget while serving. This is the corrected figure, and
+  // the drop is the point rather than a regression.
+  const budget = 1843.2 * MIB
+  assert.deepEqual(capacityForBudget(budget, shippedCuda, null), { experts: 124, slots: 2 })
+  const fixed = capacityForBudget(budget, shippedGrace, null)
+  assert.ok(fixed.experts <= 64 && fixed.slots === 1,
+    `Grace should fit one slot at this budget, got ${fixed.experts} in ${fixed.slots}`)
 })
 
 test('the shipped CUDA model covers what the cuBLAS build was measured to take', () => {
   // RTX 4060, cuBLAS + FP32, 64 experts: +107 MiB scratch at 512 tokens x 8.
   assert.ok(shippedCuda.scratchBytes >= 107 * MIB, `scratch ${shippedCuda.scratchBytes / MIB} MiB`)
   assert.ok(shippedCuda.residentBytesPerExpert >= 9_502_720, 'R below the served bytes per expert')
+})
+
+test('resolving the topology settles it, and the settled answer is usable', () => {
+  // Async, so it runs after the synchronous tests; failures still surface
+  // because an unhandled rejection fails the process.
+  resolveMemoryTopology().then((t) => {
+    assert.ok(Object.values(TOPOLOGY).includes(t), `unexpected topology ${t}`)
+    assert.equal(memoryTopology(), t)
+    if (t !== TOPOLOGY.UNKNOWN) {
+      const { entry } = expertExecutor()
+      assert.ok(memoryModelFor(entry), 'a settled topology must yield a model')
+    }
+    console.log('ok - resolving the topology settles it, and the settled answer is usable')
+  })
 })
 
 console.log(`\n${passed} passed`)

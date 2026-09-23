@@ -117,11 +117,50 @@ const KNOWN = [
     // so which of them a number lives in changes nothing arithmetically — it
     // records where the number came from. Reading either as transient is the
     // mistake this paragraph exists to prevent.
-    memoryModel: {
-      residentBytesPerExpert: 9_568_256,   // 9.125 MiB
-      fixedBytes: 128 * MIB,
-      scratchBytes: 160 * MIB,             // cuBLAS + FP32 at 512 tokens x 8, settled and kept
-      headroomBytes: 128 * MIB,
+    //
+    // Two models, because "GPU memory" means two different things. On a card,
+    // the CUDA runtime's own host pages are real but are not the card's memory,
+    // so they are rightly absent below. On Grace they are the same DRAM as the
+    // weights, and leaving them out is how a node ends up 27% over the budget
+    // its operator set. memoryTopology() picks between these; it does not
+    // default, because defaulting to the wrong one over-commits the machine.
+    memoryModels: {
+      // RTX 4060, discrete VRAM.
+      discrete: {
+        residentBytesPerExpert: 9_568_256,   // 9.125 MiB
+        fixedBytes: 128 * MIB,
+        scratchBytes: 160 * MIB,             // cuBLAS + FP32 at 512 tokens x 8, settled and kept
+        headroomBytes: 128 * MIB,
+      },
+      // NVIDIA GB10 (Grace, aarch64), measured 2026-09-23. R is the same to
+      // within 0.6% — 9.0677 MiB/expert against the served 9.0625 — so the
+      // discrete figure is kept rather than split hairs. Everything else moves.
+      //
+      //   at rest, per slot   174.93 MiB host private + 174.71 MiB device
+      //   serving, over rest  150.4 MiB host          + 110.0 MiB device
+      //
+      // The device scratch transfers from the 4060 almost exactly (110 against
+      // 107). The damage is the host term, which the discrete model has no
+      // slot for at all: the runtime's private pages, ~175 MiB per process,
+      // come out of the pool the weights live in.
+      //
+      // Host scratch is width-independent above 64 tokens (149.0 at 64 tokens,
+      // 150.4 at 512) — a pool that grows once and stays. 150 rather than the
+      // 125 a clean run straight to 512 gives: the extra is fragmentation from
+      // serving narrow widths first, and a real slot serves every width the
+      // bridge sends it.
+      //
+      // Headroom carries the 76.13 MiB of CUDA library text that is shared
+      // across slots — charged once for the machine, which is what headroom is.
+      // Note for anyone writing an admission check: 42.19 MiB of that lands in
+      // the kernel's Cached rather than Buffers, so free + buffers does not see
+      // it.
+      unified: {
+        residentBytesPerExpert: 9_568_256,   // 9.125 MiB, as above
+        fixedBytes: 352 * MIB,               // 174.93 host + 174.71 device, rounded up
+        scratchBytes: 288 * MIB,             // 150.4 host + 110.0 device, settled and kept
+        headroomBytes: 256 * MIB,            // 128 as before, plus the shared CUDA text
+      },
     },
   },
   {
@@ -293,6 +332,112 @@ async function gpuReadiness() {
   return { vendor: 'nvidia', ready: gpus.length > 0, cudaVersion: cuda || null, gpus }
 }
 
+// ---- is the GPU's memory the machine's memory? --------------------------------
+//
+// A CUDA node needs to know this before it can say what a slot costs, and the
+// answer is not a property of the platform. An RTX card and an NVIDIA Grace
+// part run the same binary through the same runtime; what differs is that on
+// Grace the runtime's own host allocations come out of the pool the weights
+// live in. Measured, that is ~175 MiB per slot at rest and another ~150 while
+// serving — enough to put a node a quarter over the budget its operator set.
+//
+// Three states, and the third is not decoration. Being wrong here is not
+// symmetric: calling a Grace box discrete over-commits the machine, while
+// calling a card unified only under-lends it. So a probe that fails must say
+// so and stop, never fall through to the cheaper answer.
+//
+// ## What we can and cannot read
+//
+// The authoritative flag is cudaDeviceProp::integrated, and it is correct on
+// every part we have checked. We cannot read it: that needs a CUDA call this
+// process cannot make, the same limitation that makes the Metal branch of
+// gpuReadiness() infer a working set instead of asking MTLDevice for it.
+//
+// What we can read is a consequence of shared DRAM rather than a correlate of
+// it: when the GPU's memory IS the machine's memory, the two totals are the
+// same number. On a GB10, nvidia-smi and /proc/meminfo agree to the megabyte;
+// on a card they cannot agree except by coincidence, and a coincidence here
+// only makes the node lend less than it could.
+//
+// Two flags that look like they would answer this and do not, both checked on
+// a GB10 rather than assumed:
+//
+//   unifiedAddressing  1 on a GB10 AND 1 on an RTX 4060. It means one virtual
+//                      address space, not one physical memory. Trusting it
+//                      would call every card unified.
+//   pageableMemoryAccess  0 on a GB10, though it is 1 on a GH200. Trusting it
+//                      would call this box discrete — the dangerous direction.
+//
+// Each flag alone gives a different wrong answer, which is why this reads
+// neither.
+const TOPOLOGY = Object.freeze({ DISCRETE: 'discrete', UNIFIED: 'unified', UNKNOWN: 'unknown' })
+
+let topology = TOPOLOGY.UNKNOWN
+let topologyReason = 'not probed yet'
+
+/** How close two totals must be to be the same memory. nvidia-smi rounds to
+ *  MiB and the kernel keeps a little back, so they agree closely rather than
+ *  exactly; 2% is far tighter than any card-to-RAM ratio and loose enough for
+ *  that rounding. */
+const SAME_MEMORY_TOLERANCE = 0.02
+
+function systemMemoryBytes() {
+  try { return require('node:os').totalmem() || 0 } catch { return 0 }
+}
+
+/**
+ * Resolve the memory topology once, at startup, before anything computes a
+ * capacity. Later reads are synchronous and see a settled answer — the point
+ * of doing it here rather than at each call site.
+ */
+async function resolveMemoryTopology() {
+  if (process.platform === 'darwin') {
+    // Apple Silicon is unified and says so without being asked; the Metal
+    // entry is measured on that basis and there is no second model to pick.
+    topology = TOPOLOGY.UNIFIED
+    topologyReason = 'Apple Silicon: the GPU has no memory of its own'
+    return topology
+  }
+  const gpu = await gpuReadiness()
+  const first = gpu && gpu.gpus && gpu.gpus[0]
+  const deviceTotal = first && Number(first.totalBytes)
+  const hostTotal = systemMemoryBytes()
+  if (!deviceTotal || !hostTotal) {
+    topology = TOPOLOGY.UNKNOWN
+    topologyReason = gpu && gpu.reason
+      ? gpu.reason
+      : 'could not read the GPU and system memory totals'
+    return topology
+  }
+  const ratio = Math.abs(deviceTotal - hostTotal) / hostTotal
+  const gib = (n) => `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`
+  if (ratio <= SAME_MEMORY_TOLERANCE) {
+    topology = TOPOLOGY.UNIFIED
+    topologyReason = `GPU total ${gib(deviceTotal)} matches system memory ${gib(hostTotal)}`
+  } else {
+    topology = TOPOLOGY.DISCRETE
+    topologyReason = `GPU total ${gib(deviceTotal)} is not the system's ${gib(hostTotal)}`
+  }
+  return topology
+}
+
+/** The settled topology, and why. UNKNOWN until resolveMemoryTopology() runs. */
+function memoryTopology() { return topology }
+function memoryTopologyReason() { return topologyReason }
+
+/**
+ * The memory model for an entry under the settled topology, or null when there
+ * is no honest answer. Null means "do not lend" — every caller that decides
+ * how much to offer has to treat it that way, because the alternative is
+ * offering memory we have not accounted for.
+ */
+function memoryModelFor(entry) {
+  if (!entry) return null
+  if (entry.memoryModel) return entry.memoryModel
+  if (!entry.memoryModels) return null
+  return entry.memoryModels[topology] || null
+}
+
 /**
  * @returns {Promise<{executors: object[], gpu: object, summary: object}>}
  */
@@ -435,13 +580,23 @@ function expertExecutor() {
     && (!k.platforms || k.platforms.includes(process.platform)))
   for (const k of mine) {
     const bin = findBinary(k.locate())
-    if (bin) return { entry: k, path: bin }
+    if (bin) return { entry: k, path: bin, memoryModel: memoryModelFor(k) }
   }
-  return { entry: mine[0] || null, path: null }
+  const entry = mine[0] || null
+  return { entry, path: null, memoryModel: memoryModelFor(entry) }
+}
+
+/**
+ * This machine's expert memory model, or null when we do not know. Null is a
+ * refusal, not a default: see memoryModelFor().
+ */
+function expertMemoryModel() {
+  return expertExecutor().memoryModel
 }
 
 module.exports = {
   executors, expertsForBudget, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes,
-  expertExecutor, locateExecutor, setInstalledExecutor, gpuReadiness,
+  expertExecutor, expertMemoryModel, locateExecutor, setInstalledExecutor, gpuReadiness,
+  resolveMemoryTopology, memoryTopology, memoryTopologyReason, memoryModelFor, TOPOLOGY,
   KNOWN, NTSTATUS, MAX_EXPERTS_PER_REQUEST, MAX_SLOTS,
 }
