@@ -289,20 +289,37 @@ function pack({ exe, cuda }) {
 // Four checks afterwards, each for a binary that once ran only where it was
 // built: an unresolved library that is not the driver, an RPATH/RUNPATH, a
 // GLIBCXX dependency, or a glibc floor above the base's.
-const LINUX_IMAGE = 'nvidia/cuda:13.0.1-devel-ubi8'
+const LINUX_BASE = 'nvidia/cuda:13.0.1-devel-ubi8'
+// The toolchain baked in once instead of dnf-installed on every run.
+const LINUX_IMAGE = 'kvasir-worker-build:ubi8'
 const LINUX_GLIBC_MAX = '2.28'
 const LINUX_ARCHS = '75-real;80-real;86-real;89-real;90-real;120-real;120-virtual'
 
+/** Build (or reuse) the image with gcc-toolset-13 and cmake already in it. */
+function linuxImage() {
+  const ctx = path.join(REPO, 'build', 'linux-image')
+  fs.mkdirSync(ctx, { recursive: true })
+  fs.writeFileSync(path.join(ctx, 'Dockerfile'), [
+    `FROM ${LINUX_BASE}`,
+    'RUN dnf install -y gcc-toolset-13 cmake ninja-build && dnf clean all',
+    'ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH',
+    'ENV LD_LIBRARY_PATH=/opt/rh/gcc-toolset-13/root/usr/lib64:$LD_LIBRARY_PATH',
+    '',
+  ].join('\n'))
+  execFileSync('docker', ['build', '-q', '-t', LINUX_IMAGE, ctx],
+    { stdio: 'inherit', env: { ...process.env, MSYS_NO_PATHCONV: '1' } })
+  return LINUX_IMAGE
+}
+
 function buildLinux() {
+  linuxImage()
   const out = path.join(REPO, 'build', 'linux-cuda')
   fs.rmSync(out, { recursive: true, force: true })
   fs.mkdirSync(out, { recursive: true })
   const script = `#!/bin/bash
 set -e
-dnf -y -q install gcc-toolset-13 cmake make >/dev/null
-source /opt/rh/gcc-toolset-13/enable
 gcc --version | head -1; cmake --version | head -1; nvcc --version | tail -2 | head -1
-cmake -S /src -B /tmp/b -DCMAKE_BUILD_TYPE=Release \\
+cmake -S /src -B /tmp/b -G Ninja -DCMAKE_BUILD_TYPE=Release \\
   -DLINKCPP_EXPERT_WORKER_ONLY=ON -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \\
   -DGGML_CUDA=ON -DGGML_CUDA_FORCE_CUBLAS=ON -DGGML_CUDA_NCCL=OFF \\
   -DCMAKE_CUDA_ARCHITECTURES="${LINUX_ARCHS}" \\
