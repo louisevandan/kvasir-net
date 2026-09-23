@@ -262,11 +262,30 @@ inline int chunk_width(ggml_backend_t backend) {
 /**
  * Make the cuBLAS build accumulate in FP32, without anyone having to remember.
  *
- * FP16 accumulation is not enough on its own — measured 0.998918 minimum on a
- * Qwen3.5 shard, under the bar — so this build is only correct with
- * GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F set. Leaving that to whoever spawns the
- * worker means the app, node-cli and anyone running it by hand each have to
- * know, and the one who forgets gets slightly wrong answers with no symptom.
+ * What this is NOT justified by: a 0.998918 that stood here claiming FP16
+ * accumulation fell under the bar. That figure was measured on a Qwen3.5 shard
+ * — a different model from the one this serves — and nobody has been able to
+ * say on which machine or which build. Two people then tried to reproduce it
+ * on the model we actually serve and could not:
+ *
+ *                        T=8/9      T=256
+ *   4060, cuBLAS FP16    0.999923   0.999975
+ *   GB10, cuBLAS FP16    0.999936   0.999997
+ *
+ * Both pass. On these two cards the only kernel that breaks the bar is MMQ
+ * (see the table above), and cuBLAS passes either way. So the honest reason
+ * for setting it is the one the numbers do support: FP32 accumulation is
+ * better where it has been measured — 1.000000 against 0.999975 and 0.999997
+ * at T=256 — and it costs nothing here, since the build already pays for
+ * cuBLAS. That is a smaller claim than the one it replaces, and it is one
+ * somebody can check.
+ *
+ * Setting it in the binary rather than leaving it to whoever spawns the worker
+ * is the part that matters most. The app, node-cli and anyone running it by
+ * hand would each have to know, and a correctness property that depends on how
+ * the process was launched is not a property: a GB10 build was found in
+ * production with this define missing, correct only because a wrapper script
+ * exported the variable by hand.
  *
  * So the worker sets it for itself, before any backend is created, and only
  * when it is unset: an operator who deliberately exports 0 to compare builds
