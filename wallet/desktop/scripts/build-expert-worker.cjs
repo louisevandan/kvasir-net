@@ -49,6 +49,7 @@
  * Usage:
  *   node scripts/build-expert-worker.cjs            build (Windows: + pack)
  *   node scripts/build-expert-worker.cjs --linux    linux-x64 CUDA pack, in Docker
+ *   node scripts/build-expert-worker.cjs --linux --arch 121-real   one card only
  *   node scripts/build-expert-worker.cjs --no-pack  build only; skip the Windows pack
  */
 const { execFileSync } = require('node:child_process')
@@ -293,7 +294,15 @@ const LINUX_BASE = 'nvidia/cuda:13.0.1-devel-ubi8'
 // The toolchain baked in once instead of dnf-installed on every run.
 const LINUX_IMAGE = 'kvasir-worker-build:ubi8'
 const LINUX_GLIBC_MAX = '2.28'
+// Default arch list: Turing through Blackwell, plus PTX for anything newer.
+// --arch overrides it, so a one-card build (GB10 is 121) shows in the command
+// that produced the artifact rather than in an edit nobody sees.
 const LINUX_ARCHS = '75-real;80-real;86-real;89-real;90-real;120-real;120-virtual'
+
+function linuxArchs() {
+  const at = process.argv.indexOf('--arch')
+  return at > -1 && process.argv[at + 1] ? process.argv[at + 1] : LINUX_ARCHS
+}
 
 /** Build (or reuse) the image with gcc-toolset-13 and cmake already in it. */
 function linuxImage() {
@@ -312,6 +321,8 @@ function linuxImage() {
 }
 
 function buildLinux() {
+  const archs = linuxArchs()
+  console.log(`linux worker: CUDA architectures ${archs}`)
   linuxImage()
   const out = path.join(REPO, 'build', 'linux-cuda')
   fs.rmSync(out, { recursive: true, force: true })
@@ -322,7 +333,7 @@ gcc --version | head -1; cmake --version | head -1; nvcc --version | tail -2 | h
 cmake -S /src -B /tmp/b -G Ninja -DCMAKE_BUILD_TYPE=Release \\
   -DLINKCPP_EXPERT_WORKER_ONLY=ON -DBUILD_SHARED_LIBS=OFF -DGGML_STATIC=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF \\
   -DGGML_CUDA=ON -DGGML_CUDA_FORCE_CUBLAS=ON -DGGML_CUDA_NCCL=OFF \\
-  -DCMAKE_CUDA_ARCHITECTURES="${LINUX_ARCHS}" \\
+  -DCMAKE_CUDA_ARCHITECTURES="${archs}" \\
   -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \\
   -DCMAKE_C_FLAGS_INIT="-ffile-prefix-map=/src=." \\
   -DCMAKE_CXX_FLAGS_INIT="-ffile-prefix-map=/src=." \\
@@ -364,6 +375,7 @@ function packLinux(bin) {
   fs.writeFileSync(path.join(stage, 'README.txt'), [
     'Kvasir expert worker - Linux x64, NVIDIA CUDA',
     `version ${version}, built from ${rev} in ${LINUX_IMAGE}`,
+    `CUDA architectures: ${linuxArchs()}`,
     '',
     'Needs only an NVIDIA driver supporting CUDA 13 (R580 or newer).',
     `cuBLAS, cuBLASLt, cudart, libstdc++ and libgcc are linked statically; glibc floor ${LINUX_GLIBC_MAX}.`,
