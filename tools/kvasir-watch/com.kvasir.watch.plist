@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KVASIR_RELEASE_AUTODEPLOY</key>
+		<string>1</string>
+		<key>KVASIR_WATCH_ENV</key>
+		<string>/Users/tony/project/any/.env</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kvasir.watch</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/daily.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/daily.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/daily.out</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+</dict>
+</plist>

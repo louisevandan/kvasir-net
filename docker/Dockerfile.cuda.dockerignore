@@ -1,6 +1,0 @@
-**
-!controller/
-!controller/**
-!VERSION
-controller/**/__pycache__/
-controller/**/*.pyc

@@ -45,7 +45,7 @@ final class StakingStore: ObservableObject {
         let charging = NodeTelemetry.shared.read().charging
         let blockedByCharge = nodeLive && nodeChargingOnly && !charging
         nodePausedReason = blockedByCharge ? Localizer.shared.t("nodeSettings.pausedOffCharge") : nil
-        // The node's worker, hub participation and staking heartbeat are owned
+        // The node's worker, bridge participation and staking heartbeat are owned
         // app-wide by NodePresence — StakingStore is created per-sheet and doesn't
         // exist on the home screen, so a live node stays online off this screen and
         // resumes on cold start / every return to the foreground. Persisting the
@@ -53,20 +53,20 @@ final class StakingStore: ObservableObject {
         NodePresence.shared.refresh()
     }
 
-    /// Sign in to a remote hub with the wallet (SIWS node token, no OTP) and
+    /// Sign in to a remote bridge with the wallet (SIWS node token, no OTP) and
     /// register it for the node to poll/serve. Returns a UI status message.
-    func connectHub(url: String) async -> String {
+    func connectBridge(url: String) async -> String {
         let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !u.isEmpty else { return Localizer.shared.t("nodeSettings.hubUrlMissing") }
+        guard !u.isEmpty else { return Localizer.shared.t("nodeSettings.bridgeUrlMissing") }
         guard nodeLive else { return Localizer.shared.t("nodeSettings.enableLiveFirst") }
         guard let phrase = wallet.revealMnemonic() else { return Localizer.shared.t("nodeSettings.walletLocked") }
         do {
-            let token = try await HubAuthService(baseUrl: u, mnemonic: phrase).nodeToken()
-            HubParticipation.shared.registerHub(url: u, token: token)
-            HubParticipation.shared.start(owner: owner ?? "")
-            return Localizer.shared.t("nodeSettings.hubConnected")
+            let token = try await BridgeAuthService(baseUrl: u, mnemonic: phrase).nodeToken()
+            BridgeParticipation.shared.registerBridge(url: u, token: token)
+            BridgeParticipation.shared.start(owner: owner ?? "")
+            return Localizer.shared.t("nodeSettings.bridgeConnected")
         } catch {
-            return "\(Localizer.shared.t("nodeSettings.hubConnectFailed")): \(error)"
+            return "\(Localizer.shared.t("nodeSettings.bridgeConnectFailed")): \(error)"
         }
     }
 
@@ -212,7 +212,7 @@ final class StakingStore: ObservableObject {
     }
 
     /// Register the current iOS device as a node under the account and heartbeat.
-    /// Reports the selected backend's measured throughput so the hub can tier it.
+    /// Reports the selected backend's measured throughput so the bridge can tier it.
     func connectThisDevice() async {
         guard let service, let owner else { return }
         busy = true; defer { busy = false }

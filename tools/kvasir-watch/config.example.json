@@ -1,0 +1,115 @@
+{
+  "repo": "/Volumes/Transcend/Projects/kvasir-net",
+  "site": "https://kvasir-ai.net",
+  "gatewayUrl": "https://kvr.prototypebench.org",
+  "publicRepo": "louisevandan/kvasir-net",
+  "agents": [
+    {
+      "host": "Nuri-AMD-MI250-01",
+      "label": "MI250-01",
+      "port": 42011
+    },
+    {
+      "host": "Nuri-AMD-MI250-02",
+      "label": "MI250-02",
+      "port": 42012
+    }
+  ],
+  "tracks": {
+    "ring": [
+      "src",
+      "controller",
+      "tests",
+      "benchmarks"
+    ],
+    "gateway": [
+      "solana/staking-service",
+      "p4bridge"
+    ],
+    "client": [
+      "wallet",
+      "apps"
+    ]
+  },
+  "notes": {
+    "ring": "",
+    "gateway": "The public endpoint is deliberately down until the p4 port lands.",
+    "client": ""
+  },
+  "commitWatches": [
+    {
+      "repo": "hikaMaeng/p4",
+      "label": "p4 engine",
+      "tokenEnv": "GITHUB_TOKEN"
+    },
+    {
+      "repo": "louisevandan/p4",
+      "label": "p4 (Kvasir copy)",
+      "tokenEnv": "GITHUB_TOKEN"
+    },
+    {
+      "repo": "louisevandan/kvasir-net",
+      "label": "Kvasir public repo",
+      "tokenEnv": "LOUIS_GIT_TOKEN"
+    },
+    {
+      "user": "tonythefreedom",
+      "label": "Antonio",
+      "tokenEnv": "GITHUB_TOKEN"
+    }
+  ],
+  "seed": {
+    "host": "user@seed-pipeline-host",
+    "command": "cd ~/kvasir-seed && python3 sync.py dump",
+    "staleHours": 6
+  },
+  "research": {
+    "roots": [
+      "/path/to/kvasir-net"
+    ],
+    "maxFiles": 6,
+    "maxChars": 9000
+  },
+  "readiness": {
+    "en": {
+      "file": "readiness/en.html",
+      "artifact": "https://claude.ai/artifact/BrGoZWws7QfTAJR1bkYkAK"
+    },
+    "ko": {
+      "file": "readiness/ko.html",
+      "artifact": "https://claude.ai/artifact/XC2eTVMWJMCxA61n3qWZBN"
+    }
+  },
+  "people": [
+    {
+      "who": "Tony, Kiwan",
+      "where": "Seoul",
+      "zone": "Asia/Seoul"
+    },
+    {
+      "who": "Anver",
+      "where": "Abu Dhabi",
+      "zone": "Asia/Dubai"
+    },
+    {
+      "who": "Guy",
+      "where": "Michigan",
+      "zone": "America/Detroit"
+    }
+  ],
+  "deadlines": [
+    {
+      "label": "YZi Labs EASY Residency S5 application",
+      "at": "2026-09-22T06:59:00Z",
+      "as_stated": "21 Sep 23:59 GMT-7",
+      "source": "yzilabs.com/easy-residency, checked 2026-09-17"
+    }
+  ],
+  "calendar": {
+    "icsUrl": "",
+    "timeZone": "Asia/Seoul",
+    "offsetMinutes": 540,
+    "plan": "plan.json",
+    "icsUrlEnv": "KVASIR_CALENDAR_ICS"
+  }
+}

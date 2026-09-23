@@ -1,8 +1,8 @@
 # Client handoff — API key reissue, and syncing against the server
 
 For whoever picks up the wallet clients next. Two things: what changed in the
-apps, and what to know about the server they talk to, because the linker and
-gateway sources you have locally are almost certainly behind what is deployed.
+apps, and what to know about the server they talk to, because the gateway and
+bridge sources you have locally may well be behind what is deployed.
 
 ---
 
@@ -86,7 +86,7 @@ every 401 including transient ones, and that deserves its own decision.
 
 ## Part 2 — Syncing against the server
 
-**The `linker` and `gateway` sources in a typical client checkout are old.** The
+**The server sources in a typical client checkout are old.** The
 deployment changed shape substantially. If you reason about client behaviour
 from a stale server checkout you will reach wrong conclusions — that is exactly
 what happened while debugging this bug.
@@ -100,47 +100,41 @@ client (Electron / iOS / Android / browser)
   gate.kvasir-ai.net → :8791   solana/staking-service
       wallet web app + /api/node/*, /api/stake, /api/pay/*,
       /api/credits/*, /api/inference, /api/config
-                        │ x-linkcpp-service-token
-  hub.kvasir-ai.net  → :19000  controller/hub.py
-      operator auth, settlement view, linker SPA at /linker
-                        │ delegation
-                          :19001  linker  ← never published
+                        │ X-Kvasir-Service-Token
+                      :19000  p4bridge          ← loopback only
+      what is loaded · who contributed · completions
+                        │ p4 events
+                      p4 agents ──► stage servers
 ```
 
-Clients talk to **gate only**. `hub` is the operator surface and is locked
-behind a wallet session; `linker` is not reachable from outside the host at all.
+Clients talk to **gate only**. The bridge is not reachable from outside the
+host, and the engine behind it is not reachable at all.
 
 ### Which repository is which
 
-| Component | Repo / branch | Reference commit |
-| --- | --- | --- |
-| Wallets, `staking-service`, `controller/hub.py` | `louisevandan/kvasir-net` @ `kvasir-net` | `97c8398` |
-| linker (control plane) | `hikaMaeng/linkcpp` @ `convertarchitecture` | `d59438d5` |
+| Component | Repo / branch |
+| --- | --- |
+| Wallets, `staking-service`, `p4bridge` | `louisevandan/kvasir-net` |
+| p4 engine (agents, staged llama.cpp adapter) | our fork, separate repository |
 
-These are **two separate repositories with unrelated histories** — there is no
-merge base between them. Do not try to merge; treat linker as an external
-service consumed over its API.
-
-If your `kvasir-net` checkout predates `d437efa` ("Kvasir — clean reboot"), it
-is on an abandoned history line. Re-clone rather than pull.
+These are **separate repositories with unrelated histories** — there is no merge
+base. Treat the engine as an external dependency consumed over its protocol.
 
 ### What changed server-side that affects clients
 
-- **`controller/hub.py` no longer implements the control plane.** Nodes,
-  controllers, planning, model loading and inference are delegated to linker.
-  It kept auth, the settlement view, and — deliberately — the MoE expert market,
-  external-controller registration, and the stage/ring proxy.
-- **The hub is locked by default.** No wallet session, no access; a 401 on a
-  browser navigation renders a lock screen rather than JSON. Sessions have a
-  5-minute idle life, slid forward by `/api/auth/touch` on real user input.
-  Irrelevant to wallet clients (they never touch `hub`), relevant if you point
-  a browser at it.
-- **The model list is not local to gate.** `fetchModelsFrom()` polls the hub's
-  `/api/controllers` and surfaces only controllers that are `runtime_loaded`.
-  It swallows connection errors and returns `[]`, so a hub that is unreachable
-  or answering 401 shows up in the app as an **empty model dropdown with nothing
-  in any log**. If the dropdown is empty, check the server side before the
-  client.
+- **The engine changed from linkcpp to p4**, and the service in front of it is
+  now the **bridge** rather than a hub. Wallet clients never touched either, so
+  the client-facing contract is unchanged — but every operator instruction you
+  have that mentions a hub is out of date.
+- **The model list is not local to gate.** `fetchModelsFromBridge()` polls the
+  bridge's `/api/controllers` and surfaces only controllers that are
+  `runtime_loaded` and serving. It swallows connection errors and returns `[]`,
+  so a bridge that is unreachable or answering 401 shows up in the app as an
+  **empty model list with nothing in any log**. If the list is empty, check the
+  server side before the client.
+- **There is no demo catalogue behind it any more.** A model the app offers is
+  one a bridge is serving, or the list is empty. A request whose bridge then
+  fails is refunded rather than answered with placeholder text.
 - **Two payment paths coexist.** Pay-per-request (`/api/pay/quote` → sign →
   `/api/inference`, no API key) and credit accounts (`/api/credits/*` → API key
   → `/v1/chat/completions`). The desktop inference screen uses the credit path;

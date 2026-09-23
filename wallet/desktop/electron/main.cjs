@@ -6,6 +6,14 @@ const os = require('node:os')
 const http = require('node:http')
 const crypto = require('node:crypto')
 const { spawn } = require('node:child_process')
+const { P4Node } = require('./p4node.cjs')
+const { Participation } = require('./participation.cjs')
+const { executors, capacityForBudget, nextSlotWindow, slotsThatFit, slotBytes, expertExecutor, setInstalledExecutor,
+  resolveMemoryTopology, memoryTopology, memoryTopologyReason, expertMemoryModel: resolvedExpertMemoryModel } = require('./executors.cjs')
+const { CudaPack } = require('./cudaPack.cjs')
+const { ExpertHost, ExpertPool } = require('./expertHost.cjs')
+const { RelayTunnel } = require('./relay.cjs')
+const { capability } = require('./hardware.cjs')
 const bip39 = require('bip39')
 const bs58 = require('bs58')
 const nacl = require('tweetnacl')
@@ -99,6 +107,55 @@ function clearSession() { session = null }
 function requireUnlocked() {
   if (!session) throw new Error('locked')
   return session.mnemonic
+}
+
+// ---- debug identity (DEVELOPMENT ONLY) --------------------------------------
+// Lets automated testing of node participation, shard download and the relay
+// run without a human unlocking the wallet.
+//
+// It deliberately does NOT unlock or bypass the real wallet. It substitutes a
+// separate test keypair, and the real wallet's passphrase protection is left
+// exactly as it was. A switch that opened the real wallet would be one leaked
+// env var away from being a way into anybody's funds.
+//
+// Two gates, both required:
+//   - !app.isPackaged — a packaged/release build ignores this entirely, so the
+//     switch cannot ship to users even if the variable is set on their machine.
+//   - KVASIR_DEBUG_WALLET=1
+//
+// None of the flows under test need the real wallet: the bridge accepts a
+// zero-balance identity for everything participation does. Anything earned
+// lands on the test identity, never on the operator's wallet.
+const DEBUG_WALLET = !app.isPackaged && process.env.KVASIR_DEBUG_WALLET === '1'
+const debugWalletFile = () => path.join(app.getPath('userData'), 'debug-wallet.json')
+let debugKeypair = null
+function debugIdentity() {
+  if (!DEBUG_WALLET) return null
+  if (!debugKeypair) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(debugWalletFile(), 'utf8'))
+      debugKeypair = Keypair.fromSecretKey(Uint8Array.from(bs58.decode(raw.secretKey)))
+    } catch {
+      // Stable across restarts so the node keeps one identity (and one node
+      // token) instead of appearing as a new machine on every launch.
+      debugKeypair = Keypair.generate()
+      fs.writeFileSync(debugWalletFile(), JSON.stringify({
+        secretKey: bs58.encode(debugKeypair.secretKey),
+        note: 'DEBUG ONLY: a test identity for development. Not a real wallet — never fund it.',
+      }, null, 2))
+    }
+    console.log(`[DEBUG WALLET] using test identity ${debugKeypair.publicKey.toBase58()} — NOT the real wallet`)
+  }
+  return debugKeypair
+}
+/** Address everything signs as: the test identity in debug mode, else the real wallet. */
+function activeAddress() {
+  const d = debugIdentity()
+  return d ? d.publicKey.toBase58() : (readConfig().address || '')
+}
+/** Keypair to sign with. Throws 'locked' when the real wallet is locked. */
+function activeKeypair() {
+  return debugIdentity() || keypairFromMnemonic(requireUnlocked())
 }
 function saveEncrypted(mnemonic, passphrase) {
   if (!passphrase || String(passphrase).length < 8) throw new Error('passphrase must be at least 8 characters')
@@ -382,16 +439,40 @@ function deleteModel(name) {
   try { fs.unlinkSync(path.join(modelsDir(), safe)) } catch {}
 }
 // Resolve a llama-server binary: explicit env, then common repo build dirs.
+/**
+ * The local inference runtime.
+ *
+ * Only repository build directories were looked at, which meant the feature
+ * worked for whoever had just compiled llama.cpp in this tree and for nobody
+ * else — the same shape of gap the p4 agent had. A packaged app carries its own
+ * under `resources/llama`, and a developer's installed copy is now found too.
+ */
 function llamaServerBin() {
+  const exe = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'
   const explicit = process.env.LINKCPP_LLAMA_SERVER
   if (explicit && fs.existsSync(explicit)) return explicit
+  const candidates = []
+  if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, 'llama', exe))
   const repo = path.resolve(__dirname, '..', '..', '..')
-  const candidates = [
-    path.join(repo, 'build-node-darwin-metal', 'bin', 'llama-server'),
-    path.join(repo, 'build-ring-darwin-metal', 'bin', 'llama-server'),
-    path.join(repo, 'build', 'bin', 'llama-server'),
-  ]
-  return candidates.find((p) => fs.existsSync(p)) || null
+  candidates.push(
+    path.join(repo, 'build-node-darwin-metal', 'bin', exe),
+    path.join(repo, 'build-ring-darwin-metal', 'bin', exe),
+    path.join(repo, 'build', 'bin', exe),
+    // Installed by a package manager: Homebrew on either Mac architecture, or
+    // anywhere on PATH. A developer who has llama.cpp should not have to build
+    // it again inside this tree.
+    '/opt/homebrew/bin/' + exe,
+    '/usr/local/bin/' + exe,
+  )
+  const found = candidates.find((candidate) => fs.existsSync(candidate))
+  if (found) return found
+  try {
+    const which = require('node:child_process')
+      .execFileSync(process.platform === 'win32' ? 'where' : 'which', [exe], { encoding: 'utf8' })
+      .split('\n')[0].trim()
+    if (which && fs.existsSync(which)) return which
+  } catch { /* not on PATH either */ }
+  return null
 }
 let localProc = null
 async function localGenerate(sender, name, prompt, maxTokens) {
@@ -427,6 +508,266 @@ async function localGenerate(sender, name, prompt, maxTokens) {
   }
 }
 
+// ---- this machine as a p4 node ----------------------------------------------
+// The agent is a real process holding real accelerators. `measured` is the only
+// throughput number the app is allowed to report: a decode this machine actually
+// ran. Until one exists it stays null, and the settlement service scores the node
+// on its floor tier rather than on a number the app made up.
+const p4node = new P4Node()
+
+// ---- bridge participation --------------------------------------------------
+// The p4 agent above owns this machine's accelerators; this is what tells the
+// bridge the machine exists and asks it for work. Without it the node registers
+// with settlement, reports "online", and is never given anything to serve —
+// contributedUnits stays 0 forever, which is exactly what operators saw.
+//
+// The node token is a 30-day bearer credential, so it gets the same treatment
+// as the mnemonic: encrypted with the OS keystore, never written in the clear.
+// config.json sits unprotected in userData and would hand a 30-day identity to
+// anyone who reads that folder.
+const nodeTokenFile = () => path.join(app.getPath('userData'), 'node-token.enc')
+const nodeTokenStore = {
+  load() {
+    try {
+      const buf = fs.readFileSync(nodeTokenFile())
+      if (!safeStorage.isEncryptionAvailable()) return null
+      const rec = JSON.parse(safeStorage.decryptString(buf))
+      // A token minted for a different wallet is useless: the bridge scopes it
+      // to the signer. Silently dropping it makes switching wallets just work.
+      return rec && rec.wallet === activeAddress() ? rec : null
+    } catch { return null }
+  },
+  save(rec) {
+    try {
+      if (rec == null) { fs.unlinkSync(nodeTokenFile()); return }
+      if (!safeStorage.isEncryptionAvailable()) {
+        // Refuse rather than fall back to plaintext: a 30-day bearer identity
+        // on disk in the clear is worse than re-signing on every start, which
+        // is all this costs (the wallet is unlocked by then anyway).
+        console.log('node token: OS keystore unavailable — not persisting; will re-authenticate each start')
+        return
+      }
+      fs.writeFileSync(nodeTokenFile(), safeStorage.encryptString(JSON.stringify(rec)))
+    } catch { /* best effort: a lost token is re-minted on the next poll */ }
+  },
+}
+
+// ---- GPU memory the operator lends to the network ---------------------------
+// The GPU on a desktop is usually shared — an image generator or a game can
+// want most of it. So the operator chooses how much the node may use, and the
+// app turns that into something the bridge understands: how many experts to
+// accept.
+//
+// The conversion is the executor's memory model, not a fixed factor:
+//
+//     usable = min(budget, free VRAM now + what our own worker holds - reserve)
+//     N      = floor((usable - F - S - H) / R), clamped to [0, 64]
+//
+// R (resident bytes per expert), F (fixed cost), S (scratch at the largest
+// batch served) and H (headroom) come from the executor — they are measured
+// per backend in executors.cjs. A flat "expert size x 1.25" over-asks when the
+// budget is small (F alone is ~100 MiB) and would be badly wrong for an
+// executor that expands the weights, e.g. fp16 at 3.3x the served size.
+const VRAM_STEP = 256 * 1024 * 1024
+// Kept free for the desktop itself (compositor, browser) whatever the budget.
+const SYSTEM_VRAM_RESERVE = 512 * 1024 * 1024
+// From the most recent probe. The default budget is derived from the total and
+// the usable part from free, so both refresh whenever the node screen polls.
+let lastGpuTotalBytes = null
+let lastGpuFreeBytes = null
+// VRAM our own expert worker holds right now. It shows up as "used" in the
+// probe, and must be added back or the node would shrink its own offer every
+// time it took work. Estimated from the memory model, not measured: WDDM does
+// not report per-process GPU memory.
+function ownWorkerGpuBytes() {
+  const m = expertMemoryModel()
+  if (!m || !expertPool) return 0
+  return expertPool.slots.filter((s) => s.phase === 'serving')
+    .reduce((sum, s) => sum + slotBytes(m, s.heldExperts()), 0)
+}
+
+// This platform's expert executor — CUDA on Windows/Linux, Metal on a Mac —
+// and its measured memory model, resolved for this machine's memory topology.
+// Null when the topology could not be established, and null means do not lend:
+// the CUDA models differ by ~320 MiB per slot between a card and a Grace part,
+// so guessing which applies is how a node ends up over the budget it was given.
+function expertMemoryModel() {
+  return resolvedExpertMemoryModel()
+}
+
+/** Zero rather than a guess: what to offer when the model is unknown. */
+function knowsWhatASlotCosts() {
+  return expertMemoryModel() != null
+}
+
+/** Free GPU memory the node may still use, or null where it is not knowable (unified memory). */
+function availableGpuBytes() {
+  return lastGpuFreeBytes == null ? null : Math.max(0, lastGpuFreeBytes + ownWorkerGpuBytes() - SYSTEM_VRAM_RESERVE)
+}
+
+/**
+ * The budget in effect. An operator who never touched the slider still gets a
+ * budget — half the card — and it is the same number the slider displays.
+ *
+ * Returning "unlimited" when unset was the first version, and it asked the
+ * bridge for everything: the very first poll came back with all 288 experts of
+ * a layer, while the slider on screen showed 4 GiB. A control that displays a
+ * value other than the one in force is worse than no control.
+ */
+function vramBudgetBytes() {
+  const v = Number(readConfig().vramBudgetBytes)
+  if (Number.isFinite(v) && v >= 0 && readConfig().vramBudgetBytes != null) return v
+  if (lastGpuTotalBytes) return Math.floor(lastGpuTotalBytes / 2 / VRAM_STEP) * VRAM_STEP
+  return null
+}
+
+/**
+ * Experts this machine can hold in total at the current budget, across slots
+ * of at most one shard each. This is what the slider shows. With no GPU probe
+ * yet it is one shard's worth, not "no cap" — asking for a whole layer before
+ * we even know the card size is how the unlimited request happened.
+ */
+function maxExpertsForBudget(budget = vramBudgetBytes()) {
+  if (!knowsWhatASlotCosts()) return 0
+  return capacityForBudget(budget, expertMemoryModel(), availableGpuBytes()).experts
+}
+async function refreshGpuTotal() {
+  try {
+    const c = await executors()
+    const gpu = c.gpu && c.gpu.gpus && c.gpu.gpus[0]
+    if (gpu && gpu.totalBytes) lastGpuTotalBytes = gpu.totalBytes
+    if (gpu && Number.isFinite(gpu.freeBytes)) lastGpuFreeBytes = gpu.freeBytes
+    return c
+  } catch { return null }
+}
+
+// The Windows CUDA worker and its cuBLAS DLLs, fetched on demand rather than
+// bundled (see cudaPack.cjs). Once installed, the executor probe finds it.
+const cudaPack = new CudaPack({ dir: path.join(app.getPath('userData'), 'cuda-pack'), log: (line) => console.log(line) })
+setInstalledExecutor('linkcpp-expert-worker', () => cudaPack.workerPath())
+
+// Turns an assignment into a served segment: shard download, the worker, the
+// relay. Declared before participation, which drives it.
+let participation = null
+const expertPool = new ExpertPool({
+  makeHost: () => new ExpertHost({
+    baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+    token: () => participation.ensureToken(),
+    workerBinary: () => expertExecutor().path,
+    shardDir: path.join(app.getPath('userData'), 'shards'),
+    log: (line) => console.log(line),
+  }),
+  workerId: () => participation.workerIdFn(),
+  // Both refuse outright when the memory model is unknown. capacityForBudget
+  // treats a null model as "not probed yet, show one shard's worth", which is
+  // the right answer for a slider preview and the wrong one for an offer.
+  nextWindow: (held) => (knowsWhatASlotCosts()
+    ? nextSlotWindow(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held) : 0),
+  fits: (held) => (knowsWhatASlotCosts()
+    ? slotsThatFit(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes(), held) : 0),
+})
+participation = new Participation({
+  baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+  wallet: () => activeAddress(),
+  // Signing needs the unlocked mnemonic (or the debug identity). Throwing here
+  // rather than returning an empty signature is what surfaces "wallet is
+  // locked" as a real reason.
+  sign: (bytes) => nacl.sign.detached(Uint8Array.from(bytes), activeKeypair().secretKey),
+  store: nodeTokenStore,
+  log: (line) => console.log(line),
+  host: expertPool,
+  // What the ledger should record this machine as. The backend follows the
+  // expert executor actually in use (CUDA or Metal).
+  platform: () => ({
+    os: { win32: 'windows', darwin: 'macos', linux: 'linux' }[process.platform] || process.platform,
+    device_kind: 'desktop',
+    accelerator: 'gpu',
+    backend: process.platform === 'darwin' ? 'metal' : 'cuda',
+  }),
+})
+const relay = new RelayTunnel()
+let measured = null   // { tps, tokens, elapsedMs, model, at }
+
+async function benchmark(sender, maxTokens = 64) {
+  const models = listModels()
+  if (!models.length) return { ok: false, error: 'no local model to measure with — add a GGUF first' }
+  const smallest = models.slice().sort((a, b) => a.sizeBytes - b.sizeBytes)[0]
+  const started = Date.now()
+  const result = await localGenerate(sender, smallest.name, 'Write one sentence about distributed systems.', maxTokens)
+  if (!result.ok) return { ok: false, error: result.error }
+  const elapsedMs = Date.now() - started
+  const tokens = Number(result.usage?.completion_tokens ?? 0)
+  if (!tokens || elapsedMs <= 0) return { ok: false, error: 'the run reported no token count' }
+  measured = { tps: tokens / (elapsedMs / 1000), tokens, elapsedMs, model: smallest.name, at: Date.now() }
+  return { ok: true, ...measured }
+}
+
+async function nodeStatus({ inspect = false } = {}) {
+  if (inspect) await p4node.inspect().catch(() => {})
+  // `participation` is what the operator needs to tell "the agent is running"
+  // from "the bridge has actually given this machine work" — the two looked
+  // identical before, which is why an earning-nothing node read as healthy.
+  return {
+    ...p4node.status(), capability: await capability(), measured,
+    relay: relay.status(), participation: participation.status(),
+    // Surfaced so a test identity can never be mistaken for the real wallet.
+    debugWallet: DEBUG_WALLET ? activeAddress() : null,
+    // What can actually compute here, and live GPU memory (not cached — the
+    // GPU is shared, so free VRAM moves while the app runs).
+    compute: await refreshGpuTotal(),
+    vramBudgetBytes: vramBudgetBytes(),
+    maxExperts: maxExpertsForBudget(),
+    // Held across slots (one shard, one worker each) vs what the budget allows.
+    expertSlots: knowsWhatASlotCosts()
+      ? capacityForBudget(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes()).slots : 0,
+    // So the node screen can say why it is offering nothing, rather than
+    // showing a zero with no cause.
+    memoryTopology: memoryTopology(),
+    memoryTopologyReason: memoryTopologyReason(),
+    heldExperts: expertPool.heldExperts(),
+    // So the slider's live preview uses the same conversion as the offer.
+    expertMemoryModel: expertMemoryModel(),
+    vramReserveBytes: SYSTEM_VRAM_RESERVE,
+    ownWorkerGpuBytes: ownWorkerGpuBytes(),
+    cudaPack: cudaPack.status(),
+  }
+}
+
+/**
+ * Give this machine an address the network can dial.
+ *
+ * The agent binds loopback, which is right — nothing here should be listening
+ * on a public port, least of all a protocol with no authentication. The tunnel
+ * is what makes it reachable anyway: one outbound connection, and work dialled
+ * at the relay's address arrives down it.
+ *
+ * It needs the wallet, because the relay will not hand out an address to
+ * someone who cannot prove which operator they are. A locked wallet therefore
+ * means an agent that runs but cannot be given work, and the status says so
+ * rather than the app retrying into a wall.
+ */
+function startRelay() {
+  const cfg = readConfig()
+  if (cfg.relayEnabled === false) return { skipped: 'turned off in settings' }
+  const owner = debugIdentity() ? activeAddress() : (session ? session.address : (cfg.address || null))
+  if (!owner) return { skipped: 'no wallet on this machine' }
+  if (!session && !debugIdentity()) return { skipped: 'wallet is locked' }
+  const { host, port } = cfg.relay || C.relay
+  relay.start({
+    relayHost: host,
+    relayPort: port,
+    // The same identity the settlement service and this app's node screen use.
+    nodeId: `desktop-${owner.slice(0, 8)}`,
+    owner,
+    agentPort: p4node.port,
+    sign: async (text) => {
+      const kp = activeKeypair()
+      return Buffer.from(nacl.sign.detached(Buffer.from(text, 'utf8'), kp.secretKey)).toString('base64')
+    },
+  })
+  return { started: true }
+}
+
 function register() {
   ipcMain.handle('wallet:has', () => walletExists())
   // exists: any wallet on disk · encrypted: new passphrase format · locked: no live session
@@ -458,6 +799,13 @@ function register() {
     const env = readEnvelope(); if (!env) throw new Error('no encrypted wallet')
     let m; try { m = openMnemonic(env, passphrase) } catch { throw new Error('invalid passphrase') }
     const address = setSession(m); writeConfig({ address })
+    // Resume market participation the operator already asked for. Signing on
+    // unlock is only acceptable as "carry on with what you turned on" — never
+    // as a side effect of unlocking, which is why this is gated on the node
+    // being started rather than firing for every unlock.
+    if (participation.running) {
+      participation.poke()
+    }
     return { address }
   })
   ipcMain.handle('wallet:lock', () => { clearSession(); return true })
@@ -541,6 +889,44 @@ function register() {
   ipcMain.handle('models:dir', () => modelsDir())
   ipcMain.handle('models:generate', (e, { name, prompt, maxTokens }) =>
     localGenerate(e.sender, name, prompt, maxTokens || 512))
+
+  // ---- node: run a p4 agent on this machine ---------------------------------
+  ipcMain.handle('node:status', (_e, opts) => nodeStatus(opts || {}))
+  ipcMain.handle('node:start', async () => {
+    p4node.start()
+    // Volunteer beside the agent. It polls, so a locked wallet or an
+    // unreachable bridge is a logged retry rather than a failed start — the
+    // local agent is useful on its own. Size the card first so the first
+    // request carries a budget rather than asking for a whole layer.
+    await refreshGpuTotal()
+    participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
+    // The tunnel comes up beside the agent, not after it is proven: the relay
+    // only needs the port to exist by the time somebody dials, and a stream
+    // that arrives early closes itself and says the agent is not up yet.
+    startRelay()
+    await new Promise((r) => setTimeout(r, 1200))
+    return nodeStatus({ inspect: true })
+  })
+  ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); await p4node.stop(); return nodeStatus() })
+  ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
+  ipcMain.handle('node:executors', () => executors())
+  // Starts the pack install and returns at once; progress arrives through
+  // node:status (cudaPack), which the node screen already polls.
+  ipcMain.handle('node:installCudaPack', () => {
+    cudaPack.install()
+      .then(() => { if (participation.running) participation.poke() })
+      .catch(() => { /* the reason is in cudaPack.status() */ })
+    return cudaPack.status()
+  })
+  ipcMain.handle('node:cancelCudaPack', () => { cudaPack.cancel(); return cudaPack.status() })
+  ipcMain.handle('node:setVramBudget', (_e, bytes) => {
+    const v = Number(bytes)
+    if (!Number.isFinite(v) || v < 0) throw new Error('VRAM budget must be a non-negative number of bytes')
+    writeConfig({ vramBudgetBytes: Math.round(v) })
+    // Takes effect on the next volunteer poll; no restart needed.
+    return { vramBudgetBytes: vramBudgetBytes(), maxExperts: maxExpertsForBudget() }
+  })
+  ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
 }
 
 function createWindow() {
@@ -563,7 +949,27 @@ function createWindow() {
 app.whenReady().then(() => {
   register()
   createWindow()
+  // Settle the memory topology before anything computes a capacity. Until this
+  // finishes the node offers nothing, which is the intended behaviour: a slot's
+  // cost differs by ~320 MiB between a card and a Grace part, and an offer made
+  // on the wrong one is an offer the machine cannot honour. It is one
+  // nvidia-smi call, so the window is short.
+  resolveMemoryTopology()
+    .then(() => console.log(`memory topology: ${memoryTopology()} — ${memoryTopologyReason()}`))
+    .catch((e) => console.log(`memory topology: unknown — ${e && e.message}`))
+  // Debug mode exists so participation can be tested without a human at the
+  // lock screen — which is also what stands between the operator and the
+  // "start node" button. Start the market loop directly; the local p4 agent is
+  // left to the UI, since a dev checkout may not have an agent binary at all.
+  if (DEBUG_WALLET) {
+    debugIdentity()
+    // Size the card first, so the first volunteer request already carries a
+    // budget instead of asking for an entire layer.
+    Promise.all([resolveMemoryTopology().catch(() => {}), refreshGpuTotal()]).finally(() => {
+      participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
+    })
+  }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => stopGateway())
+app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

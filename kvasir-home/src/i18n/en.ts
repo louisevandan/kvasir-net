@@ -1,7 +1,8 @@
 /* English — the source dictionary. Every other language mirrors this shape.
-   Translators: keep technical terms and identifiers verbatim (KVR, linkcpp,
+   Translators: keep technical terms and identifiers verbatim (KVR, p4, linkcpp,
    inference engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, layer, Qwen3.5-122B, etc.). Keep the honesty
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2, etc.). Keep the honesty
    framing intact (devnet, utility token, not an investment, non-custodial). */
 export const en = {
   nav: {
@@ -17,6 +18,7 @@ export const en = {
     technology: "Technology",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Team",
   },
 
   actions: {
@@ -36,25 +38,30 @@ export const en = {
   },
 
   hero: {
-    eyebrow: "DePIN · Decentralized AI — beyond the monopoly",
-    headline1: "Bring compute.",
-    headline2: "Earn KVR.",
-    sub: "Kvasir splits large open models across shared hardware with linkcpp, so no single node has to hold the whole model. Contribute a GPU, CPU or phone — and earn KVR for the layers you run.",
+    // The pitch used to lead with "bring compute, earn KVR" — a supply-side
+    // promise that rests on the one claim we cannot yet demonstrate, a network
+    // anyone can join, and puts a devnet token in the first line. What we can
+    // demonstrate is stranger and better: a model far too large for any machine
+    // here runs across these machines anyway, and the numbers are from today.
+    eyebrow: "DePIN · Frontier models without the datacenter",
+    headline1: "You don’t have the hardware",
+    headline2: "for a 428B model. Neither do we.",
+    sub: "Nothing in this fleet can hold Step-3.7-Flash — 428 billion parameters, far past any single device we own. Kvasir cuts it into layer windows so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring today: 28–31 tokens a second, first token in 270 ms.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
       "OpenAI + Anthropic compatible",
-      "Source-available (BSL)",
+      "Source-available (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "one ring · no master",
     topologyCaption:
-      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the 49 layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node has to hold the whole model, and the ring has no central master — illustrative.",
+      "A ring of devices — a GPU, CPU, NPU and phone — each holding a few of the model's layers. Every node runs its slice and passes only the hidden-state boundary to its neighbor; the last returns the token around the ring. No node has to hold the whole model, and the ring has no central master — illustrative.",
   },
 
   thesis: {
     eyebrow: "Why decentralized AI",
     title: "AI shouldn’t be owned by a handful of companies",
-    lede: "Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir points the other way: open models served across a permissionless network of everyday devices, owned and earned by the people who run it.",
+    lede: "Frontier inference is concentrating behind a few walled datacenters — closed weights, metered access, one bill paid to one owner. Kvasir is built the other way: open models served across a network of everyday devices, owned and earned by the people who run it. Today that engine and its settlement run on our own fleet, and a device can already register, contribute and be paid; opening the serving ring itself to anyone is the next gate. The roadmap below says where each part stands.",
     centralizedLabel: "Centralized AI",
     centralizedPoints: [
       "A few hyperscalers own the GPUs",
@@ -65,7 +72,7 @@ export const en = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Any device joins a peer-to-peer ring — no central master in the ring",
-      "Source-available linkcpp engine — BSL-licensed and fully inspectable",
+      "Source-available p4 engine — BSL 1.1 and fully inspectable",
       "Contributors earn KVR for the real compute they give",
       "Self-custody wallet — your keys never leave your device",
     ],
@@ -102,7 +109,7 @@ export const en = {
       {
         title: "Split",
         body: "The model is divided into contiguous layer windows. Every device keeps a copy of the model file but loads only its own window into memory, so no node has to run the whole thing.",
-        note: "Qwen3.5-122B · 49 layers · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "Serve",
@@ -157,10 +164,10 @@ export const en = {
     title: "One endpoint, backed by many devices",
     lede: "Keep your existing OpenAI or Anthropic client. Point it at the Kvasir gateway and pay per inference in KVR — no rewrites.",
     points: [
-      "OpenAI-compatible: drop-in for /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-compatible: drop-in for /v1/chat/completions and /v1/models",
       "Anthropic-compatible: /anthropic/v1/messages and /anthropic/v1/models",
       "Pay-per-inference in KVR: quote → payment → inference",
-      "Live model catalog aggregated from reachable hubs",
+      "Live model catalog aggregated from reachable bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -168,7 +175,7 @@ export const en = {
   token: {
     eyebrow: "Token & rewards",
     title: "KVR pays for compute — and rewards it",
-    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Compute rewards come from measured work; gateway and hub hosts also earn for uptime.",
+    lede: "KVR is the unit developers spend on inference and the unit contributors earn for the layers they run. Compute rewards come from measured work; gateway and bridge hosts also earn for uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "on-chain name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "devnet today" },
@@ -191,7 +198,7 @@ export const en = {
   network: {
     eyebrow: "Network & rewards",
     title: "Every role in the network earns KVR",
-    lede: "The ring of compute nodes is coordinated by hub and gateway roles. Each is paid in KVR for what it actually does — compute for the layers it runs, infrastructure for the uptime it keeps.",
+    lede: "The ring of compute nodes is fronted by the bridge and the settlement gateway. Each is paid in KVR for what it actually does — compute for the layers it runs, infrastructure for the uptime it keeps.",
     roles: [
       {
         role: "Compute node",
@@ -206,42 +213,42 @@ export const en = {
         earns: "hourly uptime + ×1.5 inference bonus",
       },
       {
-        role: "Hub host",
-        tagline: "The control plane",
-        body: "Discovers devices, plans layer placement, and orchestrates the ring. The most critical role — so it earns the highest hourly uptime reward for keeping the network coordinated.",
+        role: "Bridge host",
+        tagline: "The engine's front door",
+        body: "Installs a session across a model's stages, submits to the head, gathers the token stream, and reports what each node contributed — and serves the market a contributing device joins. Nothing reaches the ring without it, so it earns the highest hourly uptime reward.",
         earns: "highest hourly uptime",
       },
     ],
     rolesNote:
-      "Roles stack: one machine can be compute, gateway and hub at once, and its rewards sum together. Everything settles in KVR to that node’s own wallet.",
+      "Roles stack: one machine can be compute, gateway and bridge at once, and its rewards sum together. Everything settles in KVR to that node’s own wallet.",
     formulaTitle: "How rewards are computed",
     formulaLabels: ["Compute units", "Effective", "Infra uptime"],
     tiersTitle: "Performance tiers",
     tiersBody:
-      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work.",
+      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work. The thresholds are absolute tokens per second, so they compare a node against the model it is serving, not against other nodes: a 428B MoE decodes far slower than a small model on the same silicon, and our own reference fleet sits at 28–31 tok/s on Step-3.7-Flash. Read a tier as a measure of the work a node is doing, not of how good the hardware is — and expect the thresholds to be stated per model class before mainnet.",
   },
 
   tech: {
     eyebrow: "Under the hood",
-    title: "linkcpp — the engine behind the network",
-    lede: "linkcpp is the open control hub that turns everyday hardware into a distributed inference engine. Its ring runtime lets each device hold only a few layers and pass hidden state to its neighbor — no central master in the ring — while the inference engine data plane stays close to upstream, with a small patch set.",
-    taglineCaption: "— linkcpp, in its own words",
+    title: "p4 — the engine behind the network",
+    lede: "p4 binds mixed hardware into one serving pool: each device holds a few of the model's layers and passes only the hidden state to its neighbour, with no central master in the ring. It supersedes linkcpp, the engine Kvasir ran through mid-2026, and keeps the data plane close to upstream with a small patch set.",
+    taglineCaption: "— p4, in its own words",
     points: [
       {
         title: "Ring runtime",
         body: "Every device stores the same model and loads only its layer window, then opens one link to its predecessor and one to its successor. Hidden-state boundaries circulate around the ring and the last rank returns the token — no central master, no node holds it all.",
       },
       {
-        title: "linkcpp control hub",
-        body: "A single Dockerized hub — the control plane that the inference engine’s RPC data plane was missing. It discovers devices, plans layer placement, launches the workers, and exposes the gateways. Source-available under the Business Source License (BSL) 1.1.",
+        title: "p4 control plane",
+        body: "The control plane the RPC data plane was missing. It discovers devices, plans layer and expert placement, launches the workers, and exposes the gateways. A placement plan is an operator artifact — the engine will not load a model because a web request asked it to. Source-available under the Business Source License (BSL) 1.1.",
       },
       {
         title: "Distributed layer placement",
-        body: "linkcpp reads GGUF metadata and computes contiguous per-node layer windows via a rank manifest, plus optional MoE expert-FFN offload to node RAM.",
+        body: "p4 reads GGUF metadata and computes contiguous per-node layer windows from a placement plan, plus optional MoE expert-FFN offload to node RAM. Step-3.7-Flash, a 428B MoE, currently sits as 16 stages across two machines.",
       },
       {
         title: "SIWS + 2FA security",
-        body: "For public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes — on both hub and gateway.",
+        body: "For public deployments, operator access is a Sign-In With Solana signature over a server nonce, plus TOTP 2FA and single-use backup codes. A device that only wants to contribute compute never signs in: it proves a wallet against the bridge and receives a token scoped to participation and nothing else.",
       },
     ],
     openText:
@@ -255,13 +262,18 @@ export const en = {
     items: [
       {
         phase: "Now",
-        title: "Any-device inference, live",
-        body: "GPUs, CPUs and phones serve layers across the ring runtime (NPU support in progress). A 122B model ran end to end across three physical machines; contribution is credited end to end; wallets on web, desktop, iOS and Android keep keys on the user's device; access runs over HTTPS on public domains.",
+        title: "Frontier-scale serving, live",
+        body: "Step-3.7-Flash — a 428B MoE — is placed as 16 stages across two AMD MI250 machines and is serving. A 122B model ran end to end across three physical machines, one of them a phone holding part of it. Wallets on web, desktop, iOS and Android keep keys on the user's device.",
+      },
+      {
+        phase: "In flight",
+        title: "Ring, gateway, client",
+        body: "The settlement gateway is ported to p4 and answering: a paid request crosses the gateway, the bridge and the MI250 ring and is billed on the tokens it used. On the serving ring, Step-3.7-Flash returns 28–31 tokens a second single stream, first token in 270–285 ms. Still in flight: the ring is going through recovery gates after an interrupted 64-request run, the desktop client is becoming a real node that supervises a p4 agent instead of only registering one, and expert-grain sharding is being carried onto p4 — a device can already claim a window and open a relay, but the shard download and the engine-side dispatch are not written yet.",
       },
       {
         phase: "Coming",
-        title: "Mainnet & on-chain settlement",
-        body: "Everything today runs on Solana devnet with an off-chain settlement service. An on-chain rewards program and mainnet are planned.",
+        title: "Kimi K3, and settlement beyond devnet",
+        body: "Kimi K3 (2.8T MoE) verification on p4 is the next gate, and the GLM-5.2 report — measured on linkcpp, the previous engine — is still to be published. Settlement runs on Solana devnet with an off-chain service; an on-chain rewards program and mainnet are planned.",
       },
       {
         phase: "Coming",
@@ -272,16 +284,16 @@ export const en = {
   },
 
   proof: {
-    pill: "Verified on our test fleet",
-    title: "Real distributed inference, verified across machines",
+    pill: "Measured on our own machines",
+    title: "What is running, and what it measured",
     items: [
-      "params served end to end across 3 physical machines",
-      "separate node wallets, each credited for its layer share (test fleet)",
-      "API surfaces — OpenAI + Anthropic compatible",
+      "MoE serving today — Step-3.7-Flash, across two AMD MI250 machines",
+      "stages the model is split into, placed across two agents",
+      "cosine similarity across ROCm, CUDA and a phone CPU — mixed hardware agrees",
       "wallet platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B served across 3 machines · OpenAI + Anthropic compatible · wallets on web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B at 28–31 tok/s, first token in 270–285 ms · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
   },
 
   footer: {
@@ -290,11 +302,11 @@ export const en = {
     ctaBody:
       "Run a node and earn KVR for the layers you serve, or plug the gateway into your app with an OpenAI/Anthropic-compatible endpoint.",
     tagline:
-      "The network brand for decentralized AI inference, powered by the linkcpp control hub — a source-available (BSL) engine that splits large models across everyday devices (on an inference engine data plane kept close to upstream).",
+      "The network brand for decentralized AI inference, powered by the p4 engine — source-available under BSL 1.1, splitting large models across everyday devices on a data plane kept close to upstream.",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
       "KVR is a utility / contribution token used to pay for inference and to reward compute. It runs on Solana devnet today — it is not a tradable mainnet asset and nothing here is an offer, price, or promise of financial return. Compute rewards reflect measured work; infrastructure hosts also earn for uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine under the Business Source License (BSL) 1.1 — see the license for permitted use.",
+    rights: "© 2026 Kvasir · p4. Engine under the Business Source License (BSL) 1.1 — see the license for permitted use.",
   },
 
   guide: {
@@ -302,28 +314,47 @@ export const en = {
     eyebrow: "Node operator guide",
     headline1: "Bring compute,",
     headline2: "run a node.",
-    sub: "Create a wallet, stake KVR, then connect your device to the Kvasir network and earn KVR for the compute you contribute. Pick your platform below for download, install and run steps.",
+    sub: "Create a wallet, connect your device to the Kvasir network, and earn KVR for the compute you contribute. No stake, no minimum balance. Pick your platform below for download, install and run steps.",
     badgeCustody: "Self-custody — your keys",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is a Solana devnet utility token — not a tradable mainnet asset or a financial return.",
-    reqTitle: "Hub · gateway operator requirement",
-    reqBody: "To run a hub node or a gateway node you must stake 100,000 KVR in your wallet. Regular compute nodes join without this requirement and earn for the layers they run.",
+    reqTitle: "What it takes to join",
+    reqBody: "Nothing. A wallet holding no KVR at all can register a node and earn for the work it does — there is no stake and no minimum balance. Bridge and gateway roles, the entry points other people’s traffic depends on, are assigned by the network rather than bought: a node cannot grant them to itself, and their uptime is credited only while the gateway can see them answering.",
     tabDesktop: "Desktop",
     tabMobile: "Mobile",
+    tabServer: "Server",
     soon: "Coming soon",
     download: "Download",
     desktopTitle: "Kvasir Wallet · Desktop app",
     desktopSub: "macOS · Windows · Linux — wallet and node in one app.",
     desktop: [
-      { title: "Download the app", body: "Download the Kvasir Wallet installer for your OS above. A GPU (NVIDIA / AMD / Apple Silicon) is recommended, but CPU works too.", body2: "" },
-      { title: "Install and open", body: "Run the installer, then open Kvasir Wallet. On macOS, if you see an “unidentified developer” warning, allow it in System Settings → Privacy & Security.", body2: "" },
-      { title: "Create your wallet", body: "Choose Create new wallet. Write down your 12-word recovery phrase and keep it safe — it cannot be recovered if lost. Then set a passphrase to unlock the app. Keys are non-custodial and stored only on this device.", body2: "" },
-      { title: "Fund & stake KVR", body: "Receive some devnet SOL (for fees) and KVR (to stake) at your wallet’s Receive address. In the dashboard staking panel, enter an amount and Stake to qualify for node rewards.", body2: "" },
-      { title: "Configure the node", body: "In Node settings pick this machine’s compute backend (CUDA / ROCm / Metal / CPU) and choose Local shard (recommended) — it runs the layer shard locally and relays only small boundary state, the fastest mode.", body2: "" },
-      { title: "Run the node", body: "Toggle Run node (live) to register this machine on the network under your wallet (owner) and bring it online.", body2: "For a real GPU compute node, also run the native agent below. The hub’s planner places model layers on your machine, and your node earns a layer-share of KVR credited to the owner wallet." },
-      { title: "Track contribution & rewards", body: "In Node status, watch nodes / online / effective contribution / claimable. Nodes are tiered by throughput (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); raw × tier = effective. Use Claim rewards to move accrued KVR to your wallet.", body2: "" },
+      { title: "Download the app", body: "Take the installer for your operating system above. A GPU earns more, but a machine without one can still join — the app tells you what yours can do.", body2: "" },
+      { title: "Install and open", body: "Run the installer, then open Kvasir Wallet. The app is not code-signed yet, so your system will say so: on macOS allow it in System Settings → Privacy & Security; on Windows, the blue SmartScreen notice has More info → Run anyway. If Windows says Smart App Control blocked it, that check sometimes clears a few hours after a new release — try again later.", body2: "" },
+      { title: "Create your wallet", body: "Choose Create new wallet. Write down your 12-word recovery phrase and keep it somewhere only you can reach — anyone who reads it can spend the wallet, and losing it loses the account. Then set a passphrase to unlock the app. The keys are yours and never leave this device.", body2: "" },
+      { title: "Nothing to stake", body: "There is no deposit and no minimum balance. A wallet holding no KVR and no SOL can register a node and start earning — running a node costs you nothing but the electricity. Settlement fees are paid by the network, not by you.", body2: "" },
+      { title: "Decide what to lend", body: "Open Node settings. Compute engines shows what this machine can actually compute with; a GPU with no engine cannot take work, and on an NVIDIA card the app offers to download the expert engine for you. GPU memory to lend is yours to set — the app converts it into how many experts you can hold and tells you the number. If a game or an image generator shares that GPU, leave it room.", body2: "" },
+      { title: "Start the node", body: "Turn the node on. It registers under your wallet, asks the network which experts are scarce, downloads only those weights, and starts answering for them. What you are given depends on what the network is short of at that moment, so two machines rarely hold the same thing.", body2: "For a layer-serving node rather than an expert one, run the native agent below; which layers sit on your machine then comes from a placement plan the operator loads." },
+      { title: "Watch it earn", body: "Node status shows the machines under your wallet, what they have contributed, and what is claimable. Expert work is credited in full — you are paid for what your machine actually carried, with no performance multiplier on top. (The S / A / B tiers apply to nodes that generate tokens, which an expert node does not.) Claim rewards moves accrued KVR to your wallet; the network pays the transaction fee.", body2: "" },
     ],
+    serverTitle: "Headless Linux · one command",
+    serverSub: "A server with no screen. Install, say how much GPU memory to lend, start it.",
+    serverReqTitle: "What the machine needs",
+    serverReq: [
+      "An NVIDIA GPU of compute capability 7.5 or newer — GTX 16xx, RTX 20xx and anything since.",
+      "A driver supporting CUDA 13 (R580 or newer). The installer checks this before downloading anything large.",
+      "glibc 2.27 or newer: Ubuntu 18.04, Debian 10, RHEL 8 and later.",
+      "About 1 GB for the node and its engine, plus room for the expert weights you choose to hold — roughly 9.5 MB per expert.",
+    ],
+    serverNoRoot: "Nothing here needs root. Run it as a user and it installs under ~/.local with a user service; run it as root and it installs to /opt with a system service.",
+    server: [
+      { title: "Install it", body: "One command. It works out the architecture, uses the machine’s Node if it is new enough and otherwise fetches its own, downloads the release and checks its SHA-256 before unpacking, creates a wallet key, and writes a systemd unit.", body2: "It does not start the node. The next two steps are yours." },
+      { title: "Get the compute engine", body: "The engine is a separate download because it is specific to your GPU. It carries its own CUDA libraries, so there is no toolkit to install and nothing to put on a library path — the only thing it needs from the system is the driver.", body2: "" },
+      { title: "Say how much to lend", body: "Open the unit and replace REPLACE_ME with a number of GiB. This is the one thing nobody can decide for you: it is how much of your card the node takes, and a machine with other work on it should keep some back. The node converts your budget into how many experts it can hold and tells you the number when it starts.", body2: "" },
+      { title: "Start it", body: "It registers under your wallet, asks the network which experts are scarce, downloads only those weights and starts answering for them. What you are given depends on what the network is short of at that moment.", body2: "" },
+      { title: "Watch it earn", body: "Contribution is credited to the key’s wallet. Expert work is paid in full — you are credited for what your machine actually carried, with no performance multiplier on top.", body2: "" },
+    ],
+    serverKeyWarn: "Back up ~/.config/kvasir/node-key.json. Rewards are paid to that address and there is no other copy.",
     faucetTitle: "Get devnet SOL (free faucet)",
     faucetIntro: "You need a little devnet SOL for transaction fees (use your wallet’s Receive address):",
     faucetWeb: "Web: faucet.solana.com — paste your address and pick network Devnet",
@@ -335,7 +366,7 @@ export const en = {
     mobile: [
       { title: "Install the app", body: "Install Kvasir Wallet from {0}. Use the button above to open the store page. A recent device with a GPU/NPU is recommended.", note: "" },
       { title: "Create / restore a wallet", body: "Open the app and choose Create new wallet or Restore from recovery phrase. Keep your 12-word phrase safe and set a passphrase — the same account restores on desktop and other devices from this phrase. Keys are non-custodial, stored only on the device.", note: "" },
-      { title: "Configure the node", body: "In Mobile node settings pick a compute backend (GPU · OpenCL/Vulkan · CPU) and Local shard (recommended). Expected throughput (tok/s) and memory / thermal / performance impact are shown.", note: "" },
+      { title: "Configure the node", body: "In Mobile node settings pick a compute backend and Local shard (recommended). The GPU choice differs by platform — Android uses the Adreno GPU through OpenCL or Vulkan, iOS the Apple GPU through MLX — and either can fall back to the CPU. Expected throughput (tok/s) and memory / thermal / performance impact are shown.", note: "" },
       { title: "Stake & rewards", body: "In Staking & node rewards, stake KVR and check / claim the claimable rewards your node accrues. Node status shows your performance tier and contribution.", note: "Mobile local-shard inference participation is rolling out; today the main compute nodes are GPU/CPU machines running the agent." },
     ],
     viewGithub: "View on GitHub",
@@ -348,6 +379,9 @@ export const en = {
     capBackend: "Compute backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node mode — Local shard (recommended)",
     capRunlive: "Run node (live) — live gauges · node id · OS",
+    capEnginesMac: "macOS — the Metal engine ships inside the app, and the slider turns a memory budget into a number of experts",
+    capEnginesWin: "Windows — the same screen once the NVIDIA engine is installed",
+    capEngineOffer: "Windows — the engine is offered as a separate download, because it is specific to the GPU",
     capNodes: "Node status — totals · tiers · per-node contribution",
     capClaim: "Claim rewards — claimable KVR",
     capWallet: "Wallet home — KVR balance (address masked)",
@@ -359,7 +393,7 @@ export const en = {
     docTitle: "Kvasir — Technology",
     pill: "Tech blog",
     title: "Engineering the swarm",
-    lede: "Design notes and hardware-verified milestones from building expert-sharded swarm inference on linkcpp — how a 122B model runs across GPUs, CPUs and phones.",
+    lede: "Design notes and hardware-verified milestones from building expert-sharded swarm inference — how a 122B model runs across GPUs, CPUs and phones. Posts through mid-2026 describe linkcpp, the engine p4 superseded; the ideas carried over, the names changed.",
     langNote: "",
     sidebarTitle: "Browse articles",
     allArticles: "All articles",
@@ -409,7 +443,7 @@ export const en = {
     apiModels: "List the models the swarm is serving right now — an empty array when nothing is live, so never hardcode an id.",
     apiQuote: "Get a price quote and a requestId bound to your prompt. priceToken is the KVR amount to pay; final billing is by real token usage.",
     apiPay: "Transfer the quoted KVR to the recipient's associated token account (the vault) and sign with your wallet. The signature is single-use.",
-    apiInfer: "The gateway polls the chain to verify the payment, runs the inference on the hub, and returns the result plus real usage and cost.",
+    apiInfer: "The gateway polls the chain to verify the payment, runs the inference through the bridge, and returns the result plus real usage and cost.",
     codeTitle: "End-to-end example",
     codeLede: "Load your wallet secret from the environment, quote, pay, and redeem — one self-contained snippet. Steps 1, 2 and 4 are plain HTTP; only step 3 (the SPL transfer) differs by SDK.",
     adapterTitle: "OpenAI-compatible adapter",
@@ -446,7 +480,7 @@ export const en = {
     catUseApi: "Use the API",
     selfHostTitle: "Run a node, get free inference",
     selfHostPitch: "Want to use AI models for free? Have your coding agent join your machine to the network as a node — and hand you back an inference endpoint.",
-    selfHostBody: "One script brings up the hub (and, optionally, the KVR gateway) with Docker. Add your GPU and load an open model in the hub UI, then call a standard OpenAI-compatible endpoint — /c/<id>/v1/chat/completions — running on your own hardware. Point any tool that speaks OpenAI at it.",
+    selfHostBody: "Bring up the bridge in front of your own p4 agents, optionally with the KVR gateway beside it. Load an open model with a placement plan, then call a standard OpenAI-compatible endpoint — /c/<id>/v1/chat/completions — running on your own hardware. Point any tool that speaks OpenAI at it.",
     selfHostNote: "This serves the open models your machine can hold, for free — it's your compute. For frontier models too big for one box, join the swarm: that's what the KVR pay-per-use API below is for.",
     inferenceApiTitle: "Inference API (credits)",
     inferenceApiLede: "The simplest path: a native OpenAI endpoint with an API key. Streaming (SSE) and native tool calls just work, and each call is deducted from a prepaid KVR balance — no per-call wallet signing. Access is controlled by a wallet whitelist.",
@@ -499,7 +533,7 @@ export const en = {
     pill: "We’re hiring",
     headline1: "Marketing & Growth",
     headline2: "grow the network",
-    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The source-available linkcpp engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
+    sub: "Kvasir is a decentralized AI-inference network (DePIN) on Solana. The source-available p4 engine splits large open models across many contributed GPUs and machines, and every node earns KVR for the layers it actually served. The technical side works — we need the person who tells the world.",
     factRole: "Role",
     factRoleV: "Marketing & growth — full-time",
     factLocation: "Location",

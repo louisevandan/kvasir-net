@@ -25,7 +25,7 @@ import type { Dict } from "../i18n/types";
    ========================================================================== */
 
 type Guide = Dict["guide"];
-type Platform = "desktop" | "mobile";
+type Platform = "desktop" | "mobile" | "server";
 
 const fill = (s: string, v: string) => s.replace("{0}", v);
 
@@ -156,12 +156,70 @@ function FaucetNote({ g }: { g: Guide }) {
   );
 }
 
-const CLI = `# linkcpp checkout · backend = auto|cuda|rocm|metal|cpu
-bash scripts/build-node-runtime.sh auto
+/* The desktop app ships the p4 agent, so a contributor does not run anything by
+   hand — this is only the headless path, for a machine with no desktop session. */
+const CLI = `# the layer-serving agent, which the app starts for you
+p4-agent 0.0.0.0:42011 tcp://<address other agents can dial>:42011
 
-LINKCPP_HUB_URL=https://hub.kvasir-ai.net \\
-LINKCPP_NODE_OWNER=<your wallet address> \\
-  bash scripts/run-node-agent.sh auto`;
+# for a server with no screen, use the installer on the Server tab instead`;
+
+/* ---- a command, the way an operator will paste it ---- */
+function Cmd({ children }: { children: string }) {
+  return (
+    <pre className="overflow-x-auto rounded-xl bg-surface-2/70 p-4 text-[0.8rem] leading-relaxed text-ink ring-1 ring-line">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+/*
+  The server panel has no screenshots, because the machine it describes has no
+  screen. Its media are the commands themselves, which is also what makes this
+  page testable: every one of these was run on a bare server with no Node
+  installed, and the words below say what actually happened rather than what
+  was intended.
+*/
+function ServerGuide({ g }: { g: Guide }) {
+  const media: (ReactNode | null)[] = [
+    <Cmd>{"curl -fsSL https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/node/install.sh | sh"}</Cmd>,
+    <Cmd>{"~/.local/share/kvasir-node/kvasir-node worker --install"}</Cmd>,
+    <Cmd>{"${EDITOR:-nano} ~/.config/systemd/user/kvasir-node.service\n#   ExecStart=... run --key ... --budget REPLACE_ME\n#                                        ^^^^^^^^^^ GiB, e.g. 8"}</Cmd>,
+    <Cmd>{"systemctl --user daemon-reload\nsystemctl --user enable --now kvasir-node\nsystemctl --user status kvasir-node"}</Cmd>,
+    <Cmd>{"curl -s https://gate.kvasir-ai.net/api/node/status/<your address>"}</Cmd>,
+  ];
+  return (
+    <div className="mt-10">
+      <Card className="p-6 sm:p-8">
+        <div className="text-sm font-semibold text-ink">{g.serverTitle}</div>
+        <div className="mt-1 text-sm text-ink-muted">{g.serverSub}</div>
+        <div className="mt-6 text-sm font-semibold text-ink">{g.serverReqTitle}</div>
+        <ul className="mt-3 space-y-2 text-[0.95rem] leading-relaxed text-ink-muted">
+          {g.serverReq.map((line, i) => (
+            <li key={i} className="flex gap-3">
+              <span className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-4 text-sm text-ink-faint">{g.serverNoRoot}</p>
+      </Card>
+
+      <div className="mt-12">
+        {g.server.map((step, i) => (
+          <Step key={i} n={i + 1} title={step.title} media={media[i]}>
+            <p>{step.body}</p>
+            {step.body2 && <p>{step.body2}</p>}
+            {i === 4 && (
+              <p className="rounded-xl bg-surface-2/60 p-4 text-sm text-ink ring-1 ring-line">
+                {g.serverKeyWarn}
+              </p>
+            )}
+          </Step>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /* ============================ platform panels ============================ */
 
@@ -175,14 +233,29 @@ function DesktopGuide({ g, base }: { g: Guide; base: string }) {
       <Shot src={`${d}/02-recovery.png`} alt={g.capRecovery} w="max-w-xs" />
       <Shot src={`${d}/03-passphrase.png`} alt={g.capPassphrase} w="max-w-xs" />
     </div>,
-    <div className="flex flex-wrap gap-4">
-      <Shot src={`${d}/04-receive.png`} alt={g.capReceive} w="max-w-[15rem]" />
-      <Shot src={`${d}/05-balances.png`} alt={g.capBalances} w="max-w-[15rem]" />
-      <Shot src={`${d}/06-staking.png`} alt={g.capStaking} w="max-w-md" />
-    </div>,
-    <div className="flex flex-wrap gap-4">
-      <Shot src={`${d}/07-backend.png`} alt={g.capBackend} w="max-w-sm" />
-      <Shot src={`${d}/08-mode.png`} alt={g.capMode} w="max-w-sm" />
+    /*
+      The balances shot showed a wallet holding 100,974 KVR, directly under a
+      heading that says a wallet holding none can run a node. The receive
+      address is the part of that screen the step actually needs.
+    */
+    <Shot src={`${d}/04-receive.png`} alt={g.capReceive} w="max-w-[15rem]" />,
+    /*
+      Two platforms, because this is the one screen where they differ in a way
+      that matters. A Mac finds its Metal engine already inside the app; a
+      Windows machine is offered a 720 MB download it has to accept. Showing
+      only one would leave half the readers looking for a control that is not
+      on their screen.
+
+      These three are captured in English on every locale, unlike the rest of
+      the set. The engine names, the GiB figures and the expert count — what the
+      step is actually about — read the same in any language.
+    */
+    <div className="space-y-4">
+      <Shot src={`${d}/12-engines-mac.png`} alt={g.capEnginesMac} w="max-w-md" />
+      <div className="flex flex-wrap gap-4">
+        <Shot src={`${d}/14-engine-offer.png`} alt={g.capEngineOffer} w="max-w-sm" />
+        <Shot src={`${d}/13-engines-win.png`} alt={g.capEnginesWin} w="max-w-sm" />
+      </div>
     </div>,
     <div className="space-y-4">
       <Shot src={`${d}/09-runlive.png`} alt={g.capRunlive} w="max-w-sm" />
@@ -241,11 +314,24 @@ function MobileGuide({ g, base }: { g: Guide; base: string }) {
             <div className="text-sm font-semibold text-ink">{fill(g.mobileTitle, "Mobile")}</div>
             <div className="mt-1 text-sm text-ink-muted">{g.mobileSub}</div>
           </div>
+          {/* Neither store carries these yet. Rather than two disabled buttons
+              that say only "soon", offer what actually exists: the Android
+              package, and the page that explains what a development build
+              requires of the person installing it. A download with no
+              explanation reads as broken the moment Android refuses it. */}
           <div className="flex flex-wrap gap-3">
-            <StoreButton href={DOWNLOADS.appStore} top="Download on the" main="App Store" sub="" soon={g.soon} />
-            <StoreButton href={DOWNLOADS.googlePlay} top="GET IT ON" main="Google Play" sub="▶" soon={g.soon} />
+            <StoreButton href={DOWNLOADS.android} top="Download the" main="Android APK" sub="🤖" soon={g.soon} />
+            <StoreButton href={DOWNLOADS.installGuide} top="iOS · build it yourself" main="How to install" sub="" soon={g.soon} />
           </div>
         </div>
+        <p className="mt-4 text-sm text-ink-muted">
+          Both mobile builds are development builds, and both platforms ask the owner of the
+          device to allow one on purpose.{" "}
+          <a className="underline underline-offset-2 hover:text-ink" href={DOWNLOADS.installGuide}>
+            Installing the mobile builds
+          </a>{" "}
+          walks through each step, including what to do when the install is refused.
+        </p>
       </Card>
 
       <div className="mt-12">
@@ -279,6 +365,7 @@ export default function RunNodePage() {
   const tabs: { id: Platform; label: string; icon: string }[] = [
     { id: "desktop", label: g.tabDesktop, icon: "🖥" },
     { id: "mobile", label: g.tabMobile, icon: "📱" },
+    { id: "server", label: g.tabServer, icon: "🗄" },
   ];
 
   return (
@@ -342,6 +429,7 @@ export default function RunNodePage() {
 
         {platform === "desktop" && <DesktopGuide g={g} base={base} />}
         {platform === "mobile" && <MobileGuide g={g} base={base} />}
+        {platform === "server" && <ServerGuide g={g} />}
 
         {/* bottom CTA */}
         <div className="mt-16 flex flex-wrap gap-3">

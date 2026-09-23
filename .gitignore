@@ -35,3 +35,11 @@ docs/
 
 # Downloaded Cloudflare Tunnel binary (fetched by hand on the host, not source).
 bin/cloudflared
+
+# Xcode build products and result bundles from device runs
+wallet/ios/build/
+
+# Local Metal build of the expert worker (see scripts/build-expert-worker.cjs).
+build-mac-metal/
+
+node-cli/node_modules/

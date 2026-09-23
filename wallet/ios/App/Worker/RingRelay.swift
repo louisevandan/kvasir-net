@@ -1,11 +1,11 @@
 import Foundation
 import Network
 
-/// Relays a ring stage's raw TCP stream to the coordinator through the hub over
-/// a WebSocket (443), so a NAT node — or a hub behind Cloudflare, which proxies
+/// Relays a ring stage's raw TCP stream to the coordinator through the bridge over
+/// a WebSocket (443), so a NAT node — or a bridge behind Cloudflare, which proxies
 /// only 80/443 — needs no publicly reachable ring port. The local ring stage
 /// dials 127.0.0.1:proxyPort; each connection is bridged to a WebSocket at
-/// {hub}/api/ring-relay, which the hub joins to the coordinator's ring listener.
+/// {bridge}/api/ring-relay, which the bridge joins to the coordinator's ring listener.
 ///
 /// Mirrors `wallet/android/.../RingRelay.kt`, but uses `URLSessionWebSocketTask`
 /// (native RFC 6455: handshake, masking, ping/pong handled by the OS) instead of
@@ -20,8 +20,8 @@ final class RingRelay {
     private let queue = DispatchQueue(label: "kvasir.ring-relay")
     private let session = URLSession(configuration: .ephemeral)
 
-    init(hubBase: String, controllerId: String, token: String, log: @escaping (String) -> Void) {
-        var base = hubBase
+    init(bridgeBase: String, controllerId: String, token: String, log: @escaping (String) -> Void) {
+        var base = bridgeBase
         while base.hasSuffix("/") { base.removeLast() }
         // http->ws, https->wss
         if base.hasPrefix("https") { base = "wss" + base.dropFirst("https".count) }
@@ -59,7 +59,7 @@ final class RingRelay {
 
     func stop() { listener?.cancel(); listener = nil }
 
-    // One stage TCP connection <-> one WebSocket to the hub.
+    // One stage TCP connection <-> one WebSocket to the bridge.
     private func bridge(_ conn: NWConnection) {
         let ws = session.webSocketTask(with: wsURL)
         conn.start(queue: queue)

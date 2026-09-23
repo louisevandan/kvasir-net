@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Install the linkcpp-gw Cloudflare Tunnel as a systemd service (survives reboot).
+# Install the gate Cloudflare Tunnel as a systemd service (survives reboot).
+#
+# The tunnel is named `linkcpp-gw` in Cloudflare. That name is an identifier
+# that already exists on their side, not a description of what runs here —
+# renaming it in this file would just make the install fail.
 # Run with sudo:   sudo /home/kvasir/linkcpp/bin/install-cf-service.sh
 # Puts config + credentials in /etc/cloudflared (root-owned, where the root service
 # looks), stops any nohup-run instance, then installs + starts the service.
@@ -18,7 +22,7 @@ tunnel: linkcpp-gw
 credentials-file: /etc/cloudflared/${UUID}.json
 ingress:
   - hostname: gate.kvasir-ai.net
-    service: http://localhost:5173
+    service: http://localhost:8791
   - service: http_status:404
 YAML
 echo "wrote /etc/cloudflared/config.yml"

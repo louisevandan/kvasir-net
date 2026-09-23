@@ -1,23 +1,41 @@
 /* Français — traduction des entrées du wiki. La structure (slug, catégorie,
    ordre des blocs, code) reflète exactement entries.ts (source anglaise) ;
-   les termes techniques et identifiants (KVR, linkcpp, moteur d'inférence, GGUF, MoE,
-   ring runtime, tok/s, etc.) restent tels quels. Le cadrage de conformité
+   les termes techniques et identifiants (KVR, p4, bridge, GGUF, MoE,
+   stage server, tok/s, etc.) restent tels quels. Le cadrage de conformité
    (devnet, jeton utilitaire, non-dépositaire) est préservé. */
 import type { WikiTranslation } from "./entries";
 
 export const frWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Relais de nœud",
+    summary: "Une adresse publique détenue au nom d'une machine qui n'en a pas, afin qu'un nœud derrière un NAT soit joignable sans ouvrir le moindre port.",
+    blocks: [
+      { t: "p", md: "Un **relais de nœud** donne à la machine d'un contributeur une adresse que le réseau peut appeler. p4 distribue le travail en ouvrant une connexion *vers* un nœud, et une machine domestique derrière une traduction d'adresses n'en possède aucune. Le relais en détient une publiquement, le nœud maintient une unique connexion sortante vers lui, et le travail appelé sur l'adresse publique redescend par la connexion que le nœud tient déjà." },
+      { t: "p", md: "Aucune des deux extrémités de p4 n'apprend l'existence du relais. L'appelant voit une adresse ordinaire ; l'agent du nœud reste lié à `127.0.0.1` et n'écoute rien d'autre." },
+      { t: "h2", text: "Pourquoi un tunnel plutôt qu'un port redirigé" },
+      { t: "p", md: "p4 ne porte aucune authentification : tout hôte capable d'atteindre le port d'un agent peut envoyer `NODE_LOAD`, `NODE_UNLOAD` ou `INSPECT`. Rediriger un port de sa box vers cela exposerait la machine à quiconque la découvre. Derrière un relais, le nœud n'écoute rien et prouve un portefeuille d'opérateur avant que sa connexion ne transporte quoi que ce soit, avec le même schéma de signature que la passerelle de règlement : joignabilité et authentification sont résolues par le même mécanisme." },
+      { t: "h2", text: "Ce qu'il ne fait pas" },
+      { t: "ul", items: [
+        "**Il ne lit pas le trafic.** Les charges passent octet par octet et ne sont jamais analysées ; le relais ne peut donc distinguer une commande d'une autre — et ne le doit pas, car comprendre le trafic le rendrait capable de le modifier.",
+        "**Il n'ordonnance rien.** Le placement reste au plan de l'opérateur ; pour le relais, un nœud est une adresse, rien de plus.",
+        "**Il ne prouve aucun travail.** Les octets transitant par un relais ne disent rien de l'inférence effectuée et ne comptent jamais comme contribution.",
+      ] },
+      { t: "h2", text: "Voir aussi" },
+      { t: "p", md: "**Agent p4**, le processus qu'exécute la machine d'un contributeur, et **opérateur de nœud**, le portefeuille qu'un relais authentifie avant d'accorder une adresse." },
+    ],
+  },
   "kvasir-network": {
     title: "Réseau Kvasir",
     summary: "Un réseau d'inférence IA décentralisé (DePIN) où des appareils du quotidien servent des modèles ouverts et gagnent des KVR.",
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** est un réseau d'inférence IA décentralisé : les grands modèles ouverts sont répartis sur du matériel partagé grâce au moteur **linkcpp**, de sorte qu'aucun nœud n'a besoin de détenir le modèle entier. Chacun peut apporter un GPU, un CPU, un NPU — même un téléphone — et gagner des **KVR** pour les couches ou experts que son appareil sert réellement. Les développeurs atteignent le réseau par des gateways compatibles OpenAI/Anthropic et paient à l'inférence.",
+        md: "**Kvasir** est un réseau d'inférence IA décentralisé : les grands modèles ouverts sont répartis sur du matériel partagé grâce au moteur **p4**, de sorte qu'aucun nœud n'a besoin de détenir le modèle entier. Chacun peut apporter un GPU, un CPU, un NPU — même un téléphone — et gagner des **KVR** pour les couches ou experts que son appareil sert réellement. Les développeurs atteignent le réseau par des gateways compatibles OpenAI/Anthropic et paient à l'inférence.",
       },
       {
         t: "ul",
         items: [
-          "**Moteur à source disponible** — linkcpp est sous Business Source License 1.1 (l'usage interne non monétisé est autorisé ; l'usage hébergé ou générateur de revenus requiert une licence commerciale) ; le plan de données du moteur d'inférence en dessous reste proche de l'upstream et inspectable.",
+          "**Moteur à source disponible** — p4 est sous Business Source License 1.1 (l'usage interne non monétisé est autorisé ; l'usage hébergé ou générateur de revenus requiert une licence commerciale) ; le plan de données llama.cpp en dessous reste proche de l'upstream et inspectable.",
           "**Wallet en auto-garde** — les clés ne quittent jamais l'appareil de l'utilisateur, et les récompenses sont versées sur le wallet Solana du propriétaire de chaque nœud. Sur le devnet, les KVR stakés et les crédits prépayés sont détenus par la trésorerie du gateway et suivis dans son registre jusqu'à la mise en service d'un programme de staking on-chain.",
           "**Prouvé sur du matériel réel** — un modèle de 122B a tourné de bout en bout sur 3 machines physiques de notre flotte de test, avec la contribution de chaque nœud créditée de bout en bout.",
           "**Nommé d'après le mythe nordique** — Kvasir, l'être le plus sage, né de l'essence commune de tous les dieux et propriété d'aucun.",
@@ -28,14 +46,14 @@ export const frWiki: Record<string, WikiTranslation> = {
         t: "code",
         caption: "Chaque saut est du HTTP/TCP ordinaire ; c'est le modèle lui-même qui est distribué.",
         code: `client SDK ──▶ gateway (OpenAI/Anthropic API, KVR settlement)
-        ──▶ hub controller (plan · orchestrate)
+        ──▶ bridge (session · submit · gather)
         ──▶ serving topology: pipeline ring over layer windows,
             or expert-swarm dispatch at (layer, expert-range) grain
         ──▶ token streams back · each node's contribution is credited`,
       },
       {
         t: "p",
-        md: "Les rôles se **cumulent** : une même machine peut être à la fois nœud de calcul, hôte de gateway et hôte de hub, et ses récompenses s'additionnent. Le travail du réseau est de faire ressembler l'ensemble à une seule machine — un endpoint devant, des milliers d'appareils imparfaits derrière.",
+        md: "Les rôles se **cumulent** : une même machine peut être à la fois nœud de calcul, hôte de gateway et hôte de bridge, et ses récompenses s'additionnent. Le travail du réseau est de faire ressembler l'ensemble à une seule machine — un endpoint devant, des milliers d'appareils imparfaits derrière.",
       },
       {
         t: "p",
@@ -43,39 +61,120 @@ export const frWiki: Record<string, WikiTranslation> = {
       },
     ],
   },
-  hub: {
-    title: "Hub",
-    summary: "Le plan de contrôle : découvre les appareils, planifie le placement des couches, lance les workers, orchestre l'anneau.",
+  architecture: {
+    title: "Architecture de Kvasir",
+    summary: "Une seule carte de tout le système : les wallets, le gateway qui encaisse, le bridge qui donne un visage au moteur, et le réseau p4 qui exécute le modèle.",
     blocks: [
       {
         t: "p",
-        md: "Le **hub** est le plan de contrôle du réseau, servi par linkcpp comme une seule image Docker (`controller.hub:app`, un service FastAPI sur le port **19000**). Il découvre les appareils, vérifie la compatibilité runtime, planifie le placement avec le planner, lance les workers du moteur d'inférence et expose les gateways par contrôleur. C'est une infrastructure volontairement ennuyeuse : HTTP requête/réponse, état résistant aux redémarrages, aucun transport exotique.",
+        md: "Kvasir, ce sont quatre couches et une couture chacune. Les **wallets** détiennent les clés. Le **gateway** encaisse le paiement et tient le registre. Le **bridge** donne un visage HTTP au moteur d'inférence. Le **réseau p4** exécute réellement le modèle. Tout ce qui suit découle de l'endroit où tombent ces coutures — et le schéma distingue ce qui tourne aujourd'hui de ce qui n'est encore qu'une conception.",
       },
-      { t: "h2", kick: "Trois portes d'entrée", text: "Comment les machines rejoignent un hub" },
+      { t: "h2", kick: "Wallets", text: "Les clés ne quittent jamais l'appareil" },
+      {
+        t: "p",
+        md: "iOS (Swift), Android (Kotlin) et desktop (React + Electron) sont des builds distincts du même wallet, et c'est le build desktop que le gateway sert aussi sur `/` comme wallet de navigateur — un wallet complet, avec signature dans la page, pas une console en lecture seule. Les récompenses sont versées sur l'adresse Solana propre à chaque propriétaire ; le gateway ne détient jamais une clé d'utilisateur.",
+      },
+      { t: "h2", kick: "Gateway", text: "Un seul processus, deux surfaces" },
+      {
+        t: "p",
+        md: "`solana/staking-service` est à la fois le **gateway d'API** (un `/v1/chat/completions` compatible OpenAI, plus le flux de paiement à la requête `/api/pay/quote` → `/api/inference`) et le **gateway de règlement** (staking, registre des nœuds, comptes de crédit, crédit de contribution). Les deux ne font qu'un seul processus parce qu'ils partagent un seul registre : une requête n'est servie qu'une fois son transfert de KVR vérifié on-chain, et c'est ce même registre qui crédite les nœuds qui l'ont servie.",
+      },
+      {
+        t: "callout",
+        md: "**Le paiement se règle avant que l'inférence ne s'exécute.** Si le bridge échoue ensuite, le gateway rembourse le payeur depuis la trésorerie et renvoie un 502 plutôt que de facturer du vide. Il n'y a derrière ni modèle factice ni catalogue de remplissage : un modèle que l'app propose est un modèle qu'un bridge sert réellement, sinon la liste est vide.",
+      },
+      { t: "h2", kick: "Bridge", text: "Le visage HTTP du moteur" },
+      {
+        t: "p",
+        md: "Le bridge (`p4bridge`) est un **OUTER** au sens de p4 : il installe une session à travers les stages, soumet au stage de tête et recueille le flux de tokens. Pour le gateway, c'est un contrat petit et figé — quels modèles sont chargés, qui a contribué combien, et les complétions.",
+      },
+      {
+        t: "table",
+        head: ["Route", "Ce qu'elle répond"],
+        rows: [
+          ["`/api/controllers`", "quels modèles sont chargés, et l'état de chaque stage"],
+          ["`/api/runtime`", "le wallet de l'opérateur et les machines derrière lui"],
+          ["`/api/contributions`", "les lignes par nœud, unités, requêtes, débit"],
+          ["`/c/<model>/v1/chat/completions`", "l'inférence"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Deux tâches que p4 laisse délibérément au bridge : **le template de conversation** (p4 transmet au stage server un prompt opaque et n'en applique aucun, si bien qu'un modèle instruct poursuivrait votre texte au lieu d'y répondre) et **le bloc de raisonnement** (renvoyé comme `reasoning_content`, séparé de `content`, pour qu'une passe de réflexion ne puisse pas dévorer silencieusement le budget de tokens et facturer au payeur une réponse vide).",
+      },
+      {
+        t: "callout",
+        md: "**Le bridge n'est jamais publié.** Sa seule authentification est un service token partagé, et tout ce qui l'atteint peut faire tourner l'anneau. Il écoute sur la loopback ; le tunnel est la porte.",
+      },
+      { t: "h2", kick: "Réseau p4", text: "Les agents possèdent les nœuds, les stage servers détiennent les couches" },
+      {
+        t: "p",
+        md: "Un **agent** possède les nœuds d'un hôte ; un **stage server** est un processus détenant une tranche des couches du modèle. Un stage passe son résultat au suivant en demandant à son propre agent de composer vers l'agent de ce stage **à l'adresse que cet agent annonce** — l'adresse annoncée doit donc être joignable depuis les autres hôtes, et devrait désigner le réseau le plus rapide qu'ils partagent. Sur le rack MI250, c'est le lien InfiniBand, pas le LAN du bureau, et jamais la loopback.",
+      },
       {
         t: "ul",
         items: [
-          "**Slots de nœud locaux** — cinq slots fixes par hub, mappés sur les ports RPC **50052–50056**. Les slots existent toujours ; on édite les budgets GPU + VRAM/RAM/CPU d'un slot plutôt que de créer des nœuds arbitraires, et les ressources ne sont modifiables **que lorsque le slot n'est pas lié**, ce qui protège le contrat de capacité sous un contrôleur en marche.",
-          "**Unités distantes** — enregistrez un autre hub linkcpp en fonctionnement et importez ses nœuds visibles. L'endpoint du plan de données dérive toujours de l'URL de l'*unité* enregistrée plus le port worker exposé par l'unité — jamais d'un hôte de nœud annoncé par le système distant.",
-          "**Agents de nœud managés** — des services worker-only (`nodeagent.py`) qui rejoignent par simple HTTP requête/réponse (`/control/join|status|download|load|unload`) et rendent compte via `POST /api/node-reports`. Volontairement **pas** un flux persistant, pour survivre aux routages LAN/VPN simples.",
+          "**`p4-agent` et `p4_staged_server` forment une seule release.** Un agent compilé depuis un arbre plus récent échoue au READY sur une capacité absente du HELLO — après avoir chargé le modèle entier.",
+          "**Le placement est un artefact d'opérateur.** Quelles couches se posent sur quel GPU, sous quelle load generation, vient d'un plan de placement ; le bridge répond `409` à qui lui demande de servir, et le watchdog du gateway le signale une fois puis cesse de demander.",
+          "**Un pipeline exige au moins deux stages.** La commande de session refuse un pipeline à un seul stage.",
         ],
       },
-      { t: "h2", kick: "Rien ne se charge sans vérification", text: "Le portail de compatibilité" },
+      { t: "h2", kick: "Relais", text: "Une adresse composable pour un portable" },
       {
         t: "p",
-        md: "Chaque unité, nœud et agent rapporte une identité de protocole / runtime-pack plus les détails de backend. Les désaccords d'unité, de runtime-pack, de révision moteur d'inférence et d'ABI RPC sont **bloqués en dur avant bind, plan, load ou infer** ; les différences de backend (CUDA/Metal/Vulkan/CPU) sont suivies comme des capacités du nœud, pas comme des rejets. Le chargement adaptatif est aussi bloqué quand un nœud ne peut pas fournir la supervision de ressources qu'un plan sûr exige.",
+        md: "Les nœuds de bordure — une app desktop, un téléphone — n'ont aucune adresse que l'on puisse composer. Le **relais** leur en donne une : le nœud se connecte vers l'extérieur, prouve la paire de clés de son wallet sur un challenge ed25519, et devient dès lors joignable à travers le relais. Le relais est la frontière d'authentification et n'analyse jamais les payloads. L'installeur desktop embarque l'agent p4 avec l'app : rejoindre le réseau n'est pas une seconde installation.",
       },
+      { t: "h2", kick: "Règlement", text: "Le crédit suit la participation" },
       {
-        t: "code",
-        caption: "Ce qui survit à un redémarrage, et ce qui n'y survit pas.",
-        code: `persisted   → /models/linkcpp/hub-state.json
-              slots · controllers · bindings · remote units · 2FA enrollment
-runtime-only → live worker/model processes, in-flight operations
-              (a container restart stops serving; models reload on demand)`,
+        t: "p",
+        md: "Chaque stage rapporte les lignes de tokens qu'il a exécutées. Le bridge les accumule par nœud, et le gateway interroge `/api/contributions` toutes les 30 secondes et crédite le wallet que le bridge désigne, à raison de `rows / 1000` unités mises à l'échelle par le niveau de performance du nœud. **Dans un pipeline, tous les stages voient les mêmes lignes** : un anneau à quatre stages paie donc ses quatre stages à égalité, quel que soit le nombre de couches détenues par chacun — le crédit suit la participation, pas la part de poids. Le sharding d'experts, où les nœuds détiennent des fractions différentes d'une même couche, est le cas qui obligera à revoir cela.",
+      },
+      { t: "h2", kick: "P4 Studio", text: "Ce que le schéma marque comme proposé" },
+      {
+        t: "p",
+        md: "**P4 Studio** est la console d'opérateur propre à p4. Le flux d'observabilité par requête qu'elle attend des agents est une proposition en amont, pas quelque chose qui tourne ici — c'est pour cela que le schéma le dessine en pointillés, aux côtés des shards d'experts servis depuis des nœuds de bordure, conçus mais pas encore en service.",
+      },
+    ],
+  },
+  bridge: {
+    title: "Bridge",
+    summary: "Le visage HTTP du moteur d'inférence : ce qui est chargé, qui a contribué, et les complétions — et rien d'autre.",
+    blocks: [
+      {
+        t: "p",
+        md: "Le **bridge** est la seule chose à laquelle le gateway de règlement s'adresse pour l'inférence. C'est un **OUTER** au sens de p4 : il installe une session à travers les stages du modèle, soumet une requête au stage de tête, recueille le flux de tokens et rapporte ce que chaque nœud a contribué. Il ne possède ni placement, ni ordonnancement, ni autre état qu'un catalogue de ce qui est chargé — délibérément petit, car tout ce qu'il ne décide pas est autant qui ne peut pas dériver.",
+      },
+      { t: "h2", kick: "Le contrat", text: "Quatre routes, un seul jeton" },
+      {
+        t: "table",
+        head: ["Route", "Ce qu'elle répond"],
+        rows: [
+          ["`/api/controllers`", "quels modèles sont chargés, et l'état de chaque stage"],
+          ["`/api/runtime`", "le wallet de l'opérateur et les machines derrière lui"],
+          ["`/api/contributions`", "les lignes par nœud, unités, requêtes, débit"],
+          ["`/c/<model>/v1/chat/completions`", "l'inférence"],
+        ],
       },
       {
         t: "p",
-        md: "Le hub étant le rôle le plus critique, ses hôtes gagnent la **plus haute récompense horaire de disponibilité**. Exploiter un hub public exige un staking de **100 000 KVR**.",
+        md: "Toutes les routes sauf `/api/health` exigent un service token partagé, envoyé dans `X-Kvasir-Service-Token`. Ce jeton est la **seule** chose qui sépare l'Internet ouvert d'un usage gratuit de l'anneau : c'est pourquoi le bridge écoute sur la loopback et s'atteint par un tunnel plutôt qu'en étant publié.",
+      },
+      { t: "h2", kick: "Ce que p4 lui laisse", text: "Deux tâches que le moteur ne fera pas" },
+      {
+        t: "ul",
+        items: [
+          "**Le template de conversation.** p4 transmet au stage server un prompt opaque et n'applique aucun format de tour qui lui soit propre. C'est le bridge qui rend celui du modèle — lu dans le GGUF et nommé `prompt_format` dans le catalogue. Sautez-le et un modèle instruct poursuit votre texte au lieu d'y répondre, n'émet jamais son token de fin de tour, et court jusqu'à la limite de tokens à chaque fois.",
+          "**Le bloc de raisonnement.** Un modèle de raisonnement ouvre sa réponse en réfléchissant. Le bridge renvoie cela comme `reasoning_content`, séparé de `content`, et honore `enable_thinking: false` en fermant le bloc dans le prompt — sans quoi une longue passe de réflexion peut consommer tout le budget et rendre à l'appelant une réponse vide qu'il a déjà payée.",
+        ],
+      },
+      { t: "h2", kick: "Le placement n'est pas son affaire", text: "Pourquoi il répond 409" },
+      {
+        t: "p",
+        md: "Demander au bridge de servir un modèle renvoie **409**. Quelles couches se posent sur quel GPU, sous quelle load generation, vient d'un plan de placement qu'un opérateur a écrit et chargé ; il n'y a aucun rechargement à distance à effectuer. Le watchdog d'anneau du gateway l'apprend une fois et cesse de demander, plutôt que de réessayer une chose qui ne peut pas marcher.",
+      },
+      {
+        t: "callout",
+        md: "**Les compteurs de contribution vivent en mémoire.** Un redémarrage du bridge perd tout ce que le gateway n'avait pas encore relevé — il interroge toutes les 30 secondes — et le gateway rétablit une nouvelle base plutôt que de compter deux fois quand un compteur recule. Un nœud dont le bridge ignore le propriétaire est sauté **silencieusement** : un wallet d'opérateur non renseigné se lit donc « ces machines n'ont rien gagné ».",
       },
     ],
   },
@@ -85,7 +184,7 @@ runtime-only → live worker/model processes, in-flight operations
     blocks: [
       {
         t: "p",
-        md: "Le **gateway** est l'endroit où les développeurs rencontrent le réseau. Chaque contrôleur expose des endpoints compatibles OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) et Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), tous adossés au même modèle chargé — un client existant fonctionne en ne changeant que la base URL et la clé.",
+        md: "Le **gateway** est l'endroit où les développeurs rencontrent le réseau. Chaque contrôleur expose des endpoints compatibles OpenAI (`/v1/chat/completions`, `/v1/models`) et Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), tous adossés au même modèle chargé — un client existant fonctionne en ne changeant que la base URL et la clé.",
       },
       {
         t: "code",
@@ -99,14 +198,14 @@ runtime-only → live worker/model processes, in-flight operations
       { t: "h2", kick: "Facturation", text: "Paiement à l'inférence en KVR" },
       {
         t: "p",
-        md: "L'usage se règle en KVR par un flux en trois étapes — **quote → payment → inference** — ainsi une requête est tarifée avant de s'exécuter et les nœuds qui l'ont servie sont crédités ensuite. Le gateway agrège aussi un **catalogue de modèles en direct** depuis chaque hub joignable, de sorte que `/v1/models` reflète ce que le réseau peut réellement servir à l'instant.",
+        md: "L'usage se règle en KVR par un flux en trois étapes — **quote → payment → inference** — ainsi une requête est tarifée avant de s'exécuter et les nœuds qui l'ont servie sont crédités ensuite. Le gateway agrège aussi un **catalogue de modèles en direct** depuis chaque bridge joignable, de sorte que `/v1/models` reflète ce que le réseau peut réellement servir à l'instant.",
       },
       {
         t: "ul",
         items: [
           "Les hôtes de gateway gagnent une **récompense horaire de disponibilité** pour maintenir le point d'entrée en ligne, plus un **bonus ×1.5** sur chaque inférence qu'ils aident à servir.",
-          "Exploiter un gateway public exige un staking de **100 000 KVR** (comme un hub).",
-          "Les déploiements publics protègent l'accès opérateur avec **SIWS + 2FA** ; les hubs nus sont conçus pour hôte de confiance / LAN / VPN uniquement.",
+          "Le rôle de gateway est **attribué par le réseau, pas revendiqué** : un nœud ne peut pas activer lui-même son drapeau gateway ou bridge, et la disponibilité n'est créditée que tant que le gateway le voit répondre.",
+          "Les déploiements publics protègent l'accès opérateur avec **SIWS + 2FA** ; un bridge nu est conçu pour hôte de confiance / LAN / VPN uniquement.",
         ],
       },
     ],
@@ -140,109 +239,85 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
     ],
   },
-  "relay-443": {
-    title: "Relais 443",
-    summary: "Le plan de données pour les appareils derrière NAT : les deux extrémités composent vers l'extérieur via un pont WebSocket sur le port 443.",
+  p4: {
+    title: "p4",
+    summary: "Le moteur derrière Kvasir : un protocole adressé par événements où les agents possèdent les nœuds, les stage servers détiennent les couches, et le placement est ce qu'un opérateur énonce plutôt que ce que le réseau devine.",
     blocks: [
       {
         t: "p",
-        md: "Les téléphones derrière le NAT des opérateurs ne peuvent pas accepter de connexions entrantes, et des bordures comme Cloudflare ne laissent passer que les ports 80/443. Le **relais 443** résout les deux : un pont WebSocket par bordure avec un **préambule de rôle d'1 octet** permet aux deux côtés de composer **vers l'extérieur**, de sorte qu'un téléphone participe au plan de données en n'ouvrant **aucun port entrant**.",
+        md: "**p4** exécute un même modèle sur plusieurs machines en le découpant en **stages** — des tranches contiguës de ses couches — et en donnant à chaque stage son propre processus. Un **agent** possède les nœuds d'un hôte : il lance les stage servers, route les événements entre eux et répond de leur cycle de vie. Aucun ordonnanceur ne décide où vont les choses ; un opérateur écrit un plan de placement, le charge, et le réseau sert alors exactement cela.",
       },
       {
         t: "code",
-        caption: "Deux connexions sortantes se rejoignent au milieu ; le préambule dit qui est qui.",
-        code: `phone   ──outbound──▶ wss://edge:443  ◀──outbound── backbone
-                     [role byte: worker]   [role byte: dialer]
-        bridge splices the two streams → one ordinary TCP pipe`,
-      },
-      { t: "h2", kick: "Endurci en production", text: "Trois vrais bugs, trois correctifs" },
-      {
-        t: "ul",
-        items: [
-          "**Accord d'empreinte de build** — les deux extrémités doivent prouver qu'elles exécutent le même runtime pack avant qu'un seul octet de tenseur ne circule.",
-          "**Authentification de téléchargement par node-token** — les téléchargements de shards partiels s'authentifient avec le node token dérivé du wallet que l'app détient déjà.",
-          "**Le blocage de trames `Int.ushr`** — le `ushr` de Kotlin n'utilise que les 5 bits bas du décalage : `len ushr 56` est devenu `len ushr 24`, corrompant silencieusement toute trame ≥ 64 KiB (un `result_output` de 593 KB fut la première victime). Corrigé en passant l'empaquetage des longueurs en décalages `Long` — un correctif porteur pour le dispatch d'experts par lots, qui dépasse régulièrement 64 KiB.",
-        ],
-      },
-      {
-        t: "p",
-        md: "Le relais transporte tout ce dont la topologie a besoin — frontières de couches de l'anneau ou flux de dispatch d'experts — et le mécanisme vérifié pour l'anneau est exactement celui qu'utilisent les workers téléphone dans l'essaim.",
-      },
-      {
-        t: "p",
-        md: "Les mises à niveau `/api/expert-relay` comme `/api/ring-relay` sont **raccordées à cru** : le gateway transmet les trames WebSocket octet pour octet sans les analyser, de sorte que le relais reste un tuyau mince, indépendant du modèle. Il **compte toujours les octets qu'il fait transiter par session**, et ce travail mesuré alimente le registre de contributions du hub et se règle sur le propre wallet du worker en **KVR** — relayer pour un téléphone derrière NAT rapporte exactement comme un nœud connecté en direct.",
-      },
-    ],
-  },
-
-  linkcpp: {
-    title: "linkcpp",
-    summary: "Le plan de contrôle à source disponible (BSL) qui transforme le matériel du quotidien en moteur d'inférence distribué.",
-    blocks: [
-      {
-        t: "p",
-        md: "**linkcpp** est le moteur derrière Kvasir : un plan de contrôle autour du plan de données RPC du moteur d'inférence, qui exécute de grands modèles d'IA sur plusieurs GPU et machines avec des binaires `ggml-rpc-server` / `llama-server` compilés au plus près de l'upstream. Tout ce qu'il ajoute est de l'orchestration — découverte des GPU, slots de nœud, planification du placement des couches, lancement des workers, et les gateways OpenAI/Anthropic.",
-      },
-      { t: "h2", kick: "Architecture", text: "Un hub, des workers basés sur l'upstream" },
-      {
-        t: "code",
-        caption: "Le chemin d'une requête à travers un déploiement linkcpp.",
+        caption: "Le chemin d'une requête à travers un déploiement p4.",
         code: `browser / SDK
-  → hub :19000                      # FastAPI control plane (Docker)
-  → GPU-less llama-server master    # per controller, :8080+
-  → ggml-rpc-server workers         # slots :50052-50056 · units · agents`,
+  → gateway :8791              # payment, settlement, the wallet app
+  → bridge :19000              # OUTER: session, submit, gather
+  → p4 agent                   # owns this host's nodes
+  → stage servers              # one process per layer slice`,
       },
+      { t: "h2", kick: "Adressage", text: "Un stage compose vers l'agent du stage suivant" },
+      {
+        t: "p",
+        md: "Quand un stage termine ses couches, il passe le résultat au stage suivant en demandant à son propre agent d'ouvrir une connexion vers **l'agent de ce stage, à l'adresse que cet agent annonce**. L'adresse annoncée n'a donc rien de cosmétique : elle doit être joignable depuis tous les autres hôtes de l'anneau, et devrait désigner le réseau le plus rapide qu'ils partagent. Annoncez la loopback et un anneau à deux hôtes se compose silencieusement lui-même.",
+      },
+      { t: "h2", kick: "Cycle de vie", text: "Un seul nombre relie tout un chargement" },
       {
         t: "ul",
         items: [
-          "**Source disponible sous la BSL 1.1** — lisez-la et construisez dessus librement ; l'usage interne non monétisé est autorisé, et l'usage hébergé ou générateur de revenus requiert une licence commerciale.",
-          "Le plan de données du moteur d'inférence reste **proche de l'upstream** — un petit ensemble de correctifs (GPU-sur-RPC mobile et le hook de dispatch d'experts MoE) — si bien que les gains de performance de l'upstream continuent d'affluer.",
-          "Livré comme **une seule image Docker** : le hub FastAPI plus les deux binaires moteur d'inférence intégrés ; les nœuds workers natifs se compilent hors Docker pour CUDA/Metal/Vulkan/CPU.",
+          "**La load generation est choisie par celui qui charge** et comparée pour égalité exacte à chaque session, inférence, règlement et déchargement. Elle n'est consignée nulle part sur les machines : le chargeur l'écrit donc sur disque *avant* que la première commande ne parte — sans elle, un modèle chargé ne peut même pas être démonté.",
+          "**La generation d'un nœud et la load generation sont le même nombre.** L'adaptateur compare la generation source d'un reçu de libération à celle du chargement auquel il appartient et arrête le nœud quand elles diffèrent : un anneau chargé avec deux nombres différents sert une requête, puis perd sa tête.",
+          "**Un journal opérationnel est exigé** avant qu'un modèle ne se charge tout court : c'est le registre d'admission qui rend un chargement rejouable sans danger, pas une aide au débogage.",
         ],
       },
-      { t: "h2", kick: "Le planner", text: "Métadonnées GGUF en entrée, placement en sortie" },
+      { t: "h2", kick: "Ce qu'il ne fait pas", text: "Des omissions délibérées" },
       {
         t: "p",
-        md: "Le planner lit les métadonnées GGUF et produit des fenêtres de couches contiguës par nœud, le `--tensor-split` correspondant et des estimations de VRAM KV-cache / couche / expert par nœud — plus l'offload optionnel des FFN d'experts MoE vers la RAM du nœud, émis sous forme de règles `-ot` de moteur d'inférence (p. ex. `blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU`) et transmis au lancement via `--override-tensor`. Un plan qui ne tient pas est signalé **infeasible** avant tout chargement, au lieu d'être découvert comme un OOM à l'exécution.",
+        md: "p4 n'applique **aucun template de conversation** — il transmet un prompt opaque et attend de l'appelant qu'il ait rendu le format de tour du modèle. Il ne prend **aucune décision de placement**. Et il ne porte aucune notion de qui doit être payé : les stages rapportent les lignes de tokens qu'ils ont exécutées, et le règlement est le contrat de quelqu'un d'autre. Chacune de ces coutures, Kvasir la comble dans le [bridge](/wiki/bridge), ce qui garde le moteur assez étroit pour suivre l'upstream.",
       },
       {
-        t: "p",
-        md: "La compatibilité runtime est un concept de premier ordre : protocole, runtime-pack, révision moteur d'inférence et ABI RPC sont vérifiés, et tout désaccord est bloqué en dur avant le moindre bind, plan, load ou inférence.",
+        t: "callout",
+        md: "**L'agent et le stage server natif forment une seule release.** Un agent compilé depuis un arbre plus récent échoue au READY sur une capacité absente du HELLO du stage server — après avoir chargé le modèle entier. Compilez les deux depuis le même checkout.",
       },
     ],
   },
-  "ring-runtime": {
-    title: "Ring runtime",
-    summary: "Inférence en pipeline sans master : chaque appareil exécute sa fenêtre de couches et ne passe que des frontières à son voisin.",
+  "in-flight-ring": {
+    title: "Anneau in-flight",
+    summary: "Un pipeline qui ne se vide jamais : plusieurs requêtes occupent des stages différents au même instant, si bien qu'aucun stage n'attend la fin de celle qui le précède.",
     blocks: [
       {
         t: "p",
-        md: "Le **ring runtime** est la topologie de service à faible latence de Kvasir. Chaque appareil ne charge que sa **fenêtre de couches** contiguë, puis ouvre exactement deux liens — prédécesseur et successeur. Les frontières de hidden-state circulent autour de l'anneau ; le dernier rang échantillonne le token et le renvoie. **Pas de master central sur le chemin des données, et aucun nœud ne détient le modèle entier.**",
+        md: "Kvasir sert un modèle comme un **pipeline de stages**, chacun détenant une tranche contiguë de ses couches. Un stage exécute ses couches et passe la frontière — un hidden state, pas des poids — au suivant. Aucun stage ne détient le modèle entier, et rien ne se tient au milieu du chemin de données : le bridge soumet à la tête et lit à la queue, tandis que les stages se passent les résultats entre eux via leurs propres agents.",
       },
-      { t: "h2", kick: "Pourquoi pas une étoile", text: "Le problème du master RPC" },
+      { t: "h2", kick: "La partie « in-flight »", text: "Pourquoi un pipeline qui se vide gaspille l'essentiel de la machine" },
       {
         t: "p",
-        md: "Dans la topologie RPC classique, un master ouvre le **GGUF entier** et compose vers chaque worker. Cela casse dans un réseau ouvert de trois façons : le master doit détenir et servir tout le checkpoint ; chaque worker doit être joignable — les téléphones derrière NAT d'opérateur ne le sont pas ; et le master est un propriétaire unique dans un réseau qui ne devrait en avoir aucun. L'anneau supprime les trois : chaque stage possède sa fenêtre, les connexions sont de voisin à voisin, et le relais rend joignables les appareils derrière NAT.",
+        md: "Si un pipeline termine une requête avant d'admettre la suivante, tous les stages sauf un sont inoccupés à chaque instant — un anneau à quatre stages tourne au quart de son matériel. La conception **in-flight** garde plusieurs requêtes en mouvement à la fois : pendant que le stage 3 décode une requête, le stage 0 en préremplit déjà une autre. Les stages rapportent combien de temps ils ont retenu un batch et combien de temps ils n'ont rien eu à soumettre : un anneau affamé ne ressemble donc pas à un anneau saturé.",
       },
       {
         t: "code",
-        caption: "Un pas de décodage autour d'un anneau à 4 stages.",
-        code: `token n:  stage A (layers 0-14)  ──h──▶  stage B (15-26)
-                                             │h
-          stage D (37-48) ◀──h──  stage C (27-36)
-          └─ samples token n, sends it around → client`,
+        caption: "Quatre stages, trois requêtes, un seul instant.",
+        code: `           stage 0        stage 1        stage 2        stage 3
+           layers 0-11    12-22          23-33          34-44
+
+request A                                              decode
+request B                 decode
+request C  prefill
+
+boundaries pass →  agent to agent, never through the caller`,
+      },
+      { t: "h2", kick: "Appartenance", text: "Ce qu'est exactement un batch" },
+      {
+        t: "p",
+        md: "Des lignes issues de requêtes différentes sont empaquetées dans un même batch physique, et cette appartenance exacte est transmise à tous les stages en aval plutôt que redécidée à chaque saut. C'est ce qui permet à un prefill et à plusieurs décodages de partager une seule passe, et c'est pourquoi la taille d'un batch est une propriété du chargement : le plan énonce d'avance les largeurs de lignes et de micro-batch, et ces largeurs fixent le plus gros résultat qu'un stage puisse jamais renvoyer.",
       },
       {
-        t: "ul",
-        items: [
-          "Le placement vient du **rank manifest** du planner — p. ex. les 49 couches de Qwen3.5-122B réparties entre un GPU, un CPU, un NPU et un téléphone.",
-          "Les frontières sont petites (un vecteur de hidden-state par token), donc les sauts restent bon marché même sur des liens faibles.",
-          "Les GPU mobiles exécutent des stages de l'anneau **directement** (Adreno via OpenCL) — la voie RPC vers le GPU d'un téléphone s'est révélée impraticable car la disposition des buffers d'Adreno ne survit pas à la sérialisation RPC ; un stage local possède son backend, donc seules les frontières traversent le réseau.",
-        ],
+        t: "callout",
+        md: "**Un pipeline exige au moins deux stages.** Un pipeline à un seul stage est refusé net — la tête et la queue sont des rôles distincts, et un nœud unique qui les confond est un autre moteur, pas un anneau plus petit.",
       },
       {
         t: "p",
-        md: "L'anneau est la voie de la **latence** ; son plancher est la granularité de couche (~1.4 GB sur le 122B). L'essaim d'experts supprime ce plancher et se branche sur le même tissu de service.",
+        md: "L'anneau est la voie de la **latence**, et sa granularité est la couche. Le sharding d'experts supprime ce plancher en coupant à l'intérieur d'une couche, et se branche sur le même tissu de service.",
       },
     ],
   },
@@ -282,7 +357,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "Un modèle **Mixture-of-Experts** remplace la FFN unique de chaque couche par une banque de FFN expertes indépendantes plus un **routeur** qui en choisit quelques-unes par token. Qwen3.5-122B-A10B est l'exemple phare du réseau :",
+        md: "Un modèle **Mixture-of-Experts** remplace la FFN unique de chaque couche par une banque de FFN expertes indépendantes plus un **routeur** qui en choisit quelques-unes par token. Step-3.7-Flash, le MoE de 428B en service aujourd'hui, compte 288 experts par couche avec un routage top-8. Qwen3.5-122B-A10B est l'exemple détaillé ci-dessous, car c'est celui dont les chiffres ont été mesurés de bout en bout :",
       },
       {
         t: "stats",
@@ -323,6 +398,10 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
         t: "p",
         md: "Le **sharding d'experts** abaisse l'unité de portage de l'essaim d'une couche (~1.4 GB sur le 122B) à un expert (**5.3 MB**). Un appareil faible télécharge une tranche de 8–64 experts (**42–340 MB**), la charge comme worker à fonction pure — sans attention, sans KV, sans sampler — et calcule ses experts chaque fois que le routeur du backbone les sélectionne.",
       },
+      {
+        t: "callout",
+        md: "**État du moteur.** Le sharding au grain de l'expert a été construit et démontré sur le moteur précédent de Kvasir, et les résultats ci-dessous proviennent de ce travail. Le moteur actuel, [p4](/wiki/p4), sert aujourd'hui au grain de la couche ; le portage du sharding d'experts vers lui est conçu et en cours. Quand un détail nomme un outil ou une route, c'est celui qui tournait sur le moteur précédent.",
+      },
       { t: "h2", kick: "Deux rôles", text: "Backbone × worker" },
       {
         t: "code",
@@ -361,6 +440,10 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
       {
         t: "callout",
         md: "**L'invariant :** la seule décision discrète du réseau est le routage MoE (top-8 sur 256). Kvasir exécute le routeur **exactement une fois, sur le backbone**, et n'expédie aux workers que les ids des experts choisis. Un essaim hétérogène peut différer légèrement dans la *grandeur* de la sortie de chaque expert — jamais dans *quels experts tournent*.",
+      },
+      {
+        t: "callout",
+        md: "**État du moteur.** Le sharding au grain de l'expert a été construit et démontré sur le moteur précédent de Kvasir, et les résultats ci-dessous proviennent de ce travail. Le moteur actuel, [p4](/wiki/p4), sert aujourd'hui au grain de la couche ; le portage du sharding d'experts vers lui est conçu et en cours. Quand un détail nomme un outil ou une route, c'est celui qui tournait sur le moteur précédent.",
       },
       {
         t: "p",
@@ -431,7 +514,7 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
     blocks: [
       {
         t: "p",
-        md: "**GGUF** est le format de modèle en fichier unique de l'écosystème moteur d'inférence : des métadonnées (architecture, nombre de couches, dimensions, quantification) plus les tenseurs en octets quantifiés bruts (p. ex. Q4_K_M). Le planner de linkcpp lit les métadonnées pour calculer placements et estimations de taille ; le côté service découpe les octets de tenseurs pour produire les téléchargements.",
+        md: "**GGUF** est le format de modèle en fichier unique de l'écosystème moteur d'inférence : des métadonnées (architecture, nombre de couches, dimensions, quantification) plus les tenseurs en octets quantifiés bruts (p. ex. Q4_K_M). Un plan de placement s'écrit contre ces métadonnées — plages de couches, affectation aux appareils et estimations de taille ; le côté service découpe les octets de tenseurs pour produire les téléchargements.",
       },
       {
         t: "ul",
@@ -468,7 +551,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         t: "ul",
         items: [
           "**Côté dépense** — paiement à l'inférence via le gateway : quote → payment → inference.",
-          "**Côté gain** — unités de contribution × part de couches × niveau de performance pour le calcul ; disponibilité horaire pour les rôles hub/gateway.",
+          "**Côté gain** — unités de contribution × part de couches × niveau de performance pour le calcul ; disponibilité horaire pour les rôles bridge/gateway.",
           "**Règlement** — sur Solana, vers le wallet du propriétaire de chaque nœud ; le service de règlement crédite chaque nœud ayant touché une requête.",
           "**Nommé d'après le mythe** — l'Hydromel de Poésie, brassé à partir de Kvasir, donnant la sagesse à quiconque le boit : accès ouvert, et récompenses pour tous ceux qui versent au pot.",
         ],
@@ -488,7 +571,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         caption: "Comment les récompenses de calcul sont calculées.",
         code: `units    += (tokens / 1k) × (node_layers / total_layers)
 effective = units × perf_tier × gateway_bonus
-infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
+infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
@@ -509,7 +592,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "ul",
         items: [
           "Les récompenses suivent le **travail réel** : un nœud qui n'a rien servi ne gagne rien, quel que soit son temps en ligne (rôles de calcul).",
-          "Les rôles se **cumulent** — une machine peut être calcul + gateway + hub, et ses flux s'additionnent.",
+          "Les rôles se **cumulent** — une machine peut être calcul + gateway + bridge, et ses flux s'additionnent.",
           "Tout se règle en KVR vers le wallet du propriétaire du nœud ; le tableau de bord affiche brut × niveau = effectif et un solde réclamable.",
         ],
       },
@@ -545,17 +628,18 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Staker 100 000 KVR qualifie un wallet pour opérer des nœuds hub ou gateway.",
+    summary: "Verrouiller des KVR dans le vault. Cela ne conditionne plus les rôles d'opérateur, et rien ne l'exige.",
     blocks: [
       {
         t: "p",
-        md: "Le staking verrouille des KVR pour qualifier un wallet aux rôles d'opérateur et aux récompenses de nœud. Exploiter un nœud **hub** ou **gateway** exige un stake de **100 000 KVR** ; les nœuds de calcul ordinaires rejoignent sans aucun stake et gagnent pour les couches qu'ils exécutent.",
+        md: "Le staking verrouille des KVR dans le vault depuis le panneau de staking du wallet. C'était autrefois la condition d'accès aux rôles d'opérateur — un bridge ou un gateway exigeait un stake de 100 000 KVR — et **cette exigence a disparu**. Aucun stake n'est nécessaire pour faire tourner un nœud, et un wallet ne détenant aucun KVR peut en enregistrer un et gagner. Ces deux rôles d'infrastructure sont désormais attribués par le réseau, un contrôle plus solide qu'un prix : l'ancienne vérification lisait le solde du wallet une seule fois à l'enregistrement, ne le verrouillait jamais et ne le regardait plus jamais, si bien que les mêmes 100 000 KVR pouvaient enregistrer autant de nœuds qu'on voulait avant d'être déplacés.",
       },
       {
         t: "ul",
         items: [
-          "Le staking se fait dans le panneau de staking du tableau de bord du wallet : saisissez un montant, **Stake**, et la position compte pour l'éligibilité opérateur et les récompenses de nœud.",
-          "L'exigence de 100k est un **filtre d'engagement** pour les deux rôles dont dépend le trafic des autres — les points d'entrée et le plan de contrôle.",
+          "Le staking se fait dans le panneau de staking du tableau de bord du wallet : saisissez un montant, **Stake**, et la position reste dans le vault jusqu'à ce que vous la retiriez.",
+          "Ce n'est une condition pour rien. Les récompenses de nœud viennent du travail réellement accompli par le nœud, plus la disponibilité vérifiée pour les rôles d'infrastructure — jamais du simple fait de détenir un solde.",
+          "Le taux de staking du devnet est actuellement de **0 %**, une position ne rapporte donc rien par elle-même. Voyez ce panneau comme un mécanisme qui existe, pas comme un moyen de gagner.",
           "Sur le devnet, les KVR stakés sont conservés dans le vault de staking ; le montant staké et les récompenses de nœud sont visibles dans le panneau de staking.",
           "Le KVR de devnet pour staker vient du faucet de distribution ; le SOL de devnet pour les frais vient du faucet public.",
         ],
@@ -591,15 +675,15 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Pour les déploiements publics, l'accès opérateur au hub et au gateway s'authentifie par **Sign-In With Solana** : le wallet de l'opérateur signe un nonce émis par le serveur, prouvant la propriété sans mot de passe ni identifiant en dépôt. Par-dessus, la **2FA TOTP** et des codes de secours à usage unique protègent la session — sur le hub comme sur le gateway.",
+        md: "Pour les déploiements publics, l'accès opérateur au gateway s'authentifie par **Sign-In With Solana** : le wallet de l'opérateur signe un nonce émis par le serveur, prouvant la propriété sans mot de passe ni identifiant en dépôt. Par-dessus, la **2FA TOTP** et des codes de secours à usage unique protègent la session.",
       },
       {
         t: "ul",
         items: [
           "**Aucun mot de passe nulle part** — la clé du wallet est l'identité et le nonce empêche le rejeu ; il n'y a rien côté serveur à hameçonner ou à divulguer.",
-          "**L'enrôlement TOTP par wallet** est persisté dans l'état du hub : la 2FA survit aux redémarrages avec les slots et les liaisons.",
+          "**L'enrôlement TOTP par wallet** est persisté dans le registre du gateway : la 2FA survit donc à un redémarrage.",
           "**Les codes de secours sont à usage unique** — chacun se consomme à la connexion, pour récupérer quand l'appareil d'authentification est indisponible.",
-          "**Périmètre annoncé honnêtement** — le hub nu et les ports RPC sont conçus pour hôte de confiance / LAN / VPN ; SIWS + 2FA est la couche qui rend les domaines *publics* sûrs à exposer.",
+          "**Périmètre annoncé honnêtement** — le bridge et les ports du moteur supposent un hôte de confiance / LAN / VPN ; SIWS + 2FA est la couche qui rend les domaines *publics* sûrs à exposer.",
         ],
       },
     ],
@@ -643,7 +727,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "L'accès au réseau se fait en **paiement à l'inférence** : le gateway cote un prix en KVR pour votre requête, votre wallet le paie on-chain, et alors seulement le hub exécute le modèle. La tarification est une formule petite et transparente — un plancher par requête plus un tarif par token — cotée d'avance et réglée sur l'usage **réel** de tokens après génération.",
+        md: "L'accès au réseau se fait en **paiement à l'inférence** : le gateway cote un prix en KVR pour votre requête, votre wallet le paie on-chain, et alors seulement l'anneau exécute le modèle. La tarification est une formule petite et transparente — un plancher par requête plus un tarif par token — cotée d'avance et réglée sur l'usage **réel** de tokens après génération.",
       },
       {
         t: "code",
@@ -676,6 +760,10 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "p",
         md: "Un **worker d'experts** est une fonction pure `(hidden, ids) → out` — sans attention, sans cache KV, sans sampler — qui calcule une tranche des experts d'un modèle MoE chaque fois que le routeur du backbone les sélectionne. Vous ne choisissez pas ce que vous servez ; le **marché de couverture** vous confie la plage la plus rare et la mieux rémunérée, taillée à votre budget, de sorte qu'un téléphone de 4 GB comme un GPU de datacenter y trouvent une place.",
       },
+      {
+        t: "callout",
+        md: "**État du moteur.** Le sharding au grain de l'expert a été construit et démontré sur le moteur précédent de Kvasir, et les résultats ci-dessous proviennent de ce travail. Le moteur actuel, [p4](/wiki/p4), sert aujourd'hui au grain de la couche ; le portage du sharding d'experts vers lui est conçu et en cours. Quand un détail nomme un outil ou une route, c'est celui qui tournait sur le moteur précédent.",
+      },
       { t: "h2", kick: "Sept étapes", text: "Compiler → se porter volontaire → servir → composer → gagner" },
       {
         t: "code",
@@ -705,7 +793,7 @@ POST /api/expert-coverage`,
           "**La tranche est minuscule.** Une tranche layer-0 de 128 experts fait **794 MB** face au modèle complet de 72 GB — le grain qui permet aux appareils faibles de participer. Vous ne téléchargez que la plage que le marché a attribuée.",
           "**Composition sortante, jamais entrante.** L'étape 5 ouvre un seul WebSocket sortant sur le 443, si bien que le NAT des opérateurs et les bordures CDN le laissent passer et que vous n'exposez aucun port entrant — le même chemin qu'utilise un téléphone.",
           "**Le heartbeat est porteur.** Sans `POST /api/expert-coverage`, vous ne servez rien que la carte de demande connaisse, et rien de ce que vous faites n'est crédité.",
-          "**La récompense va au travail.** Le travail relayé s'accumule dans le registre de contributions du hub ; le gateway crédite en delta des KVR vers votre **propre** wallet. Il vous faut une adresse de wallet pour être payé.",
+          "**La récompense va au travail.** Le travail passé par le bridge s'accumule dans son registre de contributions ; le gateway crédite en delta des KVR vers votre **propre** wallet. Il vous faut une adresse de wallet pour être payé.",
         ],
       },
       {
@@ -714,57 +802,59 @@ POST /api/expert-coverage`,
       },
     ],
   },
-  "hub-operations": {
-    title: "Exploiter un hub",
-    summary: "Notes d'opérateur pour faire tourner un hub et un gateway : corriger à chaud sans reconstruction, survivre aux redémarrages, garder le catalogue enregistré, et verrouiller la surface au seul 443.",
+  "bridge-operations": {
+    title: "Exploiter un bridge",
+    summary: "Notes d'opérateur pour faire tourner le bridge et l'anneau derrière lui : charger un plan, survivre à un redémarrage, garder la contribution en mouvement, et tenir le moteur hors d'Internet.",
     blocks: [
       {
         t: "p",
-        md: "Le hub (plan de contrôle) et le gateway (point d'entrée public) sont les deux services de longue durée qu'un opérateur maintient en bonne santé. Le hub et ses ports RPC sont **non authentifiés par conception** — hôte de confiance / LAN / VPN uniquement — et tout le trafic public converge vers l'unique surface 443 du gateway. Voici les notes d'exploitation qui gardent cet arrangement stable à travers les changements de code, les redémarrages et les reboots.",
+        md: "Le **gateway** (point d'entrée public) et le **bridge** (visage du moteur) sont les deux services de longue durée qu'un opérateur maintient en bonne santé, avec derrière eux les agents p4 et leurs stage servers. Le moteur ne parle aucune authentification — il suppose que les machines capables de s'atteindre sont censées le faire — si bien que tout ce qui est public converge vers le gateway, et que le bridge s'atteint par un tunnel plutôt qu'en étant publié.",
       },
-      { t: "h2", kick: "Déploiement et correction à chaud", text: "Changer le code sans reconstruire" },
+      { t: "h2", kick: "Chargement", text: "Un plan, et le nombre sous lequel il est chargé" },
       {
         t: "ul",
         items: [
-          "**Voie rapide :** mettez à jour le code du hub/gateway avec `docker cp <file> <container>:/app/...` + `docker restart` — sans reconstruction d'image. Mais **ajouter une variable d'environnement ne peut se faire ainsi** (cela nécessite une recréation du conteneur) ; préférez plutôt une API de config runtime qui persiste dans l'état du hub.",
-          "**Dérive de compose :** un conteneur de longue durée peut diverger de son fichier compose (mode réseau, entrypoint, env). Faites toujours `docker inspect` sur la config réelle avant une recréation par `docker compose up -d` — si elle a dérivé, la recréation efface les réglages de production. Utilisez cp + restart.",
-          "**Diffez avant de patcher :** extrayez le fichier du conteneur avec `docker cp` et comparez-le au HEAD du dépôt avant de le remplacer, pour qu'un hot-patch d'une session antérieure ne soit pas silencieusement perdu.",
+          "**Le placement est un plan que vous écrivez**, pas une requête que vous formulez : le bridge répond `409` à qui lui demande de servir. Générez le plan, passez-le à blanc, puis chargez avec `--confirm`.",
+          "**La load generation est écrite sur disque avant que la première commande ne parte.** Elle est choisie par le chargeur, vérifiée pour égalité exacte à chaque session et au déchargement, et consignée nulle part sur les machines — perdez-la et un modèle chargé ne peut même pas être démonté.",
+          "**La generation de nœud est ce même nombre.** Chargez un anneau avec deux valeurs différentes et il sert exactement une requête avant que la tête ne s'arrête ; la session suivante reste bloquée à demi chargée. Utilisez une valeur neuve à chaque chargement, sinon un enregistrement laissé par une tentative ratée entre en collision avec elle.",
+          "**L'agent refuse de charger sans son journal opérationnel.** C'est le registre d'admission qu'exige un chargement rejouable sans danger, pas un drapeau de débogage.",
         ],
       },
-      { t: "h2", kick: "Survivre à un redémarrage", text: "L'état persiste ; les modèles chargés non" },
+      { t: "h2", kick: "Survivre à un redémarrage", text: "Ce qui revient et ce qui ne revient pas" },
       {
         t: "ul",
         items: [
-          "Un redémarrage du hub **arrête le service.** Les slots, contrôleurs et liaisons se restaurent depuis `hub-state.json`, mais un modèle chargé est runtime-only. Après un redémarrage, lisez le `last_load` de chaque contrôleur et relancez `POST /api/controllers/{cid}/serve` — même un grand modèle revient en ~1 minute grâce au cache de pages.",
-          "**Watchdog du gateway :** sondez chaque modèle servi avec une requête d'1 token toutes les 30 s et rechargez automatiquement depuis `last_load` en cas d'échec (avec un cooldown). **Sondez *tous* les modèles, pas `catalog[0]`** — dès qu'un modèle sain d'un autre hub remonte en tête, une sonde limitée au premier manque un gros modèle qui tombe (un vrai bug, depuis corrigé).",
-          "**TTL du catalogue :** `POST /api/pay/hub/register` a un TTL de 90 s, alors gardez l'enregistrement vivant avec une boucle de heartbeat d'environ 60 s, rendue durable au fil des reboots par un cron `@reboot` ou une unité systemd.",
+          "**Un redémarrage d'agent fait tomber ses nœuds.** Les stage servers n'existent qu'à l'exécution ; le modèle doit être rechargé depuis le plan. C'est la procédure de reprise, pas l'échec d'une procédure.",
+          "**Le gateway ne le rechargera pas pour vous.** Son watchdog d'anneau remarque un modèle qui a cessé de servir, apprend du `409` du bridge que le placement est externe, le signale une fois, puis cesse de demander.",
+          "**Les compteurs de contribution vivent dans la mémoire du bridge.** Le gateway interroge toutes les 30 s et crédite en delta ; un redémarrage ne perd que ce qui n'avait pas été relevé, et le gateway rétablit une nouvelle base plutôt que de payer deux fois quand un compteur recule.",
         ],
       },
-      { t: "h2", kick: "Verrouillez-le", text: "Tout ce qui est public passe par le 443" },
+      { t: "h2", kick: "Verrouillez-le", text: "Le moteur n'est pas exposé à Internet" },
       {
         t: "ul",
         items: [
-          "Le hub (:19000) et les ports RPC supposent un réseau de confiance ; la seule chose qui devrait faire face à Internet est le gateway sur le 443 (y compris son passage de relais WebSocket).",
-          "Si un hub doit se trouver sur une IP publique, filtrez-le au pare-feu vers des IP de confiance — mais les ports publiés par Docker sont **DNAT'd avant la chaîne INPUT**, donc une règle sur `dport` ne correspondra pas. Filtrez plutôt dans la chaîne `DOCKER-USER` en utilisant le port de destination d'origine de conntrack (`--ctorigdstport`), et persistez les règles avec un oneshot systemd ordonné `After=docker.service`.",
+          "Faites écouter le bridge sur la loopback et donnez-lui un service token. Sans ce jeton il n'authentifie personne, et tout ce qui l'atteint peut faire tourner l'anneau gratuitement — il le dit au démarrage plutôt que de vous le laisser découvrir plus tard.",
+          "Les agents annoncent l'adresse que les autres agents composent. Utilisez le réseau le plus rapide que les hôtes partagent, jamais la loopback entre hôtes, et gardez ce réseau hors de l'Internet public.",
+          "Si quelque chose doit se trouver sur une IP publique, rappelez-vous que les ports publiés par Docker sont **DNAT'd avant la chaîne INPUT**, donc une règle sur `dport` ne correspondra pas. Filtrez dans la chaîne `DOCKER-USER` sur le port de destination d'origine de conntrack (`--ctorigdstport`), et persistez avec un oneshot systemd ordonné `After=docker.service`.",
         ],
       },
-      { t: "h2", kick: "Règlement et pièges", text: "Pull, pas push — et un piège shell" },
+      { t: "h2", kick: "Pièges", text: "Deux qui coûtent du temps réel" },
       {
         t: "ul",
         items: [
-          "**Le règlement est pull, pas push :** le hub accumule les contributions ; le gateway interroge `GET /api/contributions` et crédite en delta des KVR. Si un redémarrage du hub remet ses compteurs à zéro, le gateway rétablit une nouvelle base pour que rien ne soit payé deux fois. Le taux de travail d'experts est fixé par `LINKCPP_EXPERT_UNITS_PER_MB`.",
-          "**Le piège `pkill` :** `ssh host 'pkill -f X; ...'` correspond à sa *propre* ligne de commande et se tue lui-même. Utilisez une classe de caractères dans le motif (`X[x]`), et ne mettez jamais le lancement du processus et le pkill dans la même commande distante.",
+          "**Un wallet d'opérateur non renseigné se lit comme zéro gain.** Le gateway saute toute ligne de contribution sans propriétaire et ne journalise rien. Les nœuds ont l'air inoccupés alors qu'ils servent.",
+          "**`pkill` correspond à sa propre ligne de commande.** `ssh host 'pkill -f server.js; ...'` tue le shell qui l'exécute. Mettez le motif dans un fichier de script plutôt que dans la commande distante, utilisez une classe de caractères (`server[.]js`), et souvenez-vous qu'un processus lancé en simple `node server.js` ne porte aucun chemin sur lequel filtrer — trouvez-le plutôt par son port d'écoute.",
         ],
       },
     ],
   },
-  "hub-wan-interconnect": {
-    title: "Interconnexion WAN entre hubs (optiques 200G)",
-    summary: "Comment des hubs se relient à 200 Gb/s à travers une salle, un campus ou une ville : quelle optique à quelle distance, quoi se branche où, et ce qu'il faut pour vraiment atteindre le débit nominal.",
+  "wan-interconnect": {
+    title: "Interconnexion WAN (optiques 200G)",
+    summary: "Comment des sites de calcul se relient à 200 Gb/s à travers une salle, un campus ou une ville : quelle optique à quelle distance, quoi se branche où, et ce qu'il faut pour vraiment atteindre le débit nominal.",
     blocks: [
       {
         t: "p",
-        md: "Quand deux hubs ont tous deux des routes publiques, le plan de données de dispatch d'experts devrait être un **lien direct** — le relais 443 est pour les bordures derrière NAT. Cette entrée est la recette concrète pour faire de ce lien direct un lien de classe 200 Gb/s avec des pièces de catalogue. Une règle organise tout : **la fibre est un verre neutre en vitesse ; la vitesse réside dans le module enfichable à chaque extrémité.**",
+        md: "Quand deux sites ont tous deux des routes publiques, le plan de données de dispatch d'experts devrait être un **lien direct** — le relais est pour les bordures sans adresse à elles. Cette entrée est la recette concrète pour faire de ce lien direct un lien de classe 200 Gb/s avec des pièces de catalogue. Une règle organise tout : **la fibre est un verre neutre en vitesse ; la vitesse réside dans le module enfichable à chaque extrémité.**",
       },
       { t: "h2", kick: "Étape 1 · choisir par distance", text: "L'échelle de portée" },
       {
@@ -783,8 +873,8 @@ POST /api/expert-coverage`,
       {
         t: "ul",
         items: [
-          "**Côté NIC** — les cartes de classe ConnectX-6/7 exposent des cages QSFP56 ; DAC/AOC/FR4/LR4/ER4 se logent tous directement dans la NIC. Un hub de classe GB10 possède déjà deux ports QSFP 200 GbE embarqués, si bien qu'un lien entre deux hubs ne requiert exactement qu'un seul câble et aucun nouveau matériel.",
-          "**Côté switch** — les optiques cohérentes ZR+ sont au format QSFP-DD et ont leur place dans un switch ou un routeur ; la NIC du hub rejoint alors ce switch à 200G via un court DAC. Utilisez ce palier quand le hub distant est à des dizaines de kilomètres.",
+          "**Côté NIC** — les cartes de classe ConnectX-6/7 exposent des cages QSFP56 ; DAC/AOC/FR4/LR4/ER4 se logent tous directement dans la NIC. Un hôte de classe GB10 possède déjà deux ports QSFP 200 GbE embarqués, si bien qu'un lien entre deux sites ne requiert exactement qu'un seul câble et aucun nouveau matériel.",
+          "**Côté switch** — les optiques cohérentes ZR+ sont au format QSFP-DD et ont leur place dans un switch ou un routeur ; la NIC du site rejoint alors ce switch à 200G via un court DAC. Utilisez ce palier quand le site distant est à des dizaines de kilomètres.",
           "**La fibre elle-même** — des paires LC duplex monomode standard (G.652), louées comme fibre noire au brin. Le même verre porte 100G aujourd'hui et 400G demain ; les mises à niveau sont un échange de module, jamais des travaux de génie civil.",
           "**Au-delà de ~120 km** — vous cessez d'acheter des pièces et commencez à louer une longueur d'onde à un opérateur ; la démarcation est une remise Ethernet sur votre switch.",
         ],
@@ -792,33 +882,37 @@ POST /api/expert-coverage`,
       {
         t: "code",
         caption: "Trois montages de référence, du moins cher au plus cher.",
-        code: `two-hub bench   : hub A qsfp0 ──QSFP56 DAC 1m── hub B qsfp0
-campus pair     : hub A [LR4] ──dark fiber, ≤10km── [LR4] hub B
-metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── hub`,
+        code: `two-site bench  : site A qsfp0 ──QSFP56 DAC 1m── site B qsfp0
+campus pair     : site A [LR4] ──dark fiber, ≤10km── [LR4] site B
+metro federation: site ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── site`,
       },
       { t: "h2", kick: "Étape 3 · atteindre réellement 200G", text: "Le débit ligne est une configuration, pas un achat" },
       {
         t: "ul",
         items: [
           "Utilisez **RDMA (RoCE)** pour le flux de dispatch là où c'est disponible — les hôtes de classe GB10 alimentent la NIC via des liens PCIe scindés, et la pleine vitesse mesurée (~185–190 Gb/s) apparaît sous RoCE avec une topologie correctement mappée ; un chemin mal mappé plafonne près de la moitié du débit et un TCP simple non optimisé atterrit bien plus bas.",
-          "Activez les **jumbo frames (MTU 9000)** de bout en bout et gardez `TCP_NODELAY` sur les sockets de dispatch (le hub le règle déjà).",
-          "Attendez-vous à *vérifier*, pas à supposer : lancez un perftest entre hubs après chaque changement physique — la différence entre 95 et 190 Gb/s est invisible tant qu'elle n'est pas mesurée.",
+          "Activez les **jumbo frames (MTU 9000)** de bout en bout et gardez `TCP_NODELAY` sur les sockets de dispatch (le bridge le règle déjà).",
+          "Attendez-vous à *vérifier*, pas à supposer : lancez un perftest entre sites après chaque changement physique — la différence entre 95 et 190 Gb/s est invisible tant qu'elle n'est pas mesurée.",
           "Gardez le **relais 443 comme voie de repli** — la politique de composition est direct d'abord pour les pairs publics, relais pour le NAT. Le rôle du relais est la portée, le rôle du lien direct est la vitesse.",
         ],
       },
       {
         t: "p",
-        md: "Pourquoi cela compte pour l'architecture : la latence de décodage est bornée par le temps d'aller-retour (~5 µs/km dans la fibre — de la physique, insensible à la bande passante), si bien qu'un gros tuyau achète **de la vitesse de prefill, du débit de dispatch par lots et une distribution quasi instantanée des tranches d'experts**, pas une latence par token plus basse. C'est exactement le rôle du palier hub dans la conception à deux paliers : la capacité dans le palier gros tuyau, la portée dans le palier relais.",
+        md: "Pourquoi cela compte pour l'architecture : la latence de décodage est bornée par le temps d'aller-retour (~5 µs/km dans la fibre — de la physique, insensible à la bande passante), si bien qu'un gros tuyau achète **de la vitesse de prefill, du débit de dispatch par lots et une distribution quasi instantanée des tranches d'experts**, pas une latence par token plus basse. C'est exactement le rôle du palier site dans la conception à deux paliers : la capacité dans le palier gros tuyau, la portée dans le palier relais.",
       },
     ],
   },
   "load-adaptive-scaling": {
     title: "Mise à l'échelle adaptative à la charge",
-    summary: "Le chemin de service MoE de Kvasir grandit et se contracte avec le trafic : le coordinateur remobilise les workers éprouvés en saturation, et le hub recrute des nœuds inactifs en augmentant la demande d'experts — le tout basé sur le pull, si bien que les appareils derrière NAT participent aussi.",
+    summary: "Le chemin de service MoE de Kvasir grandit et se contracte avec le trafic : le coordinateur remobilise les workers éprouvés en saturation, et le bridge recrute des nœuds inactifs en augmentant la demande d'experts — le tout basé sur le pull, si bien que les appareils derrière NAT participent aussi.",
     blocks: [
       {
         t: "p",
         md: "Le chemin de service MoE de Kvasir se met à l'échelle de façon élastique avec la charge, en deux couches coopérantes. Au repos, le coordinateur sert tout localement pour le chemin le plus rapide par token ; en saturation, les deux couches ci-dessous font grandir l'essaim — et le contractent de nouveau quand la pointe passe.",
+      },
+      {
+        t: "callout",
+        md: "**État du moteur.** Le sharding au grain de l'expert a été construit et démontré sur le moteur précédent de Kvasir, et les résultats ci-dessous proviennent de ce travail. Le moteur actuel, [p4](/wiki/p4), sert aujourd'hui au grain de la couche ; le portage du sharding d'experts vers lui est conçu et en cours. Quand un détail nomme un outil ou une route, c'est celui qui tournait sur le moteur précédent.",
       },
       { t: "h2", kick: "Couche 1", text: "Côté coordinateur : dispatch adaptatif à la charge" },
       {
@@ -834,17 +928,17 @@ metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km─�
           "L'auto-interrogation est bornée dans le temps, de sorte qu'un sondage bloqué ne peut jamais bloquer le dispatch.",
         ],
       },
-      { t: "h2", kick: "Couche 2", text: "Côté hub : recrutement adaptatif à la charge" },
+      { t: "h2", kick: "Couche 2", text: "Côté plan de contrôle : recrutement adaptatif à la charge" },
       {
         t: "p",
-        md: "Le hub de contrôle surveille chaque coordinateur MoE et fait grandir le pool de workers lorsque nécessaire :",
+        md: "Le plan de contrôle surveille chaque coordinateur MoE et fait grandir le pool de workers lorsque nécessaire :",
       },
       {
         t: "ul",
         items: [
           "Une boucle d'arrière-plan interroge les slots de chaque coordinateur et enregistre la saturation par modèle.",
           "Tant qu'un modèle est saturé, sa **cible effective de répliques d'experts** est relevée (base + boost). Le marché de couverture relit alors les experts déjà couverts comme de nouveau rares, et un modèle **sans** worker actif est amorcé à partir de ses métadonnées GGUF (nombre d'experts), afin que la demande soit visible même depuis zéro.",
-          "Les nœuds inactifs interrogent le marché de la demande (`/api/expert-volunteer`) et reçoivent une tranche `(layer, expert-range)` à servir. Ils téléchargent la tranche, appellent le relay et enregistrent leur couverture ; le hub les câble automatiquement dans la carte de dispatch du coordinateur.",
+          "Les nœuds inactifs interrogent le marché de la demande (`/api/expert-volunteer`) et reçoivent une tranche `(layer, expert-range)` à servir. Ils téléchargent la tranche, appellent le relay et enregistrent leur couverture ; le plan de contrôle les câble automatiquement dans la carte de dispatch du coordinateur.",
           "Quand la charge s'épuise, la cible retombe et la demande disparaît, si bien que les workers supplémentaires ne reçoivent plus de dispatch et s'éteignent avec le temps.",
         ],
       },

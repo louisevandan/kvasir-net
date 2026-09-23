@@ -1,0 +1,18 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/ggml/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/ggml/src/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/ggml/src/ggml-cpu/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/ggml/src/ggml-metal/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/ggml/src/ggml-rpc/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/src/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/common/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/external/llama.cpp/vendor/cpp-httplib/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/apps/linkcpp-node/cmake_install.cmake",
+		"/Volumes/Transcend/Projects/kvasir-net/build-ios-ring/apps/linkcpp-expert-worker/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

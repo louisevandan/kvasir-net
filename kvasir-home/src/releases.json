@@ -1,0 +1,80 @@
+{
+  "updated": "2026-09-21",
+  "note": "An entry is added when a version actually ships. Each one carries what it was accepted on, so a claim here can be checked rather than taken.",
+  "releases": [
+    {
+      "id": "gateway-p4-live-2026-09-20",
+      "component": "gateway",
+      "version": "p4",
+      "date": "2026-09-20",
+      "title": "The settlement gateway serves on p4",
+      "body": "gate.kvasir-ai.net answers again, this time against the p4 engine. A paid request crosses the gateway, the bridge and the MI250 ring and is billed on the tokens it actually used, not on an estimate. /v1/models answers 401 without a key — that is the gateway working, not an outage.",
+      "evidence": [
+        "A prompt sent from a Galaxy S25 Ultra returned an answer billed at 28 tokens, and the credit balance moved by that amount.",
+        "The settlement ledger credited the bridge and both ring stages for the same request, each to its owner wallet."
+      ]
+    },
+    {
+      "id": "network-throughput-2026-09-21",
+      "component": "network",
+      "version": "Step-3.7-Flash",
+      "date": "2026-09-21",
+      "title": "28-31 tokens a second on a 428B model, and it stays there",
+      "body": "Two stages of Step-3.7-Flash on one MI250 machine decode at 28-31 tokens a second single stream, first token in 270-285 ms. The figure that matters is the second half: it no longer decays. The agent's journal used to be re-listed from disk before every record it wrote, so a ring got slower the longer it ran — 22.90 falling to 12.58 over four consecutive runs.",
+      "evidence": [
+        "Six consecutive 100-token runs after the fix: 30.04, 31.21, 28.21, 29.04, 27.84, 28.73 tokens a second.",
+        "Padding the journal with 20,000 zero-byte entries, which charge nothing against its byte budget, used to take decode from 9.52 to 2.23 tokens a second. After the fix the same padding costs nothing.",
+        "Still holding 28 tokens a second at 19,761 journal entries, where before the fix it would have been under one."
+      ]
+    },
+    {
+      "id": "bridge-participation-2026-09-21",
+      "component": "network",
+      "version": "p4bridge",
+      "date": "2026-09-21",
+      "title": "A device can prove a wallet and join the market",
+      "body": "The bridge serves the participation surface the mobile clients have been calling since the old control plane was retired: a wallet signature becomes a node token, the token buys an answer to what is under-covered, and a claimed window wires a relay so a device behind carrier NAT can be reached. What is not served yet is the shard download that would hand a device its weights, and the p4 engine has no path for dispatching expert work to a remote device at all.",
+      "evidence": [
+        "Walked end to end against production with a freshly generated wallet: challenge, a 30-day node token, an assignment of layer 0 experts [0,32) with n_embd 4096, and a coverage claim that wired its relay session to a coordinator port.",
+        "The ring's one-byte role preamble crosses the relay untouched, with a test that fails if it does not."
+      ]
+    },
+    {
+      "id": "network-step37-2026-09-15",
+      "component": "network",
+      "version": "Step-3.7-Flash",
+      "date": "2026-09-15",
+      "title": "A 428B MoE placed across two machines",
+      "body": "Step-3.7-Flash — 428B parameters, 45 layers, 288 experts per layer with top-8 routing, Q4_K_XL at about 114 GiB — is placed as 16 stages across two AMD MI250 machines and serves from there. Placement comes from an operator's plan; the engine does not load a model because an HTTP call asked it to.",
+      "evidence": [
+        "Both agents report their stages loaded at the same generation, verified by INSPECT rather than by a status page.",
+        "Eight GPUs per machine, 64 GiB each."
+      ]
+    },
+    {
+      "id": "engine-p4-v0.9.0",
+      "component": "engine",
+      "version": "p4 v0.9.0",
+      "date": "2026-09-10",
+      "title": "The engine that replaced linkcpp",
+      "body": "p4 supersedes linkcpp as the engine behind the network. It keeps the data plane close to upstream and moves placement, session identity and the numbers a biller needs out of the engine and into an operator's hands.",
+      "evidence": [
+        "One host, a 35B model: 512 of 512 requests completed, best 313.8 tok/s.",
+        "1,536 tests passing, 0 failing, in the public engine.",
+        "Source-available under BSL 1.1 on the p4 branch."
+      ]
+    },
+    {
+      "id": "network-122b-three-hosts-2026-09-16",
+      "component": "network",
+      "version": "122B across three machines",
+      "date": "2026-09-16",
+      "title": "Three machines, one model, one of them a phone",
+      "body": "Qwen3.5-122B served end to end across a GB10 and two Mac M4 Pros, with a Galaxy S25 holding part of the same model. Mixed backends produced matching tokens.",
+      "evidence": [
+        "Cosine similarity of at least 0.9999 across ROCm, CUDA and a phone CPU.",
+        "Only hidden states crossed the network — no weights, no KV cache."
+      ]
+    }
+  ]
+}

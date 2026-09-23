@@ -11,6 +11,7 @@ struct ExportPhraseView: View {
     @State private var words: [String]?
     @State private var checking = false
     @State private var denied = false
+    @State private var needsDeviceLock = false
 
     var body: some View {
         NavigationStack {
@@ -64,6 +65,11 @@ struct ExportPhraseView: View {
             }
             .buttonStyle(.brandPrimary)
             .disabled(checking)
+            if needsDeviceLock {
+                Text(loc.t("export.needsDeviceLock"))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
             if denied {
                 Text(loc.t("export.denied"))
                     .font(.caption)
@@ -113,14 +119,20 @@ struct ExportPhraseView: View {
 
     private func reveal() {
         guard !checking else { return }
-        checking = true; denied = false
+        checking = true; denied = false; needsDeviceLock = false
         Task {
-            let ok = await Biometrics.unlock(reason: loc.t("export.title"))
-            if ok {
+            switch await Biometrics.unlock(reason: loc.t("export.title")) {
+            case .authenticated:
                 withAnimation { words = wallet.revealMnemonic() }
                 if words == nil { denied = true }
-            } else {
+            case .refused:
                 denied = true
+            case .unavailable:
+                // Refusing is the whole point. These twelve words are the
+                // wallet: copied once, they spend it from anywhere, forever,
+                // and no later lock takes that back. A device with nothing to
+                // authenticate against cannot show them.
+                needsDeviceLock = true
             }
             checking = false
         }

@@ -17,7 +17,7 @@ import java.net.URL
  * Streaming is why this exists: the non-streaming /api/inference route is cut off
  * by Cloudflare's fixed 100s origin timeout on slow models (M3 ~1 tok/s) => 524.
  * /v1/chat/completions with stream:true flows SSE from the first token, so the
- * connection never idles out. Auth mirrors HubAuthService (ed25519, base64 sig);
+ * connection never idles out. Auth mirrors BridgeAuthService (ed25519, base64 sig);
  * credits are debited per completion's usage.
  */
 class CreditService(baseUrl: String) {

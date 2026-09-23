@@ -45,7 +45,7 @@ public struct UnstakeResult: Decodable, Sendable {
 
 public struct NodeReward: Decodable, Sendable, Identifiable {
     public let nodeId: String
-    // var so the app can fold a hub-qualified expert-work node's reward into its
+    // var so the app can fold a bridge-qualified expert-work node's reward into its
     // base phone node before display (see the claimable-rewards list).
     public var contributedUnits: Double
     public var pendingRewards: Double
@@ -100,7 +100,7 @@ public struct NodeStatusItem: Decodable, Sendable, Identifiable {
     public let mode: String?
     public let tier: String?    // S | A | B | C
     public let perfMultiplier: Double?
-    // Reward fields are var so the app can fold a hub-qualified expert-work node's
+    // Reward fields are var so the app can fold a bridge-qualified expert-work node's
     // earnings into its base phone node before display (see NodeMonitor).
     public var contributedUnits: Double
     public var effectiveUnits: Double?

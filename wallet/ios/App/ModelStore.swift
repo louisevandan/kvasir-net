@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// A GGUF the hub has staged onto this device (Documents/models), usable for
+/// A GGUF the bridge has staged onto this device (Documents/models), usable for
 /// on-device inference without the network.
 struct LocalModel: Identifiable, Hashable {
     var id: String { name }

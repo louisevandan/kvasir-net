@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const nlTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Een bereikbaar adres voor een laptop",
+    dek: "p4 bereikt een node door hem te bellen, en een machine achter NAT heeft geen adres om te bellen. De meeste machines staan achter NAT. Dit is wat er nodig was om er toch één te laten meedoen, en de metingen van de dag waarop dat lukte.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**Het obstakel was niet de inspanning maar de richting.** p4 levert werk af door een TCP-verbinding *naar* een node te openen. Een verbinding die de node zelf heeft geopend dient alleen voor ontvangstbewijzen: een `Data`-frame dat erop binnenkomt wordt beantwoord met `peer_closed(\"unexpected frame on outbound hop\")`. Een laptop kan geen tunnel naar buiten openen en daarlangs werk krijgen. Niet met goede wil, niet met herhalingen, niet met een betere client.",
+      },
+      { t: "h2", kick: "De beperking", text: "De machine van een deelnemer is standaard onbereikbaar" },
+      {
+        t: "p",
+        md: "Een machine thuis zit achter netwerkadresvertaling. Hij kan het internet bereiken; het internet hem niet. Onze eigen vloot toont beide kanten: de GB10 op kantoor heeft rechtstreeks een publiek adres, terwijl de twee MI250's op `192.168.20.x` achter één gedeelde uitgang staan. De MI250's zijn niet bijzonder — zo ziet de machine van een deelnemer er nu eenmaal uit.",
+      },
+      {
+        t: "p",
+        md: "p4 kent geen routeringstabel, geen rendez-vousdienst, geen hole punching. `deliver_outbound` haalt het adres uit de envelop van het event en roept `connect` aan. Meer is het niet, en binnen een rack is dat een redelijk ontwerp. Alleen niet een ontwerp waaraan een laptop kan voldoen.",
+      },
+      { t: "h2", kick: "Het antwoord", text: "Eén uitgaande verbinding, open gehouden" },
+      {
+        t: "p",
+        md: "De relay bezit namens de node een publiek adres. De node houdt er één uitgaande verbinding naartoe open en luistert nergens op. Belt iemand dat publieke adres, dan komen die bytes naar beneden over de verbinding die de node al had. Beide uiteinden van p4 zien een gewone socket naar een gewoon adres, en geen van beide merkt dat de relay bestaat.",
+      },
+      {
+        t: "code",
+        caption: "Wat de beller ziet, en wat de node werkelijk draait",
+        code: "caller  ->  tcp://relay:43100        # een gewoon p4-adres\n            |\n            +-- relay      publiek; geeft bytes door, leest er geen\n                  |\n                  +-- tunnel   één uitgaande verbinding van de node\n                        |\n                        +-- p4-agent  127.0.0.1:42031, luistert alleen op loopback",
+      },
+      {
+        t: "p",
+        md: "De relay leest p4 nooit. Payloads gaan byte voor byte door en worden nooit ontleed: hij kan een `LOAD` niet van een `INSPECT` onderscheiden, en dat mag hij ook niet kunnen — op het moment dat hij het verkeer begrijpt, wordt hij iets dat het kan veranderen.",
+      },
+      { t: "h2", kick: "Waarom dit tegelijk de veiligheidsgrens is", text: "Poortdoorschakeling was nooit een optie" },
+      {
+        t: "p",
+        md: "p4 heeft geen enkele authenticatie. Geen TLS, geen tokens, geen toegangslijst — elke host die de poort van een agent bereikt mag `NODE_LOAD`, `NODE_UNLOAD` en `INSPECT` sturen. Een deelnemer vragen een poort op zijn thuisrouter daarheen door te schakelen valt niet te verdedigen, en daarom is de voor de hand liggende oplossing de verkeerde.",
+      },
+      {
+        t: "p",
+        md: "Via een relay luistert de node nergens op. Hij houdt één uitgaande verbinding en bewijst een operator-wallet voordat die verbinding iets vervoert — dezelfde ed25519-handtekening over base58 die de afrekengateway al gebruikt, zodat de identiteit waarmee een node zich registreert dezelfde is als die waarop het beloningsgrootboek staat. Bereikbaarheid en authenticatie bleken hetzelfde antwoord te hebben.",
+      },
+      { t: "h2", kick: "De dag dat het werkte", text: "Gemeten, niet beweerd" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "van een vlootmachine naar een Mac achter NAT" },
+          { n: "28 ms", l: "tot de agent zijn eigen regel toepaste" },
+          { n: "512 KiB", l: "byte voor byte identiek terug" },
+          { n: "0", l: "geopende poorten op de laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Een MI250-host in een datacentrum belde `tcp://34.50.62.159:43100` en bereikte in 6 ms een p4-agent op een MacBook achter NAT. De agent sloot de verbinding 28 ms later omdat het eerste frame geen `Hello` was — zijn eigen protocolregel, door hemzelf toegepast, vanaf een machine die even daarvoor helemaal niet te bereiken was. Die weigering is het bewijs: de relay ontleedt geen payloads en kan haar dus niet hebben geproduceerd.",
+      },
+      {
+        t: "table",
+        head: ["Controle", "Resultaat"],
+        rows: [
+          ["512 KiB heen en weer", "byte voor byte identiek, 177 ms"],
+          ["256 KiB heen en weer", "byte voor byte identiek, 108 ms"],
+          ["Drie gelijktijdige bellers", "geen stroom kruiste een andere"],
+          ["Registratie zonder handtekening", "geweigerd"],
+          ["Hergebruikte challenge", "geweigerd"],
+        ],
+      },
+      { t: "h2", kick: "De andere helft", text: "Een node heeft iets nodig om te draaien" },
+      {
+        t: "p",
+        md: "Bereikbaarheid is waardeloos zonder motor erachter, en de desktoptoepassing leverde er geen mee: ze zocht een `p4-agent`-binary in drie build-mappen en vond die alleen waar iemand p4 al met de hand had gecompileerd. Nu draagt de toepassing haar eigen exemplaar, gebouwd voor elk platform waarop ze wordt uitgeleverd.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: een universele binary met beide architecturen samengevoegd. De Mac-app wordt als `universal` verpakt en bronnen worden ongewijzigd in beide helften gekopieerd; een binary met alleen arm64 zou een Intel-Mac dus een app geven die compleet lijkt en geen node kan starten — een storing die alleen zichtbaar is op hardware die de ontwikkelaar niet bezit.",
+          "Windows: cross-gecompileerd, en het zoeken weet dat het om `p4-agent.exe` moet vragen. De extensie vergeten is precies hoe een Windows-build een agent uitlevert die hij vervolgens niet vindt.",
+          "De agentbuild draait vóór elke verpakking, dus een release zonder agent kan niet ontstaan.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Wat nog niet lukt.** Een node kan nu draaien en bereikt worden. Voor inferentie verdient hij nog steeds niets: de motor zendt werkverslagen per fase uit maar niemand verzamelt ze, en het bijdrage-eindpunt van de gateway — terecht afgesloten zodat geen node zichzelf kan crediteren — is nooit aangeroepen. Draaien en betaald worden zijn twee problemen; alleen het eerste is opgelost.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Zwerm-inferentie met expert-sharding: het ontwerp",
     dek: "86% van een 122B-MoE bestaat uit 12.544 onafhankelijke experts van 5.3 MB. Snijd het model op die korrel en een telefoon draagt een echt aandeel van frontier-inferentie.",
@@ -371,7 +455,7 @@ inside the lock:
           "**Drie manieren om aan te sluiten:** vaste **lokale node-slots** met bewerkbare VRAM/RAM/CPU-budgetten; **remote units** — registreer een andere hub en importeer zijn nodes; en **beheerde node-agents** — worker-only services die via simpel request/response-HTTP aansluiten, bewust zonder persistente stream, zodat ze simpele LAN/VPN-routering overleven.",
           "**Compatibiliteitsgating is eersteklas:** elke unit, node en agent rapporteert een protocol-/runtime-pack-identiteit plus backend-details. Mismatches in unit, runtime-pack, inferentie-engine-revisie en RPC-ABI worden **hard geblokkeerd vóór bind, plan, load of infer** — backend-verschillen (CUDA/Metal/Vulkan/CPU) worden als capaciteiten bijgehouden, niet als afwijzingen.",
           "**De planner** leest GGUF-metadata en produceert aaneengesloten laagplaatsing per node, `--tensor-split`, KV-cache-/laag-/expert-VRAM-schattingen, en optionele expert-FFN-offload naar RAM.",
-          "**Gateways:** elke controller stelt OpenAI-compatibele (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages|models`) endpoints beschikbaar, gedragen door hetzelfde geladen model — bestaande clients werken ongewijzigd.",
+          "**Gateways:** elke controller stelt OpenAI-compatibele (`/v1/chat/completions`, `/v1/models`) en Anthropic-compatibele (`/anthropic/v1/messages|models`) endpoints beschikbaar, gedragen door hetzelfde geladen model — bestaande clients werken ongewijzigd.",
         ],
       },
       {
@@ -486,7 +570,7 @@ inside the lock:
         t: "code",
         caption: "Planner-uitvoer — inferentie-engine -ot-regelformaat.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inferentie-engine -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Wat er bedraad werd · puur Python, geen C++-rebuild", text: "De offload-regels van de planner naar een echte load dragen" },
       {
@@ -718,7 +802,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "De autonome deelnamestroom", text: "Ontdekken → beloningsgedreven download → meedoen aan de berekening" },
       {
         t: "code",
-        code: `1. Phone knows the hub (hub.kvasir-ai.net) — already holds its wallet node-token
+        code: `1. Phone knows the hub (hub.kvasir-ai.net — retired since; the bridge serves this)
 2. GET /api/proxy/models/…/expert-shard?layers=0:1&experts=0:256
    # partially downloads its own expert slice (1.58 GB, WiFi)
 3. linkcpp-expert-worker --serve
@@ -906,12 +990,13 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "experts · routering", "per expert (Q4≈)", "gedeeld", "status"],
         rows: [
-          ["Qwen3.5-122B (vandaag in bedrijf)", "256 · top-8", "5.3 MB (gemeten)", "ja", "serveert (testvloot)"],
-          ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "ja", "klaar — eerste kandidaat"],
+          ["Step-3.7-Flash 428B (vandaag in bedrijf)", "288 · top-8", "gemeten op de vloot", "ja", "serveert — 16 stages, twee machines"],
+          ["Qwen3.5-122B", "256 · top-8", "5.3 MB (gemeten)", "ja", "end-to-end bediend over 3 machines"],
+          ["GLM-5.2 744B", "—", "—", "ja", "geverifieerd op linkcpp — rapport ongepubliceerd"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ja", "gepland (hook geverifieerd)"],
           ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "nee", "gepland (hook geverifieerd)"],
           ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ja", "gepland (deepseek2-graaf)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ja", "gepland (deepseek-familie)"],
+          ["Kimi K3 2.8T", "—", "—", "ja", "volgende gate — verificatie op p4"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "nee", "klaar"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "nee", "klaar"],
           ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ja", "gepland (MoE om de laag)"],
@@ -1017,6 +1102,126 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Dat is de vorm van een netwerk dat modellen met biljoenen parameters kan serveren op hardware die niemand alleen bezit: inactieve capaciteit wordt precies dan uitgenodigd wanneer dat de moeite waard is, en alleen dan.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "De ring verhuizen naar p4",
+    dek: "Zeven contractwijzigingen tussen een engine en zijn aanroeper. Elk ervan faalde anders, en maar één ervan zag eruit als een fout.",
+    blocks: [
+      {
+        t: "p",
+        md: "We hebben een nieuwe release van de p4-engine samengevoegd en de ring stopte met serveren. Niet met een crash — de lader meldde succes, de agents meldden ready, en er gebeurde niets. Terugwerken vanuit die stilte kostte een dag en leverde **zeven** plekken op waar onze aanroeper en de engine uit elkaar waren gedreven. Wat ze het opschrijven waard maakt is niet het aantal. Het is dat zes van de zeven geen enkele fout opleverden.",
+      },
+      { t: "h2", kick: "Fout één", text: "Een event voor een node die niet bestaat wordt doorgestuurd, niet geweigerd" },
+      {
+        t: "p",
+        md: "Onze lader adresseerde het LOAD-commando aan de node die hij wilde aanmaken. Maar een node bestaat niet totdat LOAD hem aanmaakt, en de regel van de broker voor een event dat een onbekende node noemt is om het **naar buiten door te sturen** in plaats van het te weigeren. Het commando verliet de agent op zoek naar ergens anders om heen te gaan, vond niets, en werd weggegooid. Geen logregel, want vanuit het standpunt van de broker was er niets misgegaan.",
+      },
+      {
+        t: "p",
+        md: "De oplossing was om LOAD aan de *agent* te adresseren, verpakt in de backend-neutrale levenscyclus-envelop van de engine, met het eigen commando van de adapter als ondoorzichtige body. Achteraf vanzelfsprekend; van buitenaf onzichtbaar.",
+      },
+      { t: "h2", kick: "Fout twee", text: "Een getal dat gelijk moet zijn aan een ander getal" },
+      {
+        t: "p",
+        md: "Een model wordt geladen onder een **load generation**, en elke node wordt geregistreerd met een **node generation**. Wij behandelden die als onafhankelijk — een timestamp voor de een, `1` voor de ander — en alles werkte. De ring laadde. Hij beantwoordde een verzoek correct. Toen stierf de kopnode.",
+      },
+      {
+        t: "code",
+        caption: "De check, in de release-boekhouding van de adapter.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "De bon die een afgerond verzoek afsluit draagt de load generation, en de node die hem verstuurt draagt de zijne. Verschillen ze, dan wordt de node gestopt. De vorm van de bug is dus: **laden slaagt, het eerste verzoek slaagt, de kop sterft, en elke sessie daarna blijft halfgeladen hangen.** Dat leest precies als een crash onder belasting en totaal niet als een mismatch. Onze lader weigert nu een plan waarvan de twee getallen niet overeenkomen, vóórdat er iets geladen wordt.",
+      },
+      { t: "h2", kick: "Fout drie", text: "Een grens die nooit gehaald kon worden" },
+      {
+        t: "p",
+        md: "De adapter vergelijkt het grootste resultaat dat een stage mag teruggeven met het getal dat de stage-server meldt zodra hij opkomt, op exacte gelijkheid. Dat getal konden we niet kennen zonder het model te laden — dus laadden we met een gok, en het falen vertelde ons de echte getallen van alle vier de stages in één keer:",
+      },
+      {
+        t: "code",
+        caption: "Eén run, vier antwoorden.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. De behouden stores van de agent zijn 256 MiB, dus die ring had nooit toegelaten kunnen worden. De afleiding uit de stage-server lezen liet zien waarom: de grens schaalt met `n_batch × n_ubatch`, en wij hadden een batchbreedte van 2048 geërfd uit een configuratie van vóór deze check. Bij 128 rijen — de breedte die de productie-layout gebruikt — is de grens 138 MB en past hij wél. We leiden hem nu in het plan af uit dezelfde formule in plaats van een onthouden constante mee te dragen, en het voorspelde getal van de staartstage kwam exact uit op het getal dat een andere deployment had vastgelegd — het soort overeenstemming dat je wilt hebben voordat je twintig minuten aan een load besteedt.",
+      },
+      { t: "h2", kick: "De andere vier", text: "Kort" },
+      {
+        t: "ul",
+        items: [
+          "**Loopback-adressen in een ring van twee hosts.** Een stage belt de agent van de volgende stage op het adres dat die agent adverteert. Adverteer `127.0.0.1` en host A belt zichzelf. De vastgelegde configuratie van de ring was al die tijd loopback — hij had nooit over hosts heen kunnen werken.",
+          "**Het journaal is verplicht.** Een model laadt niet zonder het operationele journaal van de agent. We zetten het uit terwijl we een andere fout achtervolgden, en maakten het symptoom erger op een manier die op vooruitgang leek.",
+          "**De apparaatnaam is backend-specifiek.** De referentie-planbouwer mikt op CUDA en zendt `--device CUDA0` uit. De HIP-build noemt zijn apparaten `ROCm0`. Dat plan laadt het hele model en vindt *daarna* het apparaat niet.",
+          "**De native server hoort bij de release.** Een agent die uit een nieuwere tree is gebouwd wil capaciteiten die de geïnstalleerde stage-server niet meldt. Ook ontdekt na een volledige modelload.",
+        ],
+      },
+      { t: "h2", kick: "Wat we eruit meenamen", text: "Stilte is de dure faalmodus" },
+      {
+        t: "p",
+        md: "Elk van deze was goedkoop te repareren en duur te vinden, en het patroon is consistent: de kostbare fouten waren die waarbij een correct ogend systeem niets deed, of iets één keer deed. De guards die we hebben toegevoegd hebben allemaal dezelfde vorm — vroeg weigeren, op de plek waar de vergissing nog leesbaar is. De lader schrijft de load generation naar schijf *voordat* het eerste commando vertrekt, want anders is hij onherstelbaar. Hij weigert een generation-mismatch in plaats van hem na het eerste verzoek te ontdekken. Hij leidt de resultaatgrens af in plaats van hem te onthouden.",
+      },
+      {
+        t: "callout",
+        md: "**De ring serveert.** Vier stages over twee machines, 113 GiB aan gewichten resident, het eerste token in 1.4 s koud en ~0.3 s warm, en bijdrage per node die voor het eerst doorstroomt naar het verrekeningsgrootboek.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "Het template is de taak van de aanroeper",
+    dek: "p4 stuurt een ondoorzichtige prompt door en past geen chat-template toe. Vergeet dat, en het model beantwoordt een vraag die je niet hebt gesteld — vloeiend, en helemaal tot aan de tokenlimiet.",
+    blocks: [
+      {
+        t: "p",
+        md: "Het eerste echte antwoord uit onze herstelde ring was correcte rekenkunde, gevolgd door een gesprek dat niemand had gevoerd:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, gevraagd aan een geserveerd model.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "Het getal klopt. Alles erna is het model dat een document voortzet, want dat is wat we het hebben gegeven: de berichten platgeslagen tot één string. Een instruct-model leest dat als tekst om uit te breiden, niet als een beurt om te beantwoorden. Het stuurt nooit zijn einde-beurt-token, dus generatie loopt elke keer tot de limiet.",
+      },
+      { t: "h2", kick: "Wiens taak", text: "Een bewuste weglating, geen gat" },
+      {
+        t: "p",
+        md: "p4 geeft de stage-server een ondoorzichtige prompt en past geen eigen beurtformaat toe — de staged adapter draagt alleen een tool om een template *uit* een GGUF te lezen, nooit om er een toe te passen. Dat is een redelijke grens: de engine blijft smal en modelagnostisch, en de aanroeper, die toch al weet met welk model hij praat, rendert het formaat. Maar een grens die wel getrokken en niet gedocumenteerd is, is een grens waar iemand overheen loopt.",
+      },
+      {
+        t: "p",
+        md: "Het template uit het modelbestand lezen gaf de doorslag: ChatML-beurten, `<|im_end|>` als einde-beurt-token, en een assistent-beurt die opent met een denkblok. Met dat gerenderd door de bridge, dezelfde vraag:",
+      },
+      {
+        t: "code",
+        caption: "Hetzelfde model, dezelfde ring, het beurtformaat toegepast.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "Het deel dat geld kost", text: "Een denkfase kan het antwoord opeten" },
+      {
+        t: "p",
+        md: "Een redeneermodel geeft tokens uit voordat het iets zegt. Geef het een budget en een moeilijke vraag en het kan het hele budget aan denken besteden, met een leeg antwoord tot gevolg — en in een netwerk waarin de aanroeper **al on-chain heeft betaald voordat het verzoek draaide**, is een leeg antwoord geen kwaliteitsprobleem. Het is een rekening voor niets.",
+      },
+      {
+        t: "p",
+        md: "De verrekengateway wist dit al en vraagt om denken uit te schakelen. Het template van het model heeft daar geen schakelaar voor, dus de bridge opent *en sluit* het denkblok in de prompt, en het model schrijft zijn antwoord erna. We hebben dit één keer op de voor de hand liggende manier fout gedaan — het blok in de prompt sluiten betekende dat de sluittag niet meer in de uitvoer zat, dus de splitter boekte het hele antwoord als redenering en gaf lege content terug. Precies het falen dat de instelling moet voorkomen.",
+      },
+      {
+        t: "callout",
+        md: "**Waar dit het contract achterlaat.** De engine stuurt bytes door. De bridge kent het model: hij rendert het beurtformaat dat het placement plan noemt, geeft de denkfase terug als `reasoning_content` los van `content`, en klemt een verzoek dat om meer uitvoer vraagt dan de ring geladen is te geven — want een te groot verzoek wordt anders botweg geweigerd, en een korter antwoord is beter dan een engine-fout.",
       },
     ],
   },

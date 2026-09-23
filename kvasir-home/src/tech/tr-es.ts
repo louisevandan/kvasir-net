@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const esTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Una dirección marcable para un portátil",
+    dek: "p4 llega a un nodo marcándolo, y una máquina tras NAT no tiene dirección que marcar. La mayoría de las máquinas están tras NAT. Esto es lo que hizo falta para que una se uniera igualmente, y las mediciones del día en que lo hizo.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**El obstáculo no era el empeño, era la dirección.** p4 entrega trabajo abriendo una conexión TCP *hacia* un nodo. Una conexión que el nodo abrió por su cuenta sirve solo para acuses: una trama `Data` que llegue por ella recibe `peer_closed(\"unexpected frame on outbound hop\")`. Un portátil no puede abrir un túnel hacia fuera y recibir trabajo por él. Ni con voluntad, ni con reintentos, ni con un cliente mejor.",
+      },
+      { t: "h2", kick: "La restricción", text: "La máquina de un colaborador es inalcanzable por defecto" },
+      {
+        t: "p",
+        md: "Una máquina doméstica vive tras una traducción de direcciones. Puede salir a internet; internet no puede entrar. Nuestra propia flota muestra ambos lados: el GB10 de la oficina tiene una dirección pública directamente asignada, mientras que los dos MI250 están en `192.168.20.x` tras una única salida compartida. Los MI250 no son una rareza: son exactamente el aspecto que tiene la máquina de un colaborador.",
+      },
+      {
+        t: "p",
+        md: "En p4 no hay tabla de rutas, ni servicio de encuentro, ni perforación de NAT. `deliver_outbound` saca la dirección del sobre del evento y llama a `connect`. Eso es todo, y es un diseño razonable dentro de un rack. Sencillamente no es un diseño que un portátil pueda satisfacer.",
+      },
+      { t: "h2", kick: "La respuesta", text: "Una conexión saliente, mantenida abierta" },
+      {
+        t: "p",
+        md: "El relay posee una dirección pública en nombre del nodo. El nodo mantiene una única conexión saliente hacia él y no escucha en ningún puerto. Cuando alguien marca la dirección pública, esos bytes bajan por la conexión que el nodo ya tenía. Ambos extremos de p4 ven un socket corriente hacia una dirección corriente, y ninguno se entera de que el relay existe.",
+      },
+      {
+        t: "code",
+        caption: "Lo que ve quien marca, y lo que el nodo realmente ejecuta",
+        code: "caller  ->  tcp://relay:43100        # una dirección p4 corriente\n            |\n            +-- relay      pública; reenvía bytes, no analiza ninguno\n                  |\n                  +-- tunnel   una conexión saliente que abrió el nodo\n                        |\n                        +-- p4-agent  127.0.0.1:42031, solo escucha en loopback",
+      },
+      {
+        t: "p",
+        md: "El relay nunca lee p4. Las cargas se reenvían byte a byte y jamás se analizan: no sabe distinguir un `LOAD` de un `INSPECT`, y no debe poder hacerlo, porque en el momento en que entiende el tráfico se convierte en algo capaz de alterarlo.",
+      },
+      { t: "h2", kick: "Por qué es además la frontera de seguridad", text: "Abrir un puerto nunca fue una opción" },
+      {
+        t: "p",
+        md: "p4 no tiene autenticación de ningún tipo. Ni TLS, ni tokens, ni lista de permitidos: cualquier host que alcance el puerto de un agente puede enviar `NODE_LOAD`, `NODE_UNLOAD` e `INSPECT`. Pedirle a un colaborador que redirija un puerto de su router doméstico hacia eso es indefendible, y por eso la solución evidente es la equivocada.",
+      },
+      {
+        t: "p",
+        md: "A través de un relay el nodo no escucha nada. Mantiene una conexión saliente y demuestra una cartera de operador antes de que esa conexión transporte nada: la misma firma ed25519 sobre base58 que ya usa la pasarela de liquidación, de modo que la identidad con la que un nodo se registra es la identidad sobre la que se lleva el libro de recompensas. Alcanzabilidad y autenticación resultaron tener la misma respuesta.",
+      },
+      { t: "h2", kick: "El día que funcionó", text: "Medido, no afirmado" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "de un host de la flota a un Mac tras NAT" },
+          { n: "28 ms", l: "hasta que el agente aplicó su propia regla" },
+          { n: "512 KiB", l: "devueltos byte a byte idénticos" },
+          { n: "0", l: "puertos abiertos en el portátil" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Un host MI250 en un centro de datos marcó `tcp://34.50.62.159:43100` y alcanzó en 6 ms a un agente p4 corriendo en un MacBook tras NAT. El agente cerró la conexión 28 ms después porque la primera trama no era un `Hello`: su propia regla de protocolo, aplicada por él mismo, desde una máquina con la que un momento antes no se podía contactar en absoluto. Ese rechazo es la prueba: el relay no analiza cargas, así que no pudo haberlo producido.",
+      },
+      {
+        t: "table",
+        head: ["Comprobación", "Resultado"],
+        rows: [
+          ["Ida y vuelta de 512 KiB", "idéntico byte a byte, 177 ms"],
+          ["Ida y vuelta de 256 KiB", "idéntico byte a byte, 108 ms"],
+          ["Tres llamantes simultáneos", "ningún flujo se cruzó con otro"],
+          ["Registro sin firma", "rechazado"],
+          ["Desafío reutilizado", "rechazado"],
+        ],
+      },
+      { t: "h2", kick: "La otra mitad", text: "Un nodo necesita algo que ejecutar" },
+      {
+        t: "p",
+        md: "La alcanzabilidad no vale nada sin un motor detrás, y la aplicación de escritorio no distribuía ninguno: buscaba un binario `p4-agent` en tres directorios de compilación y solo lo encontraba en una máquina donde alguien ya había compilado p4 a mano. Ahora la aplicación lleva el suyo, compilado para cada plataforma a la que se distribuye.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: un binario universal con ambas arquitecturas fusionadas. La aplicación Mac se empaqueta como `universal` y los recursos se copian sin cambios en ambas mitades, de modo que un binario solo arm64 daría a un Mac Intel una aplicación que parece completa y no puede arrancar un nodo: un fallo visible únicamente en hardware que el desarrollador no posee.",
+          "Windows: compilado de forma cruzada, y la búsqueda sabe que debe pedir `p4-agent.exe`. Olvidar la extensión es como una compilación de Windows acaba distribuyendo un agente que luego no encuentra.",
+          "La compilación del agente se ejecuta antes de cada empaquetado, así que no puede producirse una versión sin él.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Lo que todavía no hace.** Un nodo ya puede ejecutarse y ser alcanzado. Sigue sin ganar nada por inferencia: el motor emite registros de trabajo por etapa pero nadie los recoge, y el endpoint de contribución de la pasarela —correctamente cerrado para que ningún nodo pueda acreditarse a sí mismo— no se ha llamado nunca. Funcionar y cobrar son problemas distintos, y solo está resuelto el primero.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Inferencia en enjambre con sharding de expertos: el diseño",
     dek: "El 86% de un MoE de 122B son 12.544 expertos independientes de 5.3 MB. Corta el modelo a ese grano y un teléfono puede cargar una parte real de la inferencia de frontera.",
@@ -371,7 +455,7 @@ inside the lock:
           "**Tres maneras de unirse:** **slots locales de nodo** fijos con presupuestos VRAM/RAM/CPU editables; **unidades remotas** — registra otro hub e importa sus nodos; y **agentes de nodo gestionados** — servicios solo-worker que se unen por HTTP simple de petición/respuesta, deliberadamente sin stream persistente, para sobrevivir enrutamientos simples de LAN/VPN.",
           "**El gating de compatibilidad es de primera clase:** cada unidad, nodo y agente reporta una identidad de protocolo/runtime-pack más detalles de backend. Los desajustes de unidad, runtime-pack, revisión de motor de inferencia y ABI de RPC se **bloquean duro antes de bind, plan, load o infer** — las diferencias de backend (CUDA/Metal/Vulkan/CPU) se registran como capacidades, no rechazos.",
           "**El planner** lee metadata GGUF y produce colocación contigua de capas por nodo, `--tensor-split`, estimaciones de VRAM de KV-cache/capa/experto, y offload opcional de FFN de expertos a RAM.",
-          "**Gateways:** cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages|models`), respaldados por el mismo modelo cargado — los clientes existentes funcionan sin cambios.",
+          "**Gateways:** cada controlador expone endpoints compatibles con OpenAI (`/v1/chat/completions`, `/v1/models`) y con Anthropic (`/anthropic/v1/messages|models`), respaldados por el mismo modelo cargado — los clientes existentes funcionan sin cambios.",
         ],
       },
       {
@@ -486,7 +570,7 @@ inside the lock:
         t: "code",
         caption: "Salida del planner — formato de reglas -ot de motor de inferencia.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # motor de inferencia -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Qué se cableó · Python puro, sin recompilar C++", text: "Llevar las reglas de offload del planner a una carga real" },
       {
@@ -718,7 +802,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "El flujo de participación autónoma", text: "Descubrir → descarga guiada por recompensa → unirse al cómputo" },
       {
         t: "code",
-        code: `1. Phone knows the hub (hub.kvasir-ai.net) — already holds its wallet node-token
+        code: `1. Phone knows the hub (hub.kvasir-ai.net — retired since; the bridge serves this)
 2. GET /api/proxy/models/…/expert-shard?layers=0:1&experts=0:256
    # partially downloads its own expert slice (1.58 GB, WiFi)
 3. linkcpp-expert-worker --serve
@@ -906,12 +990,13 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["modelo", "expertos · enrutamiento", "por experto (Q4≈)", "compartido", "estado"],
         rows: [
-          ["Qwen3.5-122B (sirviendo hoy)", "256 · top-8", "5.3 MB (medido)", "sí", "sirviendo (flota de pruebas)"],
-          ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "sí", "listo — primer candidato"],
+          ["Step-3.7-Flash 428B (sirviendo hoy)", "288 · top-8", "medido en la flota", "sí", "sirviendo — 16 stages, dos máquinas"],
+          ["Qwen3.5-122B", "256 · top-8", "5.3 MB (medido)", "sí", "servido de extremo a extremo en 3 máquinas"],
+          ["GLM-5.2 744B", "—", "—", "sí", "verificado en linkcpp — informe sin publicar"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "sí", "planificado (hook verificado)"],
           ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "planificado (hook verificado)"],
           ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "sí", "planificado (grafo deepseek2)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "sí", "planificado (familia deepseek)"],
+          ["Kimi K3 2.8T", "—", "—", "sí", "próxima puerta de verificación — verificación en p4"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "no", "listo"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "no", "listo"],
           ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "sí", "planificado (MoE en capas alternas)"],
@@ -1017,6 +1102,126 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Esa es la forma de una red que puede servir modelos de un billón de parámetros sobre hardware que ninguna persona posee: la capacidad ociosa se invita exactamente cuando vale la pena invitarla, y solo entonces.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "Mudar el anillo a p4",
+    dek: "Siete cambios de contrato entre un motor y quien lo llama. Cada uno falló de forma distinta, y solo uno de ellos parecía un error.",
+    blocks: [
+      {
+        t: "p",
+        md: "Fusionamos una nueva release del motor p4 y el anillo dejó de servir. No con un crash — el cargador reportó éxito, los agentes reportaron ready, y no pasó nada. Remontar desde ese silencio costó un día y sacó a la luz **siete** puntos en los que quien llama y el motor se habían separado. Lo que los hace dignos de anotar no es la cuenta. Es que seis de los siete no produjeron ningún error.",
+      },
+      { t: "h2", kick: "Fallo uno", text: "Un evento para un nodo que no existe se reenvía, no se rechaza" },
+      {
+        t: "p",
+        md: "Nuestro cargador dirigía el comando LOAD al nodo que quería crear. Pero un nodo no existe hasta que LOAD lo crea, y la regla del broker ante un evento que nombra un nodo desconocido es **reenviarlo hacia fuera** en vez de rechazarlo. El comando salió del agente buscando otro sitio al que ir, no encontró ninguno y se descartó. Ni una línea de log, porque desde el punto de vista del broker no había pasado nada malo.",
+      },
+      {
+        t: "p",
+        md: "El arreglo fue dirigir LOAD al *agente*, envuelto en el sobre de ciclo de vida neutral al backend del motor, con el comando propio del adaptador como cuerpo opaco. Obvio a posteriori; invisible desde fuera.",
+      },
+      { t: "h2", kick: "Fallo dos", text: "Un número que tiene que ser igual a otro número" },
+      {
+        t: "p",
+        md: "Un modelo se carga bajo una **load generation**, y cada nodo se registra con una **generación de nodo**. Las habíamos tratado como independientes — un timestamp para una, `1` para la otra — y todo funcionaba. El anillo cargaba. Respondía correctamente a una petición. Y entonces moría el nodo de cabeza.",
+      },
+      {
+        t: "code",
+        caption: "La comprobación, en la contabilidad de release del adaptador.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "El recibo que cierra una petición terminada lleva la load generation, y el nodo que lo envía lleva la suya. Cuando difieren, el nodo se detiene. Así que la forma del bug es: **la carga funciona, la primera petición funciona, la cabeza muere, y todas las sesiones posteriores se quedan colgadas a medio cargar.** Se lee exactamente como un crash bajo carga y en absoluto como un desajuste. Nuestro cargador ahora rechaza un plan cuyos dos números no coinciden, antes de cargar nada.",
+      },
+      { t: "h2", kick: "Fallo tres", text: "Una cota que nunca podría cumplirse" },
+      {
+        t: "p",
+        md: "El adaptador compara el resultado más grande que un stage puede devolver con la cifra que el stage server reporta al arrancar, por igualdad exacta. No podíamos conocer esa cifra sin cargar el modelo — así que cargamos con una estimación, y el fallo nos dio de golpe los números reales de los cuatro stages:",
+      },
+      {
+        t: "code",
+        caption: "Una ejecución, cuatro respuestas.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. Los almacenes retenidos del agente son de 256 MiB, así que ese anillo nunca podría haber sido admitido. Leer la derivación dentro del stage server explicó por qué: la cota escala con `n_batch × n_ubatch`, y habíamos heredado un ancho de batch de 2048 de una configuración anterior a esta comprobación. Con 128 filas — el ancho que usa el layout de producción — la cota es de 138 MB y cabe. Ahora la derivamos en el plan a partir de la misma fórmula en vez de arrastrar una constante recordada, y la cifra predicha para el stage de cola salió exactamente igual a la que otro despliegue había registrado, que es la clase de acuerdo que conviene tener antes de gastar veinte minutos en una carga.",
+      },
+      { t: "h2", kick: "Los otros cuatro", text: "En breve" },
+      {
+        t: "ul",
+        items: [
+          "**Direcciones de loopback en un anillo de dos hosts.** Un stage marca al agente del siguiente stage en la dirección que ese agente anuncia. Anuncia `127.0.0.1` y el host A se marca a sí mismo. La configuración registrada del anillo había sido loopback todo el tiempo — nunca podría haber funcionado entre hosts.",
+          "**El diario es obligatorio.** Un modelo no se carga sin el diario operativo del agente. Lo desactivamos mientras perseguíamos otro error y empeoramos el síntoma de una forma que parecía progreso.",
+          "**El nombre del dispositivo depende del backend.** El constructor de planes de referencia apunta a CUDA y emite `--device CUDA0`. La build de HIP llama a sus dispositivos `ROCm0`. Ese plan carga el modelo entero y *después* no encuentra el dispositivo.",
+          "**El servidor nativo es parte de la release.** Un agente compilado desde un árbol más nuevo quiere capacidades que el stage server instalado no reporta. También descubierto después de una carga completa del modelo.",
+        ],
+      },
+      { t: "h2", kick: "Qué sacamos de esto", text: "El silencio es el modo de fallo caro" },
+      {
+        t: "p",
+        md: "Cada uno de estos fue barato de arreglar y caro de encontrar, y el patrón es consistente: los fallos costosos fueron aquellos en los que un sistema con buena pinta no hacía nada, o lo hacía una sola vez. Las guardas que añadimos tienen todas la misma forma — rechazar pronto, en el punto donde el error todavía es legible. El cargador escribe la load generation a disco *antes* de que salga el primer comando, porque de otro modo es irrecuperable. Rechaza un desajuste de generaciones en vez de descubrirlo tras la primera petición. Deriva la cota de resultado en vez de recordarla.",
+      },
+      {
+        t: "callout",
+        md: "**El anillo está sirviendo.** Cuatro stages repartidos en dos máquinas, 113 GiB de pesos residentes, primer token en 1.4 s en frío y ~0.3 s en caliente, y la contribución por nodo fluyendo hasta el libro de liquidación por primera vez.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "La plantilla es trabajo de quien llama",
+    dek: "p4 reenvía un prompt opaco y no aplica ninguna plantilla de chat. Olvídalo y el modelo responde una pregunta que no hiciste — con fluidez, y hasta el límite de tokens.",
+    blocks: [
+      {
+        t: "p",
+        md: "La primera respuesta real de nuestro anillo recuperado fue una aritmética correcta seguida de una conversación que nadie había tenido:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, preguntado a un modelo servido.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "El número está bien. Todo lo que viene después es el modelo continuando un documento, porque eso es lo que le entregamos: los mensajes aplanados en una sola cadena. Un modelo instruct lee eso como texto que extender, no como un turno que responder. Nunca emite su token de fin de turno, así que la generación llega al tope siempre.",
+      },
+      { t: "h2", kick: "De quién es el trabajo", text: "Una omisión deliberada, no un hueco" },
+      {
+        t: "p",
+        md: "p4 le entrega al stage server un prompt opaco y no aplica ningún formato de turno propio — el adaptador staged lleva únicamente una herramienta para *leer* una plantilla de un GGUF, nunca para aplicarla. Es una línea razonable donde trazar: el motor se mantiene estrecho y agnóstico al modelo, y quien llama, que ya sabe con qué modelo habla, renderiza el formato. Pero una línea trazada y no documentada es una línea que alguien cruza.",
+      },
+      {
+        t: "p",
+        md: "Leer la plantilla del archivo del modelo lo zanjó: turnos ChatML, `<|im_end|>` como token de fin de turno, y un turno de asistente que abre con un bloque de pensamiento. Con eso renderizado por el bridge, la misma pregunta:",
+      },
+      {
+        t: "code",
+        caption: "El mismo modelo, el mismo anillo, con el formato de turno aplicado.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "La parte que cuesta dinero", text: "Una pasada de pensamiento puede comerse la respuesta" },
+      {
+        t: "p",
+        md: "Un modelo de razonamiento gasta tokens antes de decir nada. Dale un presupuesto y una pregunta difícil y puede gastarse el presupuesto entero pensando, dejando la respuesta vacía — y en una red donde quien llama **ya ha pagado on-chain antes de que la petición corriera**, una respuesta vacía no es un problema de calidad. Es un cobro por nada.",
+      },
+      {
+        t: "p",
+        md: "El gateway de liquidación ya lo sabía y pide que se desactive el pensamiento. La plantilla del modelo no tiene interruptor para eso, así que el bridge abre *y cierra* el bloque de pensamiento dentro del prompt, y el modelo escribe su respuesta después. Nos equivocamos una vez de la forma obvia: cerrar el bloque en el prompt significaba que la etiqueta de cierre ya no estaba en la salida, así que el separador archivó la respuesta entera como razonamiento y devolvió contenido vacío. Que es exactamente el fallo que ese ajuste existe para prevenir.",
+      },
+      {
+        t: "callout",
+        md: "**Dónde deja esto el contrato.** El motor reenvía bytes. El bridge conoce el modelo: renderiza el formato de turno nombrado en el plan de colocación, devuelve la pasada de pensamiento como `reasoning_content` separada de `content`, y recorta una petición que pide más salida de la que el anillo se cargó para dar — porque de lo contrario una petición demasiado grande se rechaza de plano, y una respuesta más corta es mejor que un error del motor.",
       },
     ],
   },

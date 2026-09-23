@@ -1,0 +1,20 @@
+{
+  "name": "kvasir-p4-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HTTP face of the p4 engine: the hub contract the Kvasir settlement gateway speaks, served from p4 OUTER events.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./server.js",
+    "./wire": "./wire.js",
+    "./pipeline": "./pipeline.js",
+    "./catalog": "./catalog.js"
+  }
+}

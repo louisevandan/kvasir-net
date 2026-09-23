@@ -1,0 +1,14 @@
+{
+  "name": "kvasir-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Headless Kvasir expert node for Linux servers (reuses wallet/desktop/electron modules)",
+  "license": "MIT",
+  "bin": { "kvasir-node": "kvasir-node.cjs" },
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node kvasir-node.test.cjs" },
+  "dependencies": {
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.21.3"
+  }
+}

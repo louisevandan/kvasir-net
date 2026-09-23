@@ -1,10 +1,10 @@
 'use strict'
 const { contextBridge, ipcRenderer } = require('electron')
 
-// Typed bridge exposed to the renderer as window.linkcpp. Keys never leave main;
+// Typed bridge exposed to the renderer as window.kvasir. Keys never leave main;
 // the renderer only asks main to derive/sign. HTTP (staking/gateway) is done in
 // the renderer directly via fetch.
-contextBridge.exposeInMainWorld('linkcpp', {
+contextBridge.exposeInMainWorld('kvasir', {
   isElectron: true,
   wallet: {
     has: () => ipcRenderer.invoke('wallet:has'),
@@ -47,6 +47,19 @@ contextBridge.exposeInMainWorld('linkcpp', {
     remove: (name) => ipcRenderer.invoke('models:delete', name),
     dir: () => ipcRenderer.invoke('models:dir'),
     generate: (name, prompt, maxTokens) => ipcRenderer.invoke('models:generate', { name, prompt, maxTokens }),
+  },
+  // This machine as a p4 node: a supervised agent process, its real capability,
+  // and a throughput number only after a run that actually produced one.
+  node: {
+    status: (opts) => ipcRenderer.invoke('node:status', opts),
+    start: () => ipcRenderer.invoke('node:start'),
+    stop: () => ipcRenderer.invoke('node:stop'),
+    capability: (refresh) => ipcRenderer.invoke('node:capability', refresh),
+    executors: () => ipcRenderer.invoke('node:executors'),
+    installCudaPack: () => ipcRenderer.invoke('node:installCudaPack'),
+    cancelCudaPack: () => ipcRenderer.invoke('node:cancelCudaPack'),
+    setVramBudget: (bytes) => ipcRenderer.invoke('node:setVramBudget', bytes),
+    benchmark: (maxTokens) => ipcRenderer.invoke('node:benchmark', maxTokens),
   },
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
   revealPath: (p) => ipcRenderer.invoke('shell:reveal', p),

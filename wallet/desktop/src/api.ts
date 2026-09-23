@@ -1,4 +1,4 @@
-// Bridge to the Electron main process (window.linkcpp). When absent (plain
+// Bridge to the Electron main process (window.kvasir). When absent (plain
 // browser / Playwright verification), a mock keeps the UI renderable with
 // believable data so layout can be inspected without a chain connection.
 
@@ -11,7 +11,132 @@ export interface AppConfig { network: Network; stakingUrl: string; language: str
 export interface WalletState { exists: boolean; encrypted: boolean; locked: boolean }
 export interface GatewayStatus { running: boolean; managed: boolean; port: number; hostUrl: string; ipUrl: string; configuredUrl: string; dir?: string; lastError?: string | null; keyPath?: string; keyExists?: boolean }
 
-export interface LinkcppAPI {
+// What this machine reports about itself. `gpus` and `backend` come from the
+// hardware, `measured` only from a decode this machine actually ran — it stays
+// null until then, because an invented throughput becomes an invented reward.
+export interface NodeCapability {
+  os: string; arch: string
+  cpu: { brand: string; cores: number }
+  ramBytes: number
+  backend: 'metal' | 'cuda' | 'rocm' | 'cpu'
+  gpus: { name: string; memoryBytes: number | null; backend: string | null }[]
+}
+export interface ExecutorProbe {
+  id: string
+  purpose: string
+  found: boolean
+  runnable: boolean
+  path: string | null
+  reason: string
+  banner?: string
+}
+export interface GpuLive {
+  name: string
+  driver: string
+  totalBytes: number
+  usedBytes: number
+  freeBytes: number
+  utilizationPct: number
+}
+export interface NodeCompute {
+  executors: ExecutorProbe[]
+  gpu: { vendor: string | null; ready: boolean; reason?: string; cudaVersion?: string | null; gpus?: GpuLive[] }
+  summary: { canHostPipelineStages: boolean; canServeExperts: boolean; blockers: string[] }
+}
+export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
+/** The on-demand NVIDIA pack (electron/cudaPack.cjs). */
+export type CudaPackStatus = {
+  available: boolean            // published (the app knows where to get it)
+  version: string | null
+  bytes: number
+  installed: boolean
+  phase: 'idle' | 'downloading' | 'verifying' | 'installing' | 'installed' | 'failed'
+  received: number
+  total: number
+  error: string | null
+}
+
+/** What hosting experts costs an executor: N = (budget - F - S - H) / R. */
+export type ExpertMemoryModel = {
+  residentBytesPerExpert: number
+  fixedBytes: number
+  scratchBytes: number
+  headroomBytes: number
+}
+
+export const MAX_EXPERTS_PER_REQUEST = 64
+export const MAX_SLOTS = 8
+
+/**
+ * Mirrors capacityForBudget in electron/executors.cjs — keep the two identical.
+ * What the machine holds in total: slots (one worker, one shard of <= 64
+ * experts each), each paying its own fixed cost, headroom kept once.
+ */
+export function capacityForBudget(budget: number | null, model: ExpertMemoryModel | null | undefined,
+  availableBytes: number | null): { experts: number; slots: number } {
+  if (budget == null || !model) return { experts: MAX_EXPERTS_PER_REQUEST, slots: 1 }
+  let left = (availableBytes == null ? budget : Math.min(budget, availableBytes)) - model.headroomBytes
+  let experts = 0
+  let slots = 0
+  while (slots < MAX_SLOTS) {
+    const n = Math.min(MAX_EXPERTS_PER_REQUEST, Math.floor((left - model.fixedBytes - model.scratchBytes) / model.residentBytesPerExpert))
+    if (n < 1) break
+    experts += n
+    slots += 1
+    left -= model.fixedBytes + model.scratchBytes + n * model.residentBytesPerExpert
+  }
+  return { experts, slots }
+}
+
+export interface NodeStatus {
+  running: boolean
+  pid: number | null
+  port: number
+  address: string
+  binary: string | null
+  uptimeMs: number
+  lastError: string | null
+  lastExit: { code: number | null; signal: string | null; at: number } | null
+  // Stages the agent actually holds — placement is the operator's, not the app's.
+  nodes: { nodeId: string; state: string; generation: number; adapterKind: string | null }[]
+  gpus: { name: string; backend: string | null; memoryBytes: number | null }[]
+  snapshotAt: number | null
+  log: string[]
+  capability: NodeCapability
+  measured: NodeMeasurement | null
+  // What can actually compute on this machine, with live GPU memory.
+  compute?: NodeCompute
+  // GPU memory the operator lends the network, and how many experts that holds.
+  vramBudgetBytes?: number | null
+  maxExperts?: number | null
+  // The executor's measured cost of hosting experts, so the slider previews
+  // with the same conversion the app uses for its offer (see capacityForBudget).
+  expertMemoryModel?: ExpertMemoryModel | null
+  // Whether this GPU's memory is the machine's memory, which is what decides
+  // between the two CUDA models. 'unknown' means the app will not lend, and the
+  // reason is written for the operator rather than the log.
+  memoryTopology?: 'discrete' | 'unified' | 'unknown'
+  memoryTopologyReason?: string
+  vramReserveBytes?: number
+  ownWorkerGpuBytes?: number
+  cudaPack?: CudaPackStatus
+  expertSlots?: number
+  heldExperts?: number
+  debugWallet?: string | null
+  // Whether the network can reach this machine. The agent binds loopback, so
+  // without a tunnel the node runs and is never given work.
+  relay: {
+    enabled: boolean
+    connected: boolean
+    registered: boolean
+    advertise: string | null
+    lastError: string | null
+    streams: number
+    log: string[]
+  }
+}
+
+export interface KvasirAPI {
   isElectron: boolean
   wallet: {
     has(): Promise<boolean>
@@ -58,6 +183,18 @@ export interface LinkcppAPI {
     generate(name: string, prompt: string, maxTokens?: number):
       Promise<{ ok: boolean; text?: string; error?: string; usage?: { completion_tokens?: number } }>
   }
+  // Absent in the served web app: only the desktop app can run a node here.
+  node?: {
+    status(opts?: { inspect?: boolean }): Promise<NodeStatus>
+    start(): Promise<NodeStatus>
+    stop(): Promise<NodeStatus>
+    capability(refresh?: boolean): Promise<NodeCapability>
+    executors(): Promise<NodeCompute>
+    setVramBudget(bytes: number): Promise<{ vramBudgetBytes: number | null; maxExperts: number | null }>
+    installCudaPack(): Promise<CudaPackStatus>
+    cancelCudaPack(): Promise<CudaPackStatus>
+    benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string } & Partial<NodeMeasurement>>
+  }
   openExternal(url: string): Promise<void>
   revealPath(p: string): Promise<void>
 }
@@ -69,7 +206,7 @@ export interface AdminFetchResult { status: number; ok: boolean; body: string }
 // call goes through main (cross-origin cookies don't work in the renderer);
 // in the served web wallet a same-origin fetch carries the cookie itself.
 export async function adminRequest(url: string, init: { method?: string; body?: string } = {}): Promise<AdminFetchResult> {
-  const bridge = typeof window !== 'undefined' ? window.linkcpp?.gateway.adminFetch : undefined
+  const bridge = typeof window !== 'undefined' ? window.kvasir?.gateway.adminFetch : undefined
   if (bridge) return bridge(url, init)
   const r = await fetch(url, {
     method: init.method || 'GET',
@@ -101,7 +238,7 @@ function servedStakingUrl(): string {
   return DEFAULT_STAKING_URL
 }
 
-function makeMock(): LinkcppAPI {
+function makeMock(): KvasirAPI {
   let cfg: AppConfig = { network: 'devnet', stakingUrl: servedStakingUrl(), language: null }
   const DEMO_MNEMONIC = 'demo demo demo demo demo demo demo demo demo demo demo demo'
   let has = true
@@ -146,19 +283,71 @@ function makeMock(): LinkcppAPI {
         pickKey: async () => snap(),
       }
     })(),
+    node: (() => {
+      const capability: NodeCapability = {
+        os: 'macos', arch: 'arm64', cpu: { brand: 'Apple M4 Pro', cores: 12 },
+        ramBytes: 24 * 1024 ** 3, backend: 'metal',
+        gpus: [{ name: 'Apple M4 Pro', memoryBytes: 24 * 1024 ** 3, backend: 'metal' }],
+      }
+      let running = false
+      // The browser build runs nothing, so it reports that no executor is
+      // installed — a demo that claimed a working expert server would mislead
+      // exactly the way a dev build's silent "start node" did.
+      let vramBudgetBytes: number | null = 8 * 1024 ** 3
+      const MIB = 1024 * 1024
+      const expertMemoryModel: ExpertMemoryModel = {
+        residentBytesPerExpert: 9_568_256, fixedBytes: 128 * MIB, scratchBytes: 64 * MIB, headroomBytes: 128 * MIB,
+      }
+      const maxExperts = () => capacityForBudget(vramBudgetBytes, expertMemoryModel, null).experts
+      const noPack: CudaPackStatus = { available: false, version: null, bytes: 0, installed: false, phase: 'idle', received: 0, total: 0, error: 'browser preview' }
+      const compute: NodeCompute = {
+        executors: [
+          { id: 'p4-agent', purpose: 'Pipeline stages for the p4 engine.', found: false, runnable: false, path: null, reason: 'not installed' },
+          { id: 'linkcpp-expert-worker', purpose: 'MoE expert FFN via ggml mul_mat_id.', found: false, runnable: false, path: null, reason: 'not installed' },
+        ],
+        gpu: { vendor: null, ready: false, reason: 'browser preview — no GPU probe' },
+        summary: { canHostPipelineStages: false, canServeExperts: false, blockers: ['browser preview runs no executor'] },
+      }
+      const snap = (): NodeStatus => ({
+        running, pid: running ? 4242 : null, port: 42031, address: 'tcp://127.0.0.1:42031',
+        binary: running ? '/opt/kvasir/p4-agent' : null, uptimeMs: running ? 125_000 : 0,
+        lastError: running ? null : 'agent not started', lastExit: null,
+        nodes: running ? [{ nodeId: 'demo-s0', state: 'idle', generation: 1, adapterKind: 'llamacpp' }] : [],
+        // The browser build runs no agent and holds no tunnel, so it is never
+        // reachable. Saying so is more honest than a demo address.
+        relay: { enabled: false, connected: false, registered: false, advertise: null, lastError: null, streams: 0, log: [] },
+        gpus: running ? [{ name: 'Apple M4 Pro', backend: 'metal', memoryBytes: 24 * 1024 ** 3 }] : [],
+        snapshotAt: running ? Date.now() : null,
+        log: running ? ['12:00:01 agent listening on 127.0.0.1:42031'] : [],
+        capability, measured: null,
+        compute, vramBudgetBytes, maxExperts: maxExperts(), expertMemoryModel,
+      })
+      return {
+        status: async () => snap(),
+        start: async () => { running = true; return snap() },
+        stop: async () => { running = false; return snap() },
+        capability: async () => capability,
+        executors: async () => compute,
+        setVramBudget: async (bytes: number) => { vramBudgetBytes = bytes; return { vramBudgetBytes, maxExperts: maxExperts() } },
+        // The browser preview has no GPU and installs nothing.
+        installCudaPack: async () => noPack,
+        cancelCudaPack: async () => noPack,
+        benchmark: async () => ({ ok: false, error: 'no local model to measure with — add a GGUF first' }),
+      }
+    })(),
     openExternal: async (url) => { window.open(url, '_blank') },
     revealPath: async () => {},
   }
 }
 
-declare global { interface Window { linkcpp?: LinkcppAPI } }
+declare global { interface Window { kvasir?: KvasirAPI } }
 
 // Provider selection:
-//  - Electron bridge (window.linkcpp) → keys live in the main process.
+//  - Electron bridge (window.kvasir) → keys live in the main process.
 //  - Served web app (http/https) → real in-browser non-custodial wallet.
 //  - Otherwise (file:// preview / tests) → mock with demo data.
-function pickProvider(): { api: LinkcppAPI; kind: 'electron' | 'browser' | 'mock' } {
-  if (typeof window !== 'undefined' && window.linkcpp) return { api: window.linkcpp, kind: 'electron' }
+function pickProvider(): { api: KvasirAPI; kind: 'electron' | 'browser' | 'mock' } {
+  if (typeof window !== 'undefined' && window.kvasir) return { api: window.kvasir, kind: 'electron' }
   try {
     if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)) {
       return { api: makeBrowserWallet(servedStakingUrl()), kind: 'browser' }
@@ -167,7 +356,7 @@ function pickProvider(): { api: LinkcppAPI; kind: 'electron' | 'browser' | 'mock
   return { api: makeMock(), kind: 'mock' }
 }
 const picked = pickProvider()
-export const api: LinkcppAPI = picked.api
+export const api: KvasirAPI = picked.api
 export const walletKind = picked.kind
 export const isElectron = picked.kind === 'electron'
 // Providers with a real persistent encrypted key store enforce the passphrase

@@ -145,7 +145,7 @@ fun NodeSettingsScreen(vm: WalletViewModel, nav: NavController) {
             }
 
             Spacer(Modifier.height(12.dp))
-            HubConnectCard(vm)
+            BridgeConnectCard(vm)
 
             if (vm.nodeLive) {
                 Spacer(Modifier.height(12.dp))
@@ -225,29 +225,33 @@ private fun thermalWord(v: Float, s: Strings): String = when {
 }
 
 /**
- * Connect this node to a remote (auth-gated) hub: sign in with the wallet
+ * Connect this node to a remote (auth-gated) bridge: sign in with the wallet
  * (SIWS) + OTP, then hand the resulting bearer token to the running node agent
- * so it polls that hub's shard-demand market. The LAN hub is discovered
- * automatically; this is for public hubs the node can only reach outbound.
+ * so it polls that bridge's shard-demand market. The LAN bridge is discovered
+ * automatically; this is for public bridges the node can only reach outbound.
  */
 @Composable
-private fun HubConnectCard(vm: WalletViewModel) {
+private fun BridgeConnectCard(vm: WalletViewModel) {
     val b = LocalBrand.current
+    val s = Strings(vm.language)
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var url by remember { mutableStateOf("https://hub.kvasir-ai.net") }
+    // hub.kvasir-ai.net was the old control plane and has been 502 since it was
+    // retired. A NAT-bound phone now reaches the bridge through the settlement
+    // gateway, which passes the participation calls through to it.
+    var url by remember { mutableStateOf("https://gate.kvasir-ai.net") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
-    val hubs = remember { mutableStateOf(NodeService.agent?.knownHubList() ?: emptyList()) }
+    val bridges = remember { mutableStateOf(NodeService.agent?.knownBridgeList() ?: emptyList()) }
 
     Column(Modifier.brandCard()) {
-        Text("허브 연결", color = b.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(s.t("monitor.bridgeTitle"), color = b.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text("원격 허브에 지갑 서명으로 노드 토큰을 발급받아 폴링 등록 (OTP 불필요)", color = b.textSecondary, fontSize = 12.sp)
+        Text(s.t("ns.bridgeConnectDesc"), color = b.textSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
         androidx.compose.material3.OutlinedTextField(
             value = url, onValueChange = { url = it }, singleLine = true,
-            label = { Text("허브 URL", fontSize = 12.sp) },
+            label = { Text(s.t("ns.bridgeUrl"), fontSize = 12.sp) },
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(10.dp))
@@ -262,10 +266,10 @@ private fun HubConnectCard(vm: WalletViewModel) {
                     if (NodeService.agent == null) { status = "노드를 먼저 켜세요 (라이브)"; return@clickableNoRipple }
                     busy = true; status = "지갑 서명 중…"
                     scope.launch {
-                        val r = withContext(Dispatchers.IO) { runCatching { HubAuthService(url, words).nodeToken() } }
+                        val r = withContext(Dispatchers.IO) { runCatching { BridgeAuthService(url, words).nodeToken() } }
                         r.onSuccess {
-                            NodeService.agent?.registerHub(url, it)
-                            hubs.value = NodeService.agent?.knownHubList() ?: emptyList()
+                            NodeService.agent?.registerBridge(url, it)
+                            bridges.value = NodeService.agent?.knownBridgeList() ?: emptyList()
                             status = "연결됨 · 노드 토큰 등록"
                         }.onFailure { status = "실패: ${it.message}" }
                         busy = false
@@ -279,9 +283,9 @@ private fun HubConnectCard(vm: WalletViewModel) {
             Text(status, color = if (status.startsWith("연결됨")) GREEN else b.textSecondary,
                 fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
-        if (hubs.value.isNotEmpty()) {
+        if (bridges.value.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            hubs.value.forEach { Text("• $it", color = b.textSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
+            bridges.value.forEach { Text("• $it", color = b.textSecondary, fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
         }
     }
 }

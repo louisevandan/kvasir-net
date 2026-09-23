@@ -24,8 +24,20 @@ export function MetricRow({ label, valueText, value, color }: { label: string; v
 
 export const tierColor = (t?: string) => t === 'S' ? 'var(--warn)' : t === 'A' ? 'var(--good)' : t === 'B' ? 'var(--info)' : 'var(--text-3)'
 
+/**
+ * A circle for one letter (S/A/B/C), a pill for a word ("unrated"). The size
+ * is a minimum, not a width: a fixed inline width is what kept "unrated"
+ * overflowing even after the stylesheet learned to grow the badge.
+ */
 export function TierBadge({ tier, size = 34 }: { tier: string; size?: number }) {
-  return <div className="tier" style={{ width: size, height: size, background: tierColor(tier), fontSize: size * 0.42 }}>{tier}</div>
+  const word = String(tier).length > 1
+  return (
+    <div className="tier" style={{
+      minWidth: size, height: size, borderRadius: size / 2,
+      padding: word ? `0 ${Math.round(size * 0.35)}px` : 0,
+      background: tierColor(tier), fontSize: size * (word ? 0.34 : 0.42),
+    }}>{tier}</div>
+  )
 }
 
 export function CopyButton({ text, label }: { text: string; label?: string }) {

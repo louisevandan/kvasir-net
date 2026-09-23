@@ -6,7 +6,7 @@
 #include "ggml-rpc.h"
 
 // Metal first, CPU fallback second — the same device order a macOS Metal
-// ggml-rpc-server advertises, which the hub's --device selection assumes.
+// ggml-rpc-server advertises, which the bridge's --device selection assumes.
 #define KVASIR_MAX_DEVICES 2
 
 static _Atomic bool g_running = false;

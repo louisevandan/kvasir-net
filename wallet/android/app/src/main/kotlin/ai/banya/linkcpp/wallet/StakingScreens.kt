@@ -256,7 +256,7 @@ fun NodeMonitorScreen(vm: WalletViewModel, nav: NavController) {
                 Text(str.t("monitor.connectDevice"), color = b.pink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickableNoRipple { nav.navigate("deviceconnect") })
             }
-            HubConnectionCard(vm, b)
+            BridgeConnectionCard(vm, b)
             Spacer(Modifier.height(10.dp))
             status?.let { s ->
                 Column(Modifier.brandCard()) {
@@ -300,7 +300,7 @@ fun NodeMonitorScreen(vm: WalletViewModel, nav: NavController) {
     }
 }
 
-// The settlement gateway upserts a hub-qualified node (`infer-<hubKey>-<nodeId>`)
+// The settlement gateway upserts a bridge-qualified node (`infer-<bridgeKey>-<nodeId>`)
 // for a phone's expert-shard contribution, separate from the phone's own
 // registration node (`<nodeId>`). Fold the reward of every such work-node into
 // its base node so a phone's earnings show on its own card, not a mystery second
@@ -338,53 +338,53 @@ private fun consolidateRewardNodes(nodes: List<NodeReward>): List<NodeReward> {
     return merged.values.toList()
 }
 
-// `infer-<hubKey>-<baseId>` -> `<baseId>` (the hubKey segment has no '-').
+// `infer-<bridgeKey>-<baseId>` -> `<baseId>` (the bridgeKey segment has no '-').
 private fun expertBaseId(id: String): String? {
     if (!id.startsWith("infer-")) return null
     val dash = id.indexOf('-', "infer-".length)
     return if (dash >= 0) id.substring(dash + 1) else null
 }
 
-// Hub connection status: which known hubs the node auto-connects to on launch
+// Bridge connection status: which known bridges the node auto-connects to on launch
 // and whether it is currently serving one. Shown at the top of the dashboard.
 @Composable
-private fun HubConnectionCard(vm: WalletViewModel, b: BrandColors) {
+private fun BridgeConnectionCard(vm: WalletViewModel, b: BrandColors) {
     val str = LocalStrings.current
     val green = Color(0xFF33C06B)
-    val hubs = vm.nodeHubUrls
+    val bridges = vm.nodeBridgeUrls
     val serving = vm.nodeServing
     val connected = vm.nodeConnected
     val dot = if (serving) green else if (connected) b.pink else b.textSecondary
     val state = when {
-        serving -> str.t("monitor.hubServing")
-        connected -> str.t("monitor.hubConnectedIdle")
-        else -> str.t("monitor.hubDisconnected")
+        serving -> str.t("monitor.bridgeServing")
+        connected -> str.t("monitor.bridgeConnectedIdle")
+        else -> str.t("monitor.bridgeDisconnected")
     }
     Column(Modifier.fillMaxWidth().brandCard(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(str.t("monitor.hubTitle"), color = b.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(str.t("monitor.bridgeTitle"), color = b.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
             Spacer(Modifier.width(6.dp))
             Text(state, color = b.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
-        if (hubs.isEmpty()) {
+        if (bridges.isEmpty()) {
             Spacer(Modifier.height(6.dp))
-            Text(str.t("monitor.hubNone"), color = b.textSecondary, fontSize = 12.sp)
+            Text(str.t("monitor.bridgeNone"), color = b.textSecondary, fontSize = 12.sp)
         } else {
-            hubs.forEach { url ->
+            bridges.forEach { url ->
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(6.dp).clip(CircleShape).background(if (serving) green else b.pink))
                     Spacer(Modifier.width(6.dp))
-                    Text(hubHost(url), color = b.textPrimary, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    Text(bridgeHost(url), color = b.textPrimary, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                 }
             }
         }
     }
 }
 
-private fun hubHost(url: String): String = runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
+private fun bridgeHost(url: String): String = runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
 
 @Composable
 private fun NodeCard(n: NodeStatusItem, b: BrandColors, onOpenSettings: () -> Unit, onRemove: () -> Unit) {
@@ -530,7 +530,10 @@ fun DeviceConnectScreen(vm: WalletViewModel, nav: NavController) {
     val staking = remember(vm.stakingUrl) { StakingService(vm.stakingUrl) }
     val androidId = remember { Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID) ?: "device" }
     val nodeId = "android-${androidId.take(8)}"
-    val command = "LINKCPP_SERVICE=${vm.stakingUrl} LINKCPP_OWNER=$owner node connect.js"
+    // The variables and the path are read verbatim off the screen by whoever
+    // runs the node client, so they must be the ones solana/node-client/connect.js
+    // actually reads (KVR_SERVICE / KVR_OWNER) and the path it actually lives at.
+    val command = "KVR_SERVICE=${vm.stakingUrl} KVR_OWNER=$owner node solana/node-client/connect.js"
     var urlText by remember { mutableStateOf(vm.stakingUrl) }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }

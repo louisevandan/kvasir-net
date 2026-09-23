@@ -12,7 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/p2p-org/solana-swift", from: "5.0.0"),
-        // ed25519 detached signing for the hub Sign-In-With-Solana node-token flow
+        // ed25519 detached signing for the bridge Sign-In-With-Solana node-token flow
         // (same package solana-swift already resolves, so no new version to pin).
         .package(url: "https://github.com/bitmark-inc/tweetnacl-swiftwrap.git", from: "1.0.2"),
     ],

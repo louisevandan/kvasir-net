@@ -12,23 +12,23 @@ import javax.net.ssl.SSLSocketFactory
 import kotlin.concurrent.thread
 
 /**
- * Relays a ring stage's raw TCP streams to the coordinator through the hub over
- * a WebSocket (443), so a NAT node — or a hub behind Cloudflare, which proxies
+ * Relays a ring stage's raw TCP streams to the coordinator through the bridge over
+ * a WebSocket (443), so a NAT node — or a bridge behind Cloudflare, which proxies
  * only 80/443 — needs no publicly reachable ring port. The local ring stage
  * dials 127.0.0.1:proxyPort; each connection is bridged to a WebSocket at
- * {hub}/api/ring-relay, which the hub joins to the coordinator's ring listener.
+ * {bridge}/api/ring-relay, which the bridge joins to the coordinator's ring listener.
  * Ring bytes (role preamble, hello, frames) pass through untouched.
  *
  * A minimal RFC 6455 client (handshake + binary frames, client masking) is used
  * so it works on any Android version and over plain ws:// or TLS wss://.
  */
 class RingRelay(
-    hubBase: String,
+    bridgeBase: String,
     private val controllerId: String,
     private val token: String,
     private val log: (String) -> Unit,
 ) {
-    private val uri = URI(hubBase.replaceFirst("http", "ws").trimEnd('/') + "/api/ring-relay")
+    private val uri = URI(bridgeBase.replaceFirst("http", "ws").trimEnd('/') + "/api/ring-relay")
     private val tls = uri.scheme == "wss"
     private val host = uri.host
     private val port = if (uri.port > 0) uri.port else if (tls) 443 else 80

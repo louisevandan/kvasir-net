@@ -43,6 +43,94 @@ export type TechArticle = {
 export type TechTranslation = Pick<TechArticle, "title" | "dek" | "blocks">;
 
 export const TECH_ARTICLES: TechArticle[] = [
+  {
+    slug: "a-dialable-address-for-a-laptop",
+    category: "milestones",
+    title: "A Dialable Address for a Laptop",
+    dek: "p4 reaches a node by dialling it, and a machine behind NAT has no address to dial. Most machines are behind NAT. Here is what it took to let one join anyway, and the measurements from the day it did.",
+    date: "2026-09-20",
+    tags: ["p4", "DePIN", "desktop", "networking"],
+    blocks: [
+      {
+        t: "callout",
+        md: "**The obstacle was not effort, it was direction.** p4 delivers work by opening a TCP connection *to* a node. A connection the node opened itself is receipts-only — a `Data` frame arriving on it is answered with `peer_closed(\"unexpected frame on outbound hop\")`. So a laptop cannot tunnel outward and be handed work down the tunnel. Not with willingness, not with retries, not with a better client.",
+      },
+      { t: "h2", kick: "The constraint", text: "Every contributor machine is unreachable by default" },
+      {
+        t: "p",
+        md: "A home machine sits behind network address translation. It can reach the internet; the internet cannot reach it. Our own fleet shows both sides of this: the office GB10 has a public address attached directly, while the two MI250 hosts sit on `192.168.20.x` behind one shared egress. The MI250s are not unusual. They are what a contributor's machine looks like.",
+      },
+      {
+        t: "p",
+        md: "There is no route table in p4, no rendezvous service, no hole punching. `deliver_outbound` takes the address out of the event envelope and calls `connect`. That is the whole of it, and it is a reasonable design for a rack. It is simply not a design that a laptop can satisfy.",
+      },
+      { t: "h2", kick: "The answer", text: "One outbound connection, held open" },
+      {
+        t: "p",
+        md: "The relay owns a public address on the node's behalf. The node keeps a single outbound connection to it and listens on nothing at all. When somebody dials the public address, those bytes travel down the connection the node already has. Both ends of p4 see an ordinary socket to an ordinary address, and neither learns the relay is there.",
+      },
+      {
+        t: "code",
+        caption: "What a dialler sees, and what the node runs",
+        code: "caller  ->  tcp://relay:43100        # an ordinary p4 address\n            |\n            +-- relay      public, forwards bytes, parses none of them\n                  |\n                  +-- tunnel   one outbound connection the node opened\n                        |\n                        +-- p4-agent  127.0.0.1:42031, listening on loopback only",
+      },
+      {
+        t: "p",
+        md: "The relay never reads p4. Payloads are forwarded byte for byte and never parsed — it cannot tell a `LOAD` from an `INSPECT`, and it must not be able to, because the moment it understands the traffic it becomes something that can alter it.",
+      },
+      { t: "h2", kick: "Why this is also the security boundary", text: "Port forwarding was never an option" },
+      {
+        t: "p",
+        md: "p4 has no authentication of any kind. No TLS, no tokens, no allowlist — any host that can reach an agent's port may send `NODE_LOAD`, `NODE_UNLOAD` and `INSPECT`. Asking a contributor to forward a port on their home router into that would be indefensible, and it is the reason the obvious fix is the wrong one.",
+      },
+      {
+        t: "p",
+        md: "Through a relay the node listens on nothing. It holds one outbound connection and proves an operator wallet before that connection carries anything — the same ed25519-over-base58 signature the settlement gateway already uses, so the identity a node registers is the identity the rewards ledger is keyed on. Reachability and authentication turn out to have the same answer.",
+      },
+      { t: "h2", kick: "The day it worked", text: "Measured, not asserted" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "fleet host to a NAT-bound Mac" },
+          { n: "28 ms", l: "until the agent applied its own rule" },
+          { n: "512 KiB", l: "returned byte-identical" },
+          { n: "0", l: "ports opened on the laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "An MI250 host in a data centre dialled `tcp://34.50.62.159:43100` and reached a p4 agent running on a MacBook behind NAT in 6 ms. The agent closed the connection 28 ms later because the first frame was not a `Hello` — its own protocol rule, applied by itself, from a machine that a moment earlier could not be contacted at all. That refusal is the proof: the relay does not parse payloads, so it could not have produced it.",
+      },
+      {
+        t: "table",
+        head: ["Check", "Result"],
+        rows: [
+          ["512 KiB round trip", "byte-identical, 177 ms"],
+          ["256 KiB round trip", "byte-identical, 108 ms"],
+          ["Three concurrent callers", "no stream crossed another"],
+          ["Unsigned registration", "refused"],
+          ["Replayed challenge", "refused"],
+        ],
+      },
+      { t: "h2", kick: "The other half", text: "A node needs something to run" },
+      {
+        t: "p",
+        md: "Reachability is worthless without an engine behind it, and the desktop app had shipped none: it looked for a `p4-agent` binary in three build directories and found one only on a machine where somebody had already compiled p4 by hand. The app now carries its own, built for each platform it ships to.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: a universal binary, both architectures merged. The Mac app packs as `universal` and resources are copied into both slices unchanged, so an arm64-only binary would give an Intel Mac an app that looks complete and cannot start a node — a failure visible only on hardware the developer does not own.",
+          "Windows: cross-compiled, and the lookup knows to ask for `p4-agent.exe`. Forgetting the extension is how a Windows build ships an agent it then cannot find.",
+          "The build runs before every package, so a release cannot be produced without one.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**What this does not yet do.** A node can now run and be reached. It still earns nothing for inference: the engine emits per-stage work records but nothing collects them, and the settlement gateway's contribution endpoint — correctly gated so that no node can credit itself — has never been called. Running and being paid are separate problems, and only the first one is solved.",
+      },
+    ],
+  },
   /* ------------------------------------------------------------------ */
   /* Overview                                                            */
   /* ------------------------------------------------------------------ */
@@ -454,7 +542,7 @@ inside the lock:
           "**Three ways a machine joins:** fixed **local node slots** with editable VRAM/RAM/CPU budgets; **remote units** — register another hub and import its nodes; and **managed node agents** — worker-only services that join over plain request/response HTTP, deliberately not a persistent stream, so they survive simple LAN/VPN routing.",
           "**Compatibility gating is first-class:** every unit, node and agent reports a protocol / runtime-pack identity plus backend details. Unit, runtime-pack, inference engine-revision and RPC-ABI mismatches are **hard-blocked before bind, plan, load or infer** — backend differences (CUDA/Metal/Vulkan/CPU) are tracked as capabilities, not rejections.",
           "**The planner** reads GGUF metadata and produces contiguous per-node layer placement, `--tensor-split`, KV-cache/layer/expert VRAM estimates, and optional expert-FFN offload to RAM.",
-          "**Gateways:** every controller exposes OpenAI-compatible (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) and Anthropic-compatible (`/anthropic/v1/messages|models`) endpoints, backed by the same loaded model — existing clients work unchanged.",
+          "**Gateways:** every controller exposes OpenAI-compatible (`/v1/chat/completions`, `/v1/models`) and Anthropic-compatible (`/anthropic/v1/messages|models`) endpoints, backed by the same loaded model — existing clients work unchanged.",
         ],
       },
       {
@@ -837,7 +925,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "The autonomous participation flow", text: "Discover → reward-driven download → join the compute" },
       {
         t: "code",
-        code: `1. Phone knows the hub (hub.kvasir-ai.net) — already holds its wallet node-token
+        code: `1. Phone knows the hub (hub.kvasir-ai.net — retired since; the bridge serves this)
 2. GET /api/proxy/models/…/expert-shard?layers=0:1&experts=0:256
    # partially downloads its own expert slice (1.58 GB, WiFi)
 3. linkcpp-expert-worker --serve
@@ -1037,12 +1125,13 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "experts · routing", "per-expert (Q4≈)", "shared", "status"],
         rows: [
-          ["Qwen3.5-122B (serving today)", "256 · top-8", "5.3 MB (measured)", "yes", "serving (test fleet)"],
-          ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "yes", "ready — first candidate"],
+          ["Step-3.7-Flash 428B (serving today)", "288 · top-8", "measured on the fleet", "yes", "serving — 16 stages, two machines"],
+          ["Qwen3.5-122B", "256 · top-8", "5.3 MB (measured)", "yes", "served end to end across 3 machines"],
+          ["GLM-5.2 744B", "—", "—", "yes", "verified on linkcpp — report unpublished"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "yes", "planned (hook verified)"],
           ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "no", "planned (hook verified)"],
           ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "yes", "planned (deepseek2 graph)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "yes", "planned (deepseek-family)"],
+          ["Kimi K3 2.8T", "—", "—", "yes", "next gate — verification on p4"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "no", "ready"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "no", "ready"],
           ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "yes", "planned (MoE every other layer)"],
@@ -1159,6 +1248,311 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       },
     ],
   },
+  /* ------------------------------------------------------------------ */
+  /* The move to p4                                                      */
+  /* ------------------------------------------------------------------ */
+  {
+    slug: "moving-the-ring-onto-p4",
+    category: "milestones",
+    title: "Moving the Ring onto p4",
+    dek: "Seven contract changes between an engine and its caller. Each one failed differently, and only one of them looked like an error.",
+    date: "2026-09-20",
+    tags: ["p4", "migration", "engineering"],
+    blocks: [
+      {
+        t: "p",
+        md: "We merged a new release of the p4 engine and the ring stopped serving. Not with a crash — the loader reported success, the agents reported ready, and nothing happened. Working back from that silence took a day and turned up **seven** places where our caller and the engine had drifted apart. What makes them worth writing down is not the count. It is that six of the seven did not produce an error.",
+      },
+      { t: "h2", kick: "Failure one", text: "An event for a node that does not exist is forwarded, not refused" },
+      {
+        t: "p",
+        md: "Our loader addressed the LOAD command to the node it wanted to create. But a node does not exist until LOAD creates it, and the broker's rule for an event naming an unknown node is to **forward it outbound** rather than reject it. The command left the agent looking for somewhere else to go, found nowhere, and was dropped. No log line, because from the broker's point of view nothing had gone wrong.",
+      },
+      {
+        t: "p",
+        md: "The fix was to address LOAD to the *agent*, wrapped in the engine's backend-neutral lifecycle envelope, with the adapter's own command as an opaque body. Obvious in hindsight; invisible from the outside.",
+      },
+      { t: "h2", kick: "Failure two", text: "A number that must equal another number" },
+      {
+        t: "p",
+        md: "A model is loaded under a **load generation**, and each node is registered with a **node generation**. We had been treating these as independent — a timestamp for one, `1` for the other — and everything worked. The ring loaded. It answered a request correctly. Then the head node died.",
+      },
+      {
+        t: "code",
+        caption: "The check, in the adapter's release accounting.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "The receipt that closes out a finished request carries the load generation, and the node that sends it carries its own. When they differ the node is stopped. So the shape of the bug is: **load succeeds, first request succeeds, head dies, every session after that hangs part-loaded.** It reads exactly like a crash under load and not at all like a mismatch. Our loader now refuses a plan whose two numbers disagree, before anything is loaded.",
+      },
+      { t: "h2", kick: "Failure three", text: "A bound that could never be satisfied" },
+      {
+        t: "p",
+        md: "The adapter compares the largest result a stage may return against the figure the stage server reports when it comes up, for exact equality. We could not know that figure without loading the model — so we loaded with a guess, and the failure told us all four stages' real numbers at once:",
+      },
+      {
+        t: "code",
+        caption: "One run, four answers.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. The agent's retained stores are 256 MiB, so that ring could never have been admitted. Reading the derivation out of the stage server showed why: the bound scales with `n_batch × n_ubatch`, and we had inherited a batch width of 2048 from a configuration that predated this check. At 128 rows — the width the production layout uses — the bound is 138 MB and fits. We now derive it in the plan from the same formula rather than carrying a remembered constant, and the tail stage's predicted figure came out to the exact number another deployment had recorded, which is the kind of agreement worth having before spending twenty minutes on a load.",
+      },
+      { t: "h2", kick: "The other four", text: "Briefly" },
+      {
+        t: "ul",
+        items: [
+          "**Loopback addresses in a two-host ring.** A stage dials the next stage's agent at the address that agent advertises. Advertise `127.0.0.1` and host A dials itself. The ring's recorded configuration had been loopback all along — it could never have worked across hosts.",
+          "**The journal is mandatory.** A model will not load without the agent's operational journal. We turned it off while chasing a different error and made the symptom worse in a way that looked like progress.",
+          "**The device name is backend-specific.** The reference plan builder targets CUDA and emits `--device CUDA0`. The HIP build names its devices `ROCm0`. That plan loads the entire model and *then* fails to find the device.",
+          "**The native server is part of the release.** An agent built from a newer tree wants capabilities the installed stage server does not report. Also discovered after a full model load.",
+        ],
+      },
+      { t: "h2", kick: "What we took from it", text: "Silence is the expensive failure mode" },
+      {
+        t: "p",
+        md: "Every one of these was cheap to fix and expensive to find, and the pattern is consistent: the costly failures were the ones where a correct-looking system did nothing, or did something once. The guards we added are all of the same shape — refuse early, at the place where the mistake is still legible. The loader writes the load generation to disk *before* the first command leaves, because it is otherwise unrecoverable. It refuses a generation mismatch rather than discovering it after the first request. It derives the result bound instead of remembering it.",
+      },
+      {
+        t: "callout",
+        md: "**The ring is serving.** Four stages across two machines, 113 GiB of weights resident, first token in 1.4 s cold and ~0.3 s warm, and per-node contribution flowing through to the settlement ledger for the first time.",
+      },
+    ],
+  },
+  {
+    slug: "the-template-is-the-callers-job",
+    category: "core",
+    title: "The Template Is the Caller's Job",
+    dek: "p4 forwards an opaque prompt and applies no chat template. Forget that and the model answers a question you did not ask — fluently, and all the way to the token limit.",
+    date: "2026-09-20",
+    tags: ["p4", "inference", "settlement"],
+    blocks: [
+      {
+        t: "p",
+        md: "The first real answer out of our recovered ring was correct arithmetic followed by a conversation nobody had:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, asked of a served model.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "The number is right. Everything after it is the model continuing a document, because that is what we handed it: the messages flattened into one string. An instruct model reads that as text to extend, not a turn to answer. It never emits its end-of-turn token, so generation runs to the cap every single time.",
+      },
+      { t: "h2", kick: "Whose job", text: "A deliberate omission, not a gap" },
+      {
+        t: "p",
+        md: "p4 hands the stage server an opaque prompt and applies no turn format of its own — the staged adapter carries only a tool for *reading* a template out of a GGUF, never for applying one. That is a reasonable line to draw: the engine stays narrow and model-agnostic, and the caller, which already knows which model it is talking to, renders the format. But a line drawn and not documented is a line somebody walks over.",
+      },
+      {
+        t: "p",
+        md: "Reading the template out of the model file settled it: ChatML turns, `<|im_end|>` as the end-of-turn token, and an assistant turn that opens with a thinking block. With that rendered by the bridge, the same question:",
+      },
+      {
+        t: "code",
+        caption: "The same model, the same ring, the turn format applied.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "The part that costs money", text: "A thinking pass can eat the answer" },
+      {
+        t: "p",
+        md: "A reasoning model spends tokens before it says anything. Give it a budget and a hard question and it can spend the whole budget thinking, leaving the answer empty — and in a network where the caller has **already paid on-chain before the request ran**, an empty answer is not a quality problem. It is a charge for nothing.",
+      },
+      {
+        t: "p",
+        md: "The settlement gateway already knew this and asks for thinking to be disabled. The model's template has no switch for it, so the bridge opens *and closes* the thinking block in the prompt, and the model writes its answer after it. We got this wrong once in the obvious way — closing the block in the prompt meant the closing tag was no longer in the output, so the splitter filed the entire answer as reasoning and returned empty content. Which is the exact failure the setting exists to prevent.",
+      },
+      {
+        t: "callout",
+        md: "**Where this leaves the contract.** The engine forwards bytes. The bridge knows the model: it renders the turn format named in the placement plan, returns the thinking pass as `reasoning_content` separate from `content`, and clamps a request that asks for more output than the ring was loaded to give — because an over-large request is otherwise refused outright, and a shorter answer beats an engine error.",
+      },
+    ],
+  },
+
+  {
+    slug: "the-cost-was-the-directory",
+    category: "core",
+    title: "The Cost Was the Directory",
+    dek: "A four-stage ring served at 0.55 tokens a second and we blamed the network. It was a readdir, and it got slower every time we ran it.",
+    date: "2026-09-21",
+    tags: ["p4", "performance", "debugging"],
+    blocks: [
+      {
+        t: "p",
+        md: "Four stages across two hosts decoded at **0.55 tok/s**. Two stages on one host decoded at **20.19**. The difference was thirty-six fold and the obvious culprit was the thing we had added: a hop across the machine boundary. We wrote that down as the finding and started looking for where the network time was going.",
+      },
+      {
+        t: "p",
+        md: "It was the wrong finding, and the way it was wrong is the interesting part. Comparing those two configurations moves **two** variables — the number of stages and the number of hosts — and we attributed the whole gap to one of them. Every measurement after that was an attempt to explain a number the experiment could not isolate.",
+      },
+      { t: "h2", kick: "Isolating", text: "Hold the host fixed" },
+      {
+        t: "p",
+        md: "The fix for a confounded comparison is to stop confounding it. We put three stages on one host, then four, then four split across two agents on that same host — the slow shape with the machine boundary removed and nothing else changed.",
+      },
+      {
+        t: "table",
+        head: ["Ring", "tok/s"],
+        rows: [
+          ["2 stages, 1 agent, 1 host", "20.19"],
+          ["3 stages, 1 agent, 1 host", "13.86"],
+          ["4 stages, 1 agent, 1 host", "7.37"],
+          ["4 stages, 2 agents, 1 host", "2.80"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Stage count alone degrades gracefully. Splitting the same four stages across two agents on one machine costs another 2.6×, with no network involved. So the host boundary was not the mechanism — but the number still did not reach 0.55, and while we were measuring it something else surfaced: **the same ring got slower the more we ran it.**",
+      },
+      { t: "h2", kick: "The shape of it", text: "Not a constant, a slope" },
+      {
+        t: "table",
+        head: ["Journal entries", "tok/s"],
+        rows: [["0", "4.10"], ["3,267", "2.01"], ["6,444", "1.33"], ["9,655", "0.96"], ["12,881", "0.75"]],
+      },
+      {
+        t: "p",
+        md: "Five consecutive runs of the identical request on the identical ring. Per-token cost rose linearly with the number of files in the agent\'s outbound journal. A ring that had been up all day was at 1.5 seconds a token because it had been up all day — which is exactly what a two-host ring is, and why the host boundary looked guilty.",
+      },
+      { t: "h2", kick: "Cause", text: "require_capacity walks the whole directory" },
+      {
+        t: "code",
+        caption: "entrypoints/agent/src/event_runtime/transport/journal.rs",
+        code: `fn occupied_bytes(&self) -> io::Result<u64> {
+    let mut occupied = 0u64;
+    for item in fs::read_dir(&self.root)? {
+        let path = item?.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        ...
+
+fn require_capacity(&self, additional: u64) -> io::Result<()> {
+    let occupied = self.occupied_bytes()?;   // before every single record`,
+      },
+      {
+        t: "p",
+        md: "Every journal record asks whether it fits, and the answer is computed by listing the directory and stat-ing every entry in it. The journal has **no deletion path at all** — no `remove_file`, no prune, no retirement — so the directory only grows, and each write pays for every record the agent has ever written. Agent-to-agent hops write records a single-agent ring never writes, which is why splitting across two agents decayed so much faster than one.",
+      },
+      { t: "h2", kick: "Proof", text: "Twenty thousand empty files" },
+      {
+        t: "p",
+        md: "A correlation is not a cause, so we changed exactly one thing. We padded the journal with 20,000 zero-byte entries. They charge nothing against the byte budget — the capacity check sums file sizes, and these have none — but each one is a directory entry that must be listed and stat-ed.",
+      },
+      {
+        t: "table",
+        head: ["Journal", "tok/s"],
+        rows: [["baseline, 3,697 entries", "9.52"], ["+20,000 empty entries", "2.23"], ["entries removed", "7.71"]],
+      },
+      {
+        t: "p",
+        md: "It is the walk. Not the bytes, and not the fsync either: moving the journal to tmpfs, where `fsync` is free but `readdir` still is not, recovered about ten percent and left the slope intact.",
+      },
+      { t: "h2", kick: "Fix", text: "Count instead of counting again" },
+      {
+        t: "p",
+        md: "The agent keeps an occupancy figure per journal root and charges each write against it, walking the directory at startup and again only when the estimate approaches half the cap — where the exact number is what decides whether a write is refused. The estimate only ever over-counts, so it can refuse a write early but never admit one that does not fit.",
+      },
+      {
+        t: "table",
+        head: ["Run", "1", "2", "3", "4", "5", "6"],
+        rows: [
+          ["Before", "22.90", "18.82", "15.53", "12.58", "—", "—"],
+          ["After", "30.04", "31.21", "28.21", "29.04", "27.84", "28.73"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Flat, and higher than the old best. The same 20,000-entry padding now costs nothing: 28.45 → 28.80 → 29.83. At 19,761 journal entries the production ring holds 28 tok/s, where before the patch it would have been under one.",
+      },
+      { t: "h2", kick: "Alongside", text: "Threads that spin while the GPU works" },
+      {
+        t: "p",
+        md: "The same investigation turned up a second cost. All the arithmetic runs on the GPU, but each stage server starts a 48-thread ggml CPU pool, and libgomp spins those threads while idle. Two stages therefore pegged all 96 logical cores of the machine, and the agent\'s per-event work — which is what actually paces the ring — ran on what was left. The stage servers were burning about 790 CPU-seconds each per 100-token run. Setting `OMP_WAIT_POLICY=PASSIVE` took agent CPU per token from 116 ms to 8 ms.",
+      },
+      {
+        t: "callout",
+        md: "**What we would do differently.** The first measurement was not wrong, it was unattributable — and we attributed it anyway. A comparison that moves two variables can only produce a hypothesis, never a cause. The tell was available early and we walked past it: the number was not reproducible run to run, and a constant cause does not produce a slope.",
+      },
+      {
+        t: "p",
+        md: "One thing this does not fix: the journal still grows without bound. Reading it is now cheap; retiring settled records is the follow-up.",
+      },
+    ],
+  },
+
+  {
+    slug: "a-client-with-nothing-to-call",
+    category: "milestones",
+    title: "A Client With Nothing to Call",
+    dek: "Both phones had shipped the node-participation client. The server it talked to had been deleted three commits earlier, and nothing said so.",
+    date: "2026-09-21",
+    tags: ["bridge", "mobile", "engineering"],
+    blocks: [
+      {
+        t: "p",
+        md: "Tapping **Connect with wallet** on the node settings screen produced an error. Not a friendly one — the raw body of a 404, printed where a status message goes. The route it called, `/api/auth/challenge`, had been served by the control plane we retired. The client half was complete, shipped, and running on real phones. The server half no longer existed.",
+      },
+      {
+        t: "p",
+        md: "So had every step after it: the coverage market that tells a node what to work on, the shard endpoint it downloads its slice from, and the relays that let a NAT-bound phone be reached at all. A whole feature, half present, failing at the first call with a message nobody could act on.",
+      },
+      { t: "h2", kick: "Recovering the contract", text: "The clients cannot be asked to change" },
+      {
+        t: "p",
+        md: "A reimplementation here has an unusual constraint: the callers are already in people\'s pockets. Field names, error shapes and call order are fixed by what shipped. We read the deleted implementation out of git history rather than guessing, and the reading turned up things guessing would have missed — most of all the ordering: **the coverage POST is what creates the relay target the worker then dials.** Reverse those and the socket connects, carries bytes, and credits nobody.",
+      },
+      { t: "h2", kick: "Built", text: "Three files, no dependencies" },
+      {
+        t: "ul",
+        items: [
+          "**Node tokens.** A wallet signs a single-use nonce; the bridge verifies ed25519 and returns a bearer token scoped to participation and nothing else. `node:crypto` verifies a raw 32-byte Solana address as a key once you prepend the DER header for Ed25519 — no library needed.",
+          "**The market.** Which expert windows are under-covered, what a volunteering node should take, what it reports having taken, and who is owed for the bytes its relay carried.",
+          "**The relay.** A WebSocket spliced to a TCP endpoint, handshake and frame codec written out. Carrier NAT and a 443-only edge mean neither side can dial the other, so both dial here.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**The one-byte preamble.** A ring peer writes a single ASCII byte before its first frame — `P` for \"I am your predecessor\", `N` for \"I am your successor\" — which is how a stage that dials both neighbours tells each one which descriptor it is. To the relay it is payload, not protocol: it must not be buffered, inspected or reordered. There is a test that fails if it is.",
+      },
+      { t: "h2", kick: "Two deliberate departures", text: "Where we did not copy the original" },
+      {
+        t: "p",
+        md: "The old hub emitted `{\"detail\": ...}` from its handlers and `{\"error\": ...}` from its middleware. Both mobile clients read only `error`. Every explained refusal therefore reached the user as a bare \"HTTP 403\" — the server said why and the phone could not hear it. Every error body is now `error`.",
+      },
+      {
+        t: "p",
+        md: "More consequentially: the old hub gated the challenge on `_operator_authorized` — an admin wallet, or one holding a minimum KVR balance. Operating a bridge and contributing compute to one are different things, and with the shipped defaults that gate refused **every phone that ever asked**. Participation is open here unless an operator sets a floor, and that floor is a separate setting from operator eligibility.",
+      },
+      { t: "h2", kick: "Verified", text: "A wallet that did not exist a minute earlier" },
+      {
+        t: "code",
+        caption: "against gate.kvasir-ai.net, freshly generated keypair",
+        code: `challenge    200
+node-token   200   ttl 30 days
+volunteer    200   assigned layer 0, experts [0,32), n_embd 4096
+coverage     200   wired, session expert-probe, listen_port 52970`,
+      },
+      {
+        t: "p",
+        md: "`n_embd` is not decoration in that response. Both clients abort an assignment when it is missing rather than guess a hidden size and produce silent garbage, so a model is only offered as work when its dimensions are recorded. They travel in the load plan, because the loader regenerates the catalog and anything not in the plan does not survive a reload — and they are recorded rather than read from the file on the request path, because a coverage poll must not wait seconds on a 122 GB GGUF\'s metadata.",
+      },
+      {
+        t: "callout",
+        md: "**What this cost to find.** Nothing in the build, the tests, or the type checker knows that a client calls a route that no longer exists. The deletion was correct; the thing that made it expensive is that the two halves of the feature live in different languages, different repositories and different release cadences, and only a person tapping a button connects them.",
+      },
+    ],
+  },
+
 ];
 
 export function techArticleBySlug(slug: string): TechArticle | undefined {

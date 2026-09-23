@@ -278,7 +278,7 @@ struct StakingView: View {
     }
 }
 
-// Fold a hub-qualified expert-work node's claimable reward (`infer-<hubKey>-<nodeId>`)
+// Fold a bridge-qualified expert-work node's claimable reward (`infer-<bridgeKey>-<nodeId>`)
 // into its base phone node (`<nodeId>`), so the phone's earnings list on its own
 // row rather than a mystery second one. Non-matching work-nodes stay untouched.
 private func consolidateRewardNodes(_ nodes: [NodeReward]) -> [NodeReward] {

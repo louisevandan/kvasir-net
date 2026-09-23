@@ -79,6 +79,22 @@ export default function Footer() {
                 {t.nav.careers}
               </a>
               <a
+                href="/releases"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                Releases
+              </a>
+              {/* Team is in the main nav now, so it is not repeated here.
+                  Install stays untranslated, like Releases: the page is
+                  English-only, and a translated label pointing at English copy
+                  is worse than an English label that says what you will get. */}
+              <a
+                href="/install"
+                className="text-ink-muted transition-colors hover:text-ink"
+              >
+                Install
+              </a>
+              <a
                 href="/legal"
                 className="text-ink-muted transition-colors hover:text-ink"
               >

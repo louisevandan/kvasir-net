@@ -52,7 +52,7 @@ export function InferenceScreen() {
 
   useEffect(() => {
     // On-device models first (free, no network), then gateway models.
-    window.linkcpp?.models?.list().then((list) => {
+    window.kvasir?.models?.list().then((list) => {
       setLocalModels(list)
       if (!model && list[0]) setModel(`local:${list[0].name}`)
     }).catch(() => {})
@@ -140,7 +140,7 @@ export function InferenceScreen() {
     setInput(''); setBusy(true)
     setMsgs((m) => [...m, { role: 'user', content: prompt }, { role: 'assistant', content: '', thinking: true, model: label }])
     try {
-      const r = await window.linkcpp!.models!.generate(fileName, prompt, 512)
+      const r = await window.kvasir!.models!.generate(fileName, prompt, 512)
       if (r.ok) setMsgs((m) => replaceLast(m, { role: 'assistant', content: r.text || '', model: label }))
       else setMsgs((m) => replaceLast(m, { role: 'assistant', content: r.error || t('models.loadFailed'), error: true }))
     } catch (e: any) {

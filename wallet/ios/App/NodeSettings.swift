@@ -7,11 +7,14 @@ struct NodeSettingsView: View {
     @ObservedObject var staking: StakingStore
     @ObservedObject private var loc = Localizer.shared
     @ObservedObject private var agent = AgentControlServer.shared
-    @ObservedObject private var participation = HubParticipation.shared
+    @ObservedObject private var participation = BridgeParticipation.shared
     @State private var stats = DeviceStats()
-    @State private var hubURL = "https://hub.kvasir-ai.net"
-    @State private var hubStatus = ""
-    @State private var hubBusy = false
+    // hub.kvasir-ai.net was the old control plane and has been 502 since it was
+    // retired. A NAT-bound phone now reaches the bridge through the settlement
+    // gateway, which passes the participation calls through to it.
+    @State private var bridgeURL = "https://gate.kvasir-ai.net"
+    @State private var bridgeStatus = ""
+    @State private var bridgeBusy = false
     @State private var keyStatus = ""
     @State private var keyBusy = false
 
@@ -26,7 +29,7 @@ struct NodeSettingsView: View {
                     modeCard
                     infographicCard
                     policyCard
-                    hubCard
+                    bridgeCard
                     apiKeyCard
                     if staking.nodeLive { liveCard }
                 }
@@ -56,7 +59,7 @@ struct NodeSettingsView: View {
         .brandCard()
     }
 
-    // MARK: connect to a remote hub (SIWS node token -> outbound shard serving)
+    // MARK: connect to a remote bridge (SIWS node token -> outbound shard serving)
 
     // The credit API key is stored on this device and the gateway keeps only its
     // hash, so a key it no longer recognises has to be reminted rather than
@@ -92,13 +95,13 @@ struct NodeSettingsView: View {
         .brandCard()
     }
 
-    private var hubCard: some View {
+    private var bridgeCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(loc.t("nodeSettings.hubConnectTitle"))
+            Text(loc.t("nodeSettings.bridgeConnectTitle"))
                 .font(.system(.headline, design: .rounded)).foregroundStyle(Brand.textPrimary)
-            Text(loc.t("nodeSettings.hubConnectDesc"))
+            Text(loc.t("nodeSettings.bridgeConnectDesc"))
                 .font(.caption).foregroundStyle(Brand.textSecondary)
-            TextField(loc.t("nodeSettings.hubUrl"), text: $hubURL)
+            TextField(loc.t("nodeSettings.bridgeUrl"), text: $bridgeURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .keyboardType(.URL)
@@ -107,26 +110,26 @@ struct NodeSettingsView: View {
                 .background(Brand.stroke, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .foregroundStyle(Brand.textPrimary)
             Button {
-                guard !hubBusy else { return }
-                hubBusy = true
-                hubStatus = loc.t("nodeSettings.hubSigning")
+                guard !bridgeBusy else { return }
+                bridgeBusy = true
+                bridgeStatus = loc.t("nodeSettings.bridgeSigning")
                 Task {
-                    let r = await staking.connectHub(url: hubURL)
-                    hubStatus = r; hubBusy = false
+                    let r = await staking.connectBridge(url: bridgeURL)
+                    bridgeStatus = r; bridgeBusy = false
                 }
             } label: {
-                Text(hubBusy ? loc.t("nodeSettings.hubConnecting") : loc.t("nodeSettings.hubConnectBtn"))
+                Text(bridgeBusy ? loc.t("nodeSettings.bridgeConnecting") : loc.t("nodeSettings.bridgeConnectBtn"))
                     .fontWeight(.semibold).foregroundStyle(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(Brand.pink.opacity(hubBusy ? 0.4 : 1),
+                    .background(Brand.pink.opacity(bridgeBusy ? 0.4 : 1),
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .disabled(hubBusy)
-            if !hubStatus.isEmpty {
-                Text(hubStatus).font(.caption2.monospaced())
-                    .foregroundStyle(hubStatus.hasPrefix(loc.t("nodeSettings.hubConnected")) ? Color.green : Brand.textSecondary)
+            .disabled(bridgeBusy)
+            if !bridgeStatus.isEmpty {
+                Text(bridgeStatus).font(.caption2.monospaced())
+                    .foregroundStyle(bridgeStatus.hasPrefix(loc.t("nodeSettings.bridgeConnected")) ? Color.green : Brand.textSecondary)
             }
-            ForEach(participation.hubs, id: \.self) { h in
+            ForEach(participation.bridges, id: \.self) { h in
                 Text("• \(h)").font(.caption2).foregroundStyle(Brand.textSecondary)
             }
             if !participation.lastStatus.isEmpty {

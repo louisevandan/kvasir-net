@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>KVASIR_WATCH_ENV</key>
+		<string>/Users/tony/project/any/.env</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.kvasir.watch.commits</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>/Volumes/Transcend/Projects/kvasir-net/tools/kvasir-watch/commit-watch.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/commits.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/tony/Library/Logs/kvasir-watch/commits.out</string>
+	<key>StartInterval</key>
+	<integer>1200</integer>
+</dict>
+</plist>

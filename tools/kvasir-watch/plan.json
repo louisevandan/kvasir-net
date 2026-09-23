@@ -1,0 +1,6 @@
+{
+  "note": "Dates the team is working towards. The calendar shows the current week and the next few of these; add a line when a date is fixed.",
+  "milestones": [
+    { "date": "2026-09-21", "label": "YZi Labs EASY S5 application due", "track": "residency" }
+  ]
+}

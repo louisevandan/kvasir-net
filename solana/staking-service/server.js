@@ -1,4 +1,5 @@
-// linkcpp off-chain KVR staking settlement service (devnet MVP).
+// Kvasir off-chain KVR staking settlement service. Inference is served by the
+// p4 bridge; linkcpp is retired.
 //
 // Model: a user stakes by transferring KVR to the vault (treasury ATA) from the
 // wallet app, then POSTs the tx signature here. This service verifies the
@@ -31,21 +32,25 @@ const {
 } = require('@solana/spl-token');
 
 const PORT = Number(process.env.PORT || 8791);
-const APR = Number(process.env.STAKING_APR || 0.12); // 12% APR
+// Staking accrual. The default is 0 on purpose: this runs on devnet with a
+// utility token, and a service that pays a yield by default is describing an
+// interest-bearing product whether or not anyone meant it that way. An operator
+// who wants accrual sets it deliberately.
+const APR = Number(process.env.STAKING_APR ?? 0);
 const SECONDS_PER_YEAR = 365 * 24 * 60 * 60;
 // Node operator reward: KVR paid per contribution "unit" (e.g. 1k tokens served).
-const REWARD_PER_UNIT = Number(process.env.LINKCPP_REWARD_PER_UNIT || 0.01);
+const REWARD_PER_UNIT = Number(process.env.KVR_REWARD_PER_UNIT || 0.01);
 // Extra reward multiplier for a node that also HOSTS the gateway/settlement service
 // (it keeps the network's coordination point online). Applied on top of the perf tier.
 const GATEWAY_BONUS = Number(process.env.KVR_GATEWAY_BONUS || 1.5);
 
-// Infrastructure UPTIME rewards. The hub (control plane / orchestrator) and the
+// Infrastructure UPTIME rewards. The bridge (control plane / orchestrator) and the
 // gateway (public entry / settlement) do not themselves produce inference "units",
 // so a perf-tier multiplier can never pay them. Instead they earn KVR per hour of
 // uptime, accrued on each heartbeat, INDEPENDENT of inference and SUMMED on top of
-// it — so an all-in-one host earns hub + gateway + inference together. The hub is
+// it — so an all-in-one host earns bridge + gateway + inference together. The bridge is
 // the most critical role, so its default rate is the highest.
-const HUB_UPTIME_PER_HOUR = Number(process.env.KVR_HUB_UPTIME_PER_HOUR || 2.0);
+const BRIDGE_UPTIME_PER_HOUR = Number(process.env.KVR_BRIDGE_UPTIME_PER_HOUR || 2.0);
 const GATEWAY_UPTIME_PER_HOUR = Number(process.env.KVR_GATEWAY_UPTIME_PER_HOUR || 1.0);
 // Cap the time credited per report so a heartbeat after an offline gap doesn't pay
 // for downtime (continuous ~3s heartbeats accrue fully; long gaps are clamped).
@@ -65,13 +70,38 @@ function perfTier(tps) {
   return PERF_TIERS.find((x) => t >= x.minTps) || PERF_TIERS[PERF_TIERS.length - 1];
 }
 
+// A node that has never reported a decode throughput.
+//
+// PERF_TIERS grades nodes by tokens/s, which is the right question for a node
+// that generates tokens. An expert node does not: it computes an FFN over a
+// batch of hidden states and never decodes anything, so there is no tokens/s
+// to measure and there never will be. Falling back to perfTier(0) put every
+// such node in the bottom tier at 0.7x — permanently, whatever the hardware.
+// An M4, a 4090 and a GB10 all lost 30% for the same reason: a number that
+// does not apply to them was missing.
+//
+// So the multiplier is 1. Not because expert work deserves a bonus, but
+// because relay contribution is already metered in bytes carried: a slower
+// machine serves fewer batches and earns less by doing so. Multiplying that by
+// 0.7 charges the same slowness twice.
+//
+// This is the honest shape of the rule — "no measurement, no adjustment" —
+// rather than keying off backend === 'relay', which is a value that is about
+// to change as clients start reporting what they actually run on.
+const UNMEASURED = { tier: 'unrated', mult: 1 };
+
+/** The tier and multiplier for a node, graded only if it has been measured. */
+function tierFor(node) {
+  return node && node.perfScore != null ? perfTier(node.perfScore) : UNMEASURED;
+}
+
 // Credit infra-role uptime rewards for the elapsed time since the last accrual,
 // clamped so an offline gap isn't paid. Call on every register/heartbeat/contribution.
 // Uptime rewards SUM with inference rewards into the same pendingRewards balance.
 function accrueUptime(n, now) {
   const elapsed = Math.max(0, Math.min(now - (n.lastUptimeAt || now), UPTIME_MAX_GAP_SEC));
   let credit = 0;
-  if (n.hostsHub) credit += elapsed * (HUB_UPTIME_PER_HOUR / 3600);
+  if (n.hostsBridge) credit += elapsed * (BRIDGE_UPTIME_PER_HOUR / 3600);
   if (n.hostsGateway) credit += elapsed * (GATEWAY_UPTIME_PER_HOUR / 3600);
   if (credit > 0) {
     n.uptimeRewards = (n.uptimeRewards || 0) + credit;
@@ -85,7 +115,7 @@ const SPEC_PATH = process.env.KVR_TOKEN_SPEC || path.resolve(__dirname, '../../w
 const SPEC = JSON.parse(fs.readFileSync(SPEC_PATH, 'utf8'));
 // Canonical public URL clients should use (set when deployed behind a public IP / domain).
 const PUBLIC_URL = process.env.KVR_PUBLIC_URL || null;
-const RPC = process.env.LINKCPP_RPC_URL || SPEC.rpcUrl;
+const RPC = process.env.KVR_RPC_URL || SPEC.rpcUrl;
 const MINT = new PublicKey(SPEC.token.mint);
 const DECIMALS = SPEC.token.decimals;
 const VAULT_ATA = new PublicKey(SPEC.treasury.ata);
@@ -112,6 +142,29 @@ const conn = new Connection(RPC, 'confirmed');
 // Tolerate an empty/truncated DB (e.g. a crash mid-write): fall back to the last
 // good backup, then to an empty store. NEVER throws — a throw here would 500 every
 // DB-backed endpoint (node status, staking, inference payment).
+/**
+ * One-time data upgrade, not a compatibility alias.
+ *
+ * Rows written before the hub->bridge rename name the same role and the same
+ * machine. This renames them in place; without it a renamed node id starts its
+ * reward history from zero and the accrued uptime is stranded under a key
+ * nothing reads any more. Every request path speaks only the bridge spelling.
+ *
+ * Safe to delete once no deployment's ledger predates the rename — check for
+ * `hostsHub` and `infra-hub-` keys in `positions.json` before removing it.
+ */
+function migrateHubVocabulary(db) {
+  for (const [id, n] of Object.entries(db.nodes || {})) {
+    if (n && n.hostsHub !== undefined && n.hostsBridge === undefined) n.hostsBridge = !!n.hostsHub;
+    if (n && n.deviceKind === 'hub') n.deviceKind = 'bridge';
+    if (id.startsWith('infra-hub-')) {
+      const renamed = `infra-bridge-${id.slice('infra-hub-'.length)}`;
+      if (!db.nodes[renamed]) { db.nodes[renamed] = n; delete db.nodes[id]; }
+    }
+  }
+  return db;
+}
+
 function loadDB() {
   const empty = { positions: {}, usedSignatures: {}, nodes: {}, requests: {} };
   for (const f of [DB_FILE, DB_BAK]) {
@@ -119,7 +172,7 @@ function loadDB() {
       if (!fs.existsSync(f)) continue;
       const raw = fs.readFileSync(f, 'utf8');
       if (!raw.trim()) continue;
-      return JSON.parse(raw);
+      return migrateHubVocabulary(JSON.parse(raw));
     } catch (e) { console.error(`loadDB: ${f} unreadable (${e.message})`); }
   }
   return empty;
@@ -153,8 +206,10 @@ function withLock(key, fn) {
 }
 
 // Operator token-gate: registering/operating a node requires the owner wallet to
-// hold at least this many KVR on-chain (0 disables the gate). Mirrors the hub.
-const MIN_OPERATOR_KVR = Number(process.env.LINKCPP_MIN_OPERATOR_KVR || 0);
+// hold at least this many KVR on-chain (0 disables the gate). Mirrors the bridge.
+const MIN_OPERATOR_KVR = Number(process.env.KVR_MIN_OPERATOR_KVR || 0);
+/** Smallest balance worth settling on chain. See /api/node/claim for why. */
+const MIN_CLAIM = Number(process.env.KVR_MIN_CLAIM || 1);
 async function kvrBalance(owner) {
   try {
     const ata = await getAssociatedTokenAddress(MINT, new PublicKey(owner));
@@ -269,7 +324,7 @@ async function payout(ownerStr, amountWhole) {
 const app = express();
 // 2 MB body cap: the model now serves up to a 128K-token context, and a prompt
 // that large is well over the old 100kb express default (which 413'd ~112 KB
-// coding-agent prompts before they reached the hub). Still bounded to keep the
+// coding-agent prompts before they reached the bridge). Still bounded to keep the
 // unauthenticated surface from accepting unbounded payloads.
 app.use(express.json({ limit: '2mb' }));
 
@@ -293,7 +348,7 @@ app.get('/api/config', (_req, res) => {
     rewardPerUnit: REWARD_PER_UNIT,
     perfTiers: PERF_TIERS,
     gatewayBonus: GATEWAY_BONUS,
-    hubUptimePerHour: HUB_UPTIME_PER_HOUR,
+    bridgeUptimePerHour: BRIDGE_UPTIME_PER_HOUR,
     gatewayUptimePerHour: GATEWAY_UPTIME_PER_HOUR,
     publicUrl: PUBLIC_URL,
     hostOs: HOST_OS,
@@ -393,7 +448,7 @@ app.post('/api/unstake', async (req, res) => {
 });
 
 // ---- node operator rewards -------------------------------------------------
-// A node operator links their wallet to a node, the hub reports the node's
+// A node operator links their wallet to a node, the bridge reports the node's
 // contribution (inference telemetry), and the operator claims accrued KVR.
 
 // Constant-time string compare (avoids leaking token length/prefix via timing).
@@ -403,14 +458,16 @@ function ctEq(a, b) {
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
 // A reporter trusted to assert REWARD-AFFECTING facts: contribution units, infra
-// roles (hostsHub/hostsGateway), and the perf tier. ONLY the M2M service token (used
-// by the hub contribution poll) or an authenticated admin qualifies — NEVER an
+// roles (hostsBridge/hostsGateway), and the perf tier. ONLY the M2M service token (used
+// by the bridge contribution poll) or an authenticated admin qualifies — NEVER an
 // anonymous client, even in open LAN mode, because these facts directly mint
 // claimable KVR. The legit sources are in-process (reportInfraNodes) or the
-// service-token hub poll (reportInferenceContribution); a wallet linking its own
+// service-token bridge poll (reportInferenceContribution); a wallet linking its own
 // node still registers freely, it just can't self-assert rewards.
+const SERVICE_TOKEN_HEADERS = ['x-kvasir-service-token'];
+
 function trustedReporter(req) {
-  if (HUB_SERVICE_TOKEN && ctEq(req.headers['x-linkcpp-service-token'], HUB_SERVICE_TOKEN)) return true;
+  if (BRIDGE_SERVICE_TOKEN && SERVICE_TOKEN_HEADERS.some((h) => ctEq(req.headers[h], BRIDGE_SERVICE_TOKEN))) return true;
   return !!adminWallet(req);
 }
 
@@ -420,7 +477,7 @@ const normOs = (v) => (OS_CATEGORIES.includes(String(v || '').toLowerCase()) ? S
 const normAccel = (v) => (['cpu', 'gpu', 'npu'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'cpu');
 
 app.post('/api/node/register', async (req, res) => {
-  const { nodeId, owner, os, deviceKind, accelerator, label, perfScore, backend, mode, hostsGateway, hostsHub } = req.body || {};
+  const { nodeId, owner, os, deviceKind, accelerator, label, perfScore, backend, mode, hostsGateway, hostsBridge } = req.body || {};
   if (!nodeId || !owner) return res.status(400).json({ error: 'nodeId, owner required' });
   if (MIN_OPERATOR_KVR > 0) {
     const bal = await kvrBalance(owner);
@@ -432,25 +489,53 @@ app.post('/api/node/register', async (req, res) => {
   db.nodes = db.nodes || {};
   const n = db.nodes[nodeId] || {
     owner, contributedUnits: 0, effectiveUnits: 0, pendingRewards: 0, claimedTotal: 0,
-    hostsGateway: false, hostsHub: false, uptimeRewards: 0,
+    hostsGateway: false, hostsBridge: false, uptimeRewards: 0,
     registeredAt: nowSec(), lastReport: null, lastUptimeAt: nowSec(),
   };
+  // Reward-affecting fields (perf tier, infra roles) are honored ONLY from a trusted
+  // reporter — otherwise a node could self-assert S-tier / bridge-host and mint rewards.
+  const trusted = trustedReporter(req);
+
+  // A node id that is holding value may not change hands. Registering is an
+  // upsert keyed on nodeId and node ids are public at /api/node/all, so without
+  // this a stranger could re-register someone else's id under their own wallet
+  // and then claim its pendingRewards — `infra-bridge-*` carries the largest
+  // balance on the network.
+  //
+  // Narrow on purpose. An Android or iOS nodeId is derived from the device, not
+  // from the wallet (`android-<ANDROID_ID>`), so a person who switches wallets
+  // in the app re-registers the same id under a new owner — an honest move that
+  // a blanket rule would lock out of their own phone. Refusing only when there
+  // is something to take keeps that working: a fresh device has no pending
+  // balance and no infra role. (The desktop derives its id from the wallet
+  // instead, so it never lands here at all.) A trusted reporter may always
+  // re-point, which is how reportInfraNodes() follows a bridge whose operator
+  // wallet changed.
+  const existing = db.nodes[nodeId];
+  if (existing && existing.owner && existing.owner !== owner && !trusted) {
+    const holdsValue = (existing.pendingRewards || 0) > 0
+      || existing.hostsBridge || existing.hostsGateway;
+    if (holdsValue) {
+      return res.status(403).json({ error: 'nodeId is registered to another owner and has an unclaimed balance or an infra role' });
+    }
+  }
   n.owner = owner;
   n.os = normOs(os != null ? os : n.os);
   n.deviceKind = deviceKind || n.deviceKind || 'unknown';
   n.accelerator = normAccel(accelerator != null ? accelerator : n.accelerator);
   n.label = label || n.label || nodeId;
-  // Reward-affecting fields (perf tier, infra roles) are honored ONLY from a trusted
-  // reporter — otherwise a node could self-assert S-tier / hub-host and mint rewards.
-  const trusted = trustedReporter(req);
   // Performance re-scoring: node advertises its measured decode throughput.
   if (trusted && perfScore != null) n.perfScore = Number(perfScore);
   if (backend != null) n.backend = String(backend);
   if (mode != null) n.mode = String(mode);
-  accrueUptime(n, nowSec()); // credit elapsed infra uptime under the CURRENT roles first
+  // Credit elapsed infra uptime under the CURRENT roles first — but only on the
+  // trusted path, for the same reason as the heartbeat: otherwise re-registering
+  // an id is a way to pay an infra node that is not answering. For an ordinary
+  // device both role flags are false and this credited zero regardless.
+  if (trusted) accrueUptime(n, nowSec());
   if (trusted && hostsGateway != null) n.hostsGateway = !!hostsGateway;
-  if (trusted && hostsHub != null) n.hostsHub = !!hostsHub;
-  const pt = perfTier(n.perfScore);
+  if (trusted && hostsBridge != null) n.hostsBridge = !!hostsBridge;
+  const pt = tierFor(n);
   n.tier = pt.tier;
   n.perfMultiplier = pt.mult;
   db.nodes[nodeId] = n;
@@ -460,31 +545,49 @@ app.post('/api/node/register', async (req, res) => {
     label: n.label, perfScore: n.perfScore || 0, backend: n.backend || null, mode: n.mode || null,
     tier: n.tier, perfMultiplier: n.perfMultiplier,
     hostsGateway: !!n.hostsGateway, gatewayBonus: n.hostsGateway ? GATEWAY_BONUS : 1,
-    hostsHub: !!n.hostsHub, hubUptimePerHour: HUB_UPTIME_PER_HOUR, gatewayUptimePerHour: GATEWAY_UPTIME_PER_HOUR,
+    hostsBridge: !!n.hostsBridge, bridgeUptimePerHour: BRIDGE_UPTIME_PER_HOUR, gatewayUptimePerHour: GATEWAY_UPTIME_PER_HOUR,
     uptimeRewards: n.uptimeRewards || 0, pendingRewards: n.pendingRewards || 0,
   });
 });
 
 // Liveness heartbeat from a connected device.
 app.post('/api/node/heartbeat', (req, res) => {
-  const { nodeId, hostsGateway, hostsHub } = req.body || {};
+  const { nodeId, hostsGateway, hostsBridge } = req.body || {};
   if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
   const db = loadDB();
   const n = (db.nodes || {})[nodeId];
   if (!n) return res.status(404).json({ error: 'node not registered' });
   const now = nowSec();
-  accrueUptime(n, now); // credit uptime for the interval that just elapsed, then update roles
   // Infra roles drive uptime KVR, so only a trusted reporter may change them here.
-  if (trustedReporter(req)) {
+  const trusted = trustedReporter(req);
+  if (trusted) {
+    // Credit the interval that just elapsed BEFORE refreshing the roles, so time
+    // is always paid at the rate that was actually in force during it.
+    //
+    // Paying only on the trusted path closes the last way to be paid for
+    // presence you did not have. Roles were already unforgeable — register() and
+    // the branch below both refuse to set hostsBridge/hostsGateway for an
+    // untrusted caller — but accrual itself used to run for anyone who could
+    // name a node, and node ids are public at /api/node/all. So a third party
+    // could keep an infra node on the payroll by heartbeating it, which is
+    // exactly the property reportInfraNodes() exists to prevent: it probes the
+    // bridge and credits it "only while the bridge actually answers".
+    //
+    // Nothing legitimate is lost. Uptime pays only hostsBridge/hostsGateway
+    // nodes, and those are credited in-process by reportInfraNodes(), never
+    // through this endpoint. For every ordinary device both flags are false, so
+    // this call always credited zero for them anyway — a phone or a desktop
+    // sees no change.
+    accrueUptime(n, now);
     if (hostsGateway != null) n.hostsGateway = !!hostsGateway; // reflect current gateway-host state
-    if (hostsHub != null) n.hostsHub = !!hostsHub;             // reflect current hub-host state
+    if (hostsBridge != null) n.hostsBridge = !!hostsBridge;          // reflect current bridge-host state
   }
   n.lastReport = now;
   db.nodes[nodeId] = n;
   saveDB(db);
   res.json({
     nodeId, lastReport: n.lastReport,
-    hostsGateway: !!n.hostsGateway, hostsHub: !!n.hostsHub,
+    hostsGateway: !!n.hostsGateway, hostsBridge: !!n.hostsBridge,
     uptimeRewards: n.uptimeRewards || 0, pendingRewards: n.pendingRewards || 0,
   });
 });
@@ -502,9 +605,35 @@ app.post('/api/node/remove', (req, res) => {
   res.json({ removed: nodeId });
 });
 
-// Called by the linkcpp hub (or a reporter) to credit a node's contribution.
+/**
+ * Credit a node for raw work.
+ *
+ * Both callers — the hub's push and the contribution poller's delta — used to
+ * carry their own copy of this arithmetic. They agreed, which is exactly how
+ * two copies stay convincing right up until one of them is edited: the tier
+ * multiplier, the gateway bonus and the per-unit rate decide what a node is
+ * paid, so they are computed in one place and nowhere else.
+ */
+function creditContribution(node, rawUnits, at = nowSec()) {
+  const raw = Number(rawUnits);
+  if (!Number.isFinite(raw) || raw <= 0) return { raw: 0, effective: 0, multiplier: 1, gatewayBonus: 1 };
+  const multiplier = tierFor(node).mult;
+  const gatewayBonus = node.hostsGateway ? GATEWAY_BONUS : 1;
+  const effective = raw * multiplier * gatewayBonus;
+  // Rounded on the way into the ledger. Ten units credited at once and the same
+  // ten credited in two reports are the same work and must not end up as
+  // 7 and 6.999999999999999 — a difference that is invisible until someone
+  // reconciles two totals and finds they disagree.
+  node.contributedUnits = round6((node.contributedUnits || 0) + raw);
+  node.effectiveUnits = round6((node.effectiveUnits || 0) + effective);
+  node.pendingRewards = round6((node.pendingRewards || 0) + effective * REWARD_PER_UNIT);
+  node.lastReport = at;
+  return { raw, effective, multiplier, gatewayBonus };
+}
+
+// Called by the p4 bridge (or a reporter) to credit a node's contribution.
 app.post('/api/node/contribution', (req, res) => {
-  // Contribution units mint claimable KVR, so only the hub/reporter (service token)
+  // Contribution units mint claimable KVR, so only the bridge/reporter (service token)
   // or an admin may credit them — never an anonymous client.
   if (!trustedReporter(req)) return res.status(401).json({ error: 'service token or admin required' });
   const { nodeId, units } = req.body || {};
@@ -514,21 +643,14 @@ app.post('/api/node/contribution', (req, res) => {
   const n = db.nodes[nodeId];
   if (!n) return res.status(404).json({ error: 'node not registered' });
   accrueUptime(n, nowSec()); // infra uptime accrues alongside inference (summed)
-  // Re-score raw work by the node's performance multiplier, then apply the gateway-host
-  // bonus if this node also keeps the gateway online, before crediting reward.
-  const mult = n.perfMultiplier || perfTier(n.perfScore).mult;
-  const gwBonus = n.hostsGateway ? GATEWAY_BONUS : 1;
-  const raw = Number(units);
-  const eff = raw * mult * gwBonus;
-  n.contributedUnits += raw;
-  n.effectiveUnits = (n.effectiveUnits || 0) + eff;
-  n.pendingRewards += eff * REWARD_PER_UNIT;
-  n.lastReport = nowSec();
+  const credit = creditContribution(n, units);
+  const mult = credit.multiplier;
+  const gwBonus = credit.gatewayBonus;
   db.nodes[nodeId] = n;
   saveDB(db);
   res.json({
     nodeId, contributedUnits: n.contributedUnits, effectiveUnits: n.effectiveUnits,
-    perfMultiplier: mult, tier: n.tier || perfTier(n.perfScore).tier,
+    perfMultiplier: mult, tier: n.tier || tierFor(n).tier,
     hostsGateway: !!n.hostsGateway, gatewayBonus: gwBonus,
     pendingRewards: n.pendingRewards, lastReport: n.lastReport,
   });
@@ -559,7 +681,7 @@ app.get('/api/node/status/:owner', (req, res) => {
       if (last == null) status = 'registered';
       else if (now - last < 300) status = 'online';
       else if (now - last < 3600) status = 'idle';
-      const pt = perfTier(n.perfScore);
+      const pt = tierFor(n);
       return {
         nodeId, status,
         os: n.os || 'unknown',
@@ -570,10 +692,10 @@ app.get('/api/node/status/:owner', (req, res) => {
         backend: n.backend || null,
         mode: n.mode || null,
         tier: n.tier || pt.tier,
-        perfMultiplier: n.perfMultiplier || pt.mult,
+        perfMultiplier: n.perfMultiplier != null ? n.perfMultiplier : pt.mult,
         hostsGateway: !!n.hostsGateway,
         gatewayBonus: n.hostsGateway ? GATEWAY_BONUS : 1,
-        hostsHub: !!n.hostsHub,
+        hostsBridge: !!n.hostsBridge,
         uptimeRewards: n.uptimeRewards || 0,
         contributedUnits: n.contributedUnits,
         effectiveUnits: n.effectiveUnits || 0,
@@ -605,7 +727,7 @@ app.get('/api/node/all', (_req, res) => {
     if (last == null) status = 'registered';
     else if (now - last < 300) status = 'online';
     else if (now - last < 3600) status = 'idle';
-    const pt = perfTier(n.perfScore);
+    const pt = tierFor(n);
     const owner = String(n.owner || '');
     return {
       nodeId, status,
@@ -618,7 +740,7 @@ app.get('/api/node/all', (_req, res) => {
       tier: n.tier || pt.tier,
       perfMultiplier: n.perfMultiplier || pt.mult,
       hostsGateway: !!n.hostsGateway,
-      hostsHub: !!n.hostsHub,
+      hostsBridge: !!n.hostsBridge,
       effectiveUnits: n.effectiveUnits || 0,
       uptimeRewards: n.uptimeRewards || 0,
       pendingRewards: n.pendingRewards || 0,
@@ -647,6 +769,19 @@ app.post('/api/node/claim', async (req, res) => {
       const db = loadDB();
       const summary = operatorRewards(db, owner);
       if (summary.pending <= 1e-9) { const e = new Error('no rewards to claim'); e.status = 400; throw e; }
+      // A floor under a payout, because this endpoint takes a wallet address and
+      // nothing else — no signature, no key — so anyone may trigger anyone's
+      // settlement. The money still goes to its rightful owner, but each payout
+      // is a transaction the treasury pays for, and without a floor a third
+      // party can drain that fee over and over by claiming a few thousandths of
+      // a KVR the moment it accrues. Rewards are not lost by waiting: they keep
+      // accumulating until they are worth a transaction.
+      if (summary.pending < MIN_CLAIM) {
+        const e = new Error(
+          `below the minimum claim of ${MIN_CLAIM} ${SPEC.token.symbol} `
+          + `(${summary.pending.toFixed(6)} pending) — rewards keep accruing until then`);
+        e.status = 400; throw e;
+      }
 
       // Serialized by withLock(owner): pay out first, then zero the claimed rewards.
       // Without the lock two concurrent claims both read `pending` and both pay it.
@@ -675,6 +810,26 @@ app.post('/api/node/claim', async (req, res) => {
 // pay-per-inference flow. Pays from the treasury (ADMIN), same as claim/payout.
 const FAUCET_AMOUNT = Number(process.env.KVR_FAUCET_AMOUNT || 100);
 const FAUCET_COOLDOWN_MS = Number(process.env.KVR_FAUCET_COOLDOWN_SEC || 86400) * 1000;
+/**
+ * How many never-before-seen addresses the faucet may open a token account for.
+ *
+ * This is the one endpoint on the service that spends the treasury's SOL at the
+ * request of a stranger. The KVR itself is devnet play money, but `payout()`
+ * creates the recipient's associated token account when it does not exist, and
+ * the treasury pays that account's rent — ~0.001488 SOL, every time, for an
+ * address nobody has to prove anything about. The per-address cooldown does not
+ * bound it: an attacker generates a fresh keypair per request, so the ceiling is
+ * the treasury's whole balance (at today's 8.5 SOL, about 5,700 addresses).
+ *
+ * Requiring a token account to already exist would bound it perfectly and also
+ * break the thing the faucet is for: the wallet apps open an account for a
+ * RECIPIENT they send to, never for themselves, so a developer with a brand-new
+ * wallet would be told to fund an account they have no way to open. A budget
+ * keeps that path working for real newcomers and caps what a flood can cost.
+ * Addresses that already hold a token account cost only the transaction fee and
+ * are never refused by this.
+ */
+const FAUCET_NEW_ACCOUNT_BUDGET = Number(process.env.KVR_FAUCET_NEW_ACCOUNT_BUDGET || 500);
 
 app.post('/api/faucet', async (req, res) => {
   try {
@@ -696,7 +851,23 @@ app.post('/api/faucet', async (req, res) => {
         const e = new Error(`rate limited — already funded, try again in ~${Math.ceil(wait / 3600000)}h`);
         e.status = 429; throw e;
       }
+      // Opening a token account spends treasury SOL; topping up an existing one
+      // does not. Only the first kind is budgeted. Checked before the transfer so
+      // a refusal costs nothing, and counted after it so a failed transfer does
+      // not consume budget it never spent.
+      const ata = await getAssociatedTokenAddress(MINT, pubkey);
+      const exists = await conn.getAccountInfo(ata).catch(() => null);
+      if (!exists) {
+        db.faucetAccountsOpened = db.faucetAccountsOpened || 0;
+        if (db.faucetAccountsOpened >= FAUCET_NEW_ACCOUNT_BUDGET) {
+          const e = new Error(
+            'the faucet has opened as many new token accounts as it is funded to open. '
+            + 'An address that already holds a KVR token account can still be topped up.');
+          e.status = 429; throw e;
+        }
+      }
       const sig = await payout(addr, FAUCET_AMOUNT);
+      if (!exists) db.faucetAccountsOpened = (db.faucetAccountsOpened || 0) + 1;
       db.faucet[addr] = now;
       saveDB(db);
       return { address: addr, amount: FAUCET_AMOUNT, symbol: SPEC.token.symbol, signature: sig, cluster: SPEC.cluster };
@@ -709,13 +880,10 @@ app.post('/api/faucet', async (req, res) => {
 
 // ---- Phase 2: inference usage payment (Solana Pay style) -------------------
 // The wallet pays KVR to the treasury for an inference request; this gateway
-// verifies the on-chain payment and returns the result. Inference itself is a
-// devnet mock — in production the linkcpp hub serves the model after payment.
+// verifies the on-chain payment and returns the result. Every servable model
+// comes from the p4 bridge: there is no mock model and no mock answer, because
+// either would take a payment for text no model produced.
 
-const MODELS = [
-  { id: 'linkcpp-fast', name: 'linkcpp Fast', basePrice: 0.5, perToken: 0.01, estOut: 160 },
-  { id: 'linkcpp-pro', name: 'linkcpp Pro', basePrice: 2.0, perToken: 0.03, estOut: 320 },
-];
 const round6 = (v) => Math.round(v * 1e6) / 1e6;
 // ~4 chars/token heuristic (matches typical BPE for mixed text).
 function estimateTokens(text) { return Math.max(1, Math.ceil((text || '').length / 4)); }
@@ -726,40 +894,23 @@ function quoteFor(m, prompt) {
   const estTotalTokens = estPromptTokens + estCompletionTokens;
   return { priceToken: round6(m.basePrice + estTotalTokens * m.perToken), estPromptTokens, estCompletionTokens, estTotalTokens };
 }
-/** Actual usage after generation: real prompt + completion token counts. */
-function usageFor(m, prompt, result) {
-  const promptTokens = estimateTokens(prompt);
-  const completionTokens = estimateTokens(result);
-  const totalTokens = promptTokens + completionTokens;
-  return { promptTokens, completionTokens, totalTokens, costToken: round6(m.basePrice + totalTokens * m.perToken) };
-}
-function mockInfer(modelId, prompt) {
-  const m = MODELS.find((x) => x.id === modelId) || MODELS[0];
-  // Markdown so the chat client can render it richly. Devnet mock.
-  return `### ${m.name}\n\n`
-    + `> ${String(prompt).slice(0, 160)}\n\n`
-    + `요청을 접수해 처리했습니다. 주요 포인트는 다음과 같습니다:\n\n`
-    + `- **온체인 결제 확인됨** — KVR 전송이 트레저리에서 검증되었습니다.\n`
-    + `- **분산 추론 실행** — linkcpp 허브가 노드에 작업을 분배합니다.\n`
-    + `- **사용량 정산** — 실제 사용 토큰 기준으로 청구됩니다.\n\n`
-    + '```python\n# linkcpp inference (mock)\nresult = linkcpp.run(model="' + m.id + '", prompt=...)\n```\n\n'
-    + '*현재는 결제·정산 흐름 검증용 목업입니다. 실제 응답은 결제 확인 후 linkcpp 허브가 생성합니다.*';
-}
-
-// --- real linkcpp hub bridge (multi-hub aggregation) ------------------------
-// Inference hubs advertise their served models through this gateway. The
-// statically-configured LINKCPP_HUB_URL is always included; other hubs (incl.
-// on different networks) join by POSTing /api/pay/hub/register periodically.
-// The model list aggregates every reachable hub; each model routes inference to
-// its own hub. Falls back to the static demo catalog when no hub is reachable.
-const LINKCPP_HUB_URL = (process.env.LINKCPP_HUB_URL || '').replace(/\/+$/, '');
-// Shared secret so the gateway can reach a hub that has SIWS auth enabled (M2M).
-const HUB_SERVICE_TOKEN = (process.env.LINKCPP_HUB_SERVICE_TOKEN || '').trim();
-const hubHeaders = (extra) => Object.assign(HUB_SERVICE_TOKEN ? { 'X-Linkcpp-Service-Token': HUB_SERVICE_TOKEN } : {}, extra || {});
+// --- p4 bridge (multi-bridge aggregation) -----------------------------------
+// Inference bridges advertise their served models through this gateway. The
+// statically-configured BRIDGE_URL is always included; other bridges (incl.
+// on different networks) join by POSTing /api/pay/bridge/register periodically
+// The model list aggregates every reachable bridge; each model routes inference
+// to its own bridge. When none is reachable the pool is empty — there is no demo
+// catalogue to fall back to. The backend is the p4 bridge (p4bridge/server.js),
+// which serves this contract on top of the p4 engine.
+const BRIDGE_URL = (process.env.P4_BRIDGE_URL || '').replace(/\/+$/, '');
+const BACKEND_ENGINE = 'p4';
+// Shared secret so the gateway can reach a backend that has SIWS auth enabled (M2M).
+const BRIDGE_SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN || '').trim();
+const bridgeHeaders = (extra) => Object.assign(BRIDGE_SERVICE_TOKEN ? { 'X-Kvasir-Service-Token': BRIDGE_SERVICE_TOKEN } : {}, extra || {});
 // One-time bootstrap seed only. Runtime pricing lives in db.pricing (DB), which
 // only the genesis wallet may change (SIWS + fresh TOTP, from the desktop app).
 const DEFAULT_PRICING = { basePrice: 0.5, perToken: 0.01, estOut: 256 };
-const HUB_TTL_MS = Number(process.env.LINKCPP_HUB_TTL_MS || 90000);
+const BRIDGE_TTL_MS = Number(process.env.P4_BRIDGE_TTL_MS || 90000);
 
 // ---- model pricing store (genesis-governed, DB-backed) ---------------------
 // The genesis (governance) wallet is the only principal allowed to change
@@ -792,7 +943,7 @@ function pricingFor(modelId) { return pricingFrom(loadPricing(loadDB()), modelId
 // pull chained through a public relay:
 //
 //   source gateway  --push-->  public relay gateway  <--poll--  follower gateways
-//   (genesis wallet)           (e.g. gate.kvasir-ai.net)        (other remote hubs)
+//   (genesis wallet)           (e.g. gate.kvasir-ai.net)        (other remote bridges)
 //
 // Role is chosen by env; the SOURCE is the default (the genesis wallet's local
 // gateway — no propagation env at all):
@@ -861,22 +1012,22 @@ async function pushPricingToRelays() {
 }
 if (IS_SOURCE) { pushPricingToRelays(); setInterval(pushPricingToRelays, PRICING_SYNC_MS); }
 
-const hubRegistry = new Map(); // hubUrl -> { hubUrl, name, expiresAt }
-function hubKey(url) { return crypto.createHash('sha1').update(url).digest('hex').slice(0, 8); }
-function activeHubUrls() {
+const bridgeRegistry = new Map(); // bridgeUrl -> { bridgeUrl, name, expiresAt }
+function bridgeKey(url) { return crypto.createHash('sha1').update(url).digest('hex').slice(0, 8); }
+function activeBridgeUrls() {
   const urls = [];
-  if (LINKCPP_HUB_URL) urls.push(LINKCPP_HUB_URL);
+  if (BRIDGE_URL) urls.push(BRIDGE_URL);
   const now = Date.now();
-  for (const [url, h] of hubRegistry) {
+  for (const [url, h] of bridgeRegistry) {
     if (h.expiresAt > now) { if (!urls.includes(url)) urls.push(url); }
-    else hubRegistry.delete(url); // expired heartbeat
+    else bridgeRegistry.delete(url); // expired heartbeat
   }
   return urls;
 }
 
-async function fetchModelsFrom(hubUrl) {
+async function fetchModelsFromBridge(bridgeUrl) {
   try {
-    const r = await fetch(`${hubUrl}/api/controllers`, { headers: hubHeaders(), signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`${bridgeUrl}/api/controllers`, { headers: bridgeHeaders(), signal: AbortSignal.timeout(5000) });
     if (!r.ok) return [];
     const d = await r.json();
     const ctrls = Array.isArray(d) ? d : (d.controllers || []);
@@ -884,45 +1035,43 @@ async function fetchModelsFrom(hubUrl) {
     return ctrls
       .filter((c) => c && c.runtime_loaded && (c.serving || c.active_model))
       .map((c) => {
-        const id = `${hubKey(hubUrl)}:${c.id}`; // hub-qualified so ids never collide
+        const id = `${bridgeKey(bridgeUrl)}:${c.id}`; // bridge-qualified so ids never collide
         return {
           id,
-          name: String(c.active_model || c.serving).replace(/\.gguf$/i, ''),
-          hubUrl, cid: c.id, hubModel: c.active_model || c.serving,
+          name: String(c.name || c.active_model || c.serving).replace(/\.gguf$/i, ''),
+          bridgeUrl, cid: c.id, bridgeModel: c.active_model || c.serving,
           ...pricingFrom(pricing, id), // genesis-governed per-model pricing (DB)
         };
       });
   } catch { return []; }
 }
 
-// Aggregate served models across every reachable hub (bootstrap + registered).
-async function fetchHubModels() {
-  const urls = activeHubUrls();
+// Aggregate served models across every reachable bridge (bootstrap + registered).
+async function fetchBridgeModels() {
+  const urls = activeBridgeUrls();
   if (!urls.length) return null;
-  const lists = await Promise.all(urls.map(fetchModelsFrom));
+  const lists = await Promise.all(urls.map(fetchModelsFromBridge));
   const models = lists.flat();
   return models.length ? models : null;
 }
 
-// Active model pool: only the real models the swarm is actually serving. When no
-// hub is serving anything we return an empty pool rather than the demo catalog —
-// showing non-functional "linkcpp Fast/Pro" placeholders in the production app is
-// misleading (they route to a mock, not real inference). The demo MODELS constant
-// is retained only for the legacy mock path; it is never surfaced as available.
+// Active model pool: only the models the swarm is actually serving. A model the
+// app offers is one a bridge is serving, or the pool is empty — there is no
+// placeholder catalogue to fall back to.
 async function resolveModels() {
-  const real = await fetchHubModels();
+  const real = await fetchBridgeModels();
   return (real && real.length) ? real : [];
 }
 
-// ---- infrastructure operator rewards (hub/gateway have no wallet) ----------
-// A hub (and a standalone gateway) is headless — it has no wallet UI, so there's
+// ---- infrastructure operator rewards (bridge/gateway have no wallet) ----------
+// A bridge (and a standalone gateway) is headless — it has no wallet UI, so there's
 // no way for it to earn or for the operator to SEE it. The operator designates the
 // wallet that owns these roles via env; the gateway then auto-registers + heartbeats
-// a node on their behalf. Result: the hub's uptime reward accrues to that wallet AND
+// a node on their behalf. Result: the bridge's uptime reward accrues to that wallet AND
 // the node shows up in that wallet's node monitor. Empty owner => role not reported.
 const INFRA_OWNER = (process.env.KVR_INFRA_OWNER || '').trim();
 const GATEWAY_OWNER = (process.env.KVR_GATEWAY_OWNER || INFRA_OWNER).trim();
-const HUB_OWNER = (process.env.KVR_HUB_OWNER || INFRA_OWNER).trim();
+const BRIDGE_OWNER = (process.env.KVR_BRIDGE_OWNER || INFRA_OWNER).trim();
 const INFRA_REPORT_MS = Number(process.env.KVR_INFRA_REPORT_MS || 30000);
 
 // Register-or-heartbeat an infra node in-process (same uptime accrual as the HTTP paths).
@@ -933,7 +1082,7 @@ function upsertInfraNode(nodeId, owner, roles, label, deviceKind) {
   const now = nowSec();
   const n = db.nodes[nodeId] || {
     owner, contributedUnits: 0, effectiveUnits: 0, pendingRewards: 0, claimedTotal: 0,
-    hostsGateway: false, hostsHub: false, uptimeRewards: 0,
+    hostsGateway: false, hostsBridge: false, uptimeRewards: 0,
     registeredAt: now, lastReport: null, lastUptimeAt: now,
   };
   n.owner = owner;
@@ -943,37 +1092,41 @@ function upsertInfraNode(nodeId, owner, roles, label, deviceKind) {
   n.accelerator = n.accelerator || 'cpu';
   accrueUptime(n, now); // credit elapsed uptime before refreshing role flags
   n.hostsGateway = !!roles.hostsGateway;
-  n.hostsHub = !!roles.hostsHub;
-  n.tier = n.tier || perfTier(0).tier;
-  n.perfMultiplier = n.perfMultiplier || perfTier(0).mult;
+  n.hostsBridge = !!roles.hostsBridge;
+  // Assigned, not defaulted: a stale 'C'/0.7 written before this rule existed
+  // has to be cleared, or a node keeps paying for a measurement it never owed.
+  const ipt = tierFor(n);
+  n.tier = ipt.tier;
+  n.perfMultiplier = ipt.mult;
   n.lastReport = now;
   db.nodes[nodeId] = n;
   saveDB(db);
 }
 
-// Periodic reporter: this gateway host, plus each reachable hub (only credited while
-// the hub actually answers, so a downed hub stops accruing).
+// Periodic reporter: this gateway host, plus each reachable bridge (only credited while
+// the bridge actually answers, so a downed bridge stops accruing).
 async function reportInfraNodes() {
   try {
     if (GATEWAY_OWNER) upsertInfraNode('infra-gateway', GATEWAY_OWNER, { hostsGateway: true }, 'Gateway (this host)', 'gateway');
-    if (LINKCPP_HUB_URL) {
-      // The hub owner is set by the operator in the HUB UI (advertised at /api/runtime).
-      // That takes priority; KVR_HUB_OWNER is only a fallback for older hubs.
-      let owner = HUB_OWNER, up = false;
+    if (BRIDGE_URL) {
+      // The bridge owner is whatever the bridge advertises at /api/runtime, set
+      // by its operator. That takes priority; KVR_BRIDGE_OWNER (or the older
+      // KVR_HUB_OWNER) is only the fallback for a bridge that advertises none.
+      let owner = BRIDGE_OWNER, up = false;
       try {
-        const r = await fetch(`${LINKCPP_HUB_URL}/api/runtime`, { headers: hubHeaders(), signal: AbortSignal.timeout(4000) });
+        const r = await fetch(`${BRIDGE_URL}/api/runtime`, { headers: bridgeHeaders(), signal: AbortSignal.timeout(4000) });
         up = r.ok;
         if (r.ok) { const d = await r.json().catch(() => null); if (d && d.operator_wallet) owner = String(d.operator_wallet); }
       } catch { up = false; }
-      if (up && owner) upsertInfraNode(`infra-hub-${hubKey(LINKCPP_HUB_URL)}`, owner, { hostsHub: true }, `Hub ${LINKCPP_HUB_URL}`, 'hub');
+      if (up && owner) upsertInfraNode(`infra-bridge-${bridgeKey(BRIDGE_URL)}`, owner, { hostsBridge: true }, `Bridge ${BRIDGE_URL}`, 'bridge');
     }
   } catch { /* best-effort */ }
 }
-if (GATEWAY_OWNER || HUB_OWNER || LINKCPP_HUB_URL) { reportInfraNodes(); setInterval(reportInfraNodes, INFRA_REPORT_MS); }
+if (GATEWAY_OWNER || BRIDGE_OWNER || BRIDGE_URL) { reportInfraNodes(); setInterval(reportInfraNodes, INFRA_REPORT_MS); }
 
-// Register (on the operator's behalf) a hub inference node and credit the DELTA of
+// Register (on the operator's behalf) a bridge inference node and credit the DELTA of
 // its cumulative contribution units since the last poll. Monotonic + restart-safe:
-// if the hub's cumulative decreases (hub restarted, counters reset), we rebaseline
+// if the bridge's cumulative decreases (bridge restarted, counters reset), we rebaseline
 // instead of re-crediting from zero.
 function upsertInferenceNode(nodeId, owner, label, info) {
   const db = loadDB();
@@ -981,7 +1134,7 @@ function upsertInferenceNode(nodeId, owner, label, info) {
   const now = nowSec();
   const n = db.nodes[nodeId] || {
     owner, contributedUnits: 0, effectiveUnits: 0, pendingRewards: 0, claimedTotal: 0,
-    hostsGateway: false, hostsHub: false, uptimeRewards: 0,
+    hostsGateway: false, hostsBridge: false, uptimeRewards: 0,
     creditedUnits: 0, registeredAt: now, lastReport: null, lastUptimeAt: now,
   };
   n.owner = owner;
@@ -990,52 +1143,46 @@ function upsertInferenceNode(nodeId, owner, label, info) {
   n.os = info.os || n.os || HOST_OS;
   n.accelerator = info.accelerator || n.accelerator || 'gpu';
   if (info.backend != null) n.backend = String(info.backend);
-  if (info.perfScore != null) { n.perfScore = Number(info.perfScore); const pt = perfTier(n.perfScore); n.tier = pt.tier; n.perfMultiplier = pt.mult; }
-  else { n.tier = n.tier || perfTier(0).tier; n.perfMultiplier = n.perfMultiplier || perfTier(0).mult; }
+  if (info.perfScore != null) n.perfScore = Number(info.perfScore);
+  const pt = tierFor(n);
+  n.tier = pt.tier;
+  n.perfMultiplier = pt.mult;
   const cumulative = Number(info.units || 0);
   let credited = Number(n.creditedUnits || 0);
-  if (cumulative < credited) credited = 0; // hub counters reset -> rebaseline
+  if (cumulative < credited) credited = 0; // bridge counters reset -> rebaseline
   const delta = Math.max(0, cumulative - credited);
-  if (delta > 0) {
-    const mult = n.perfMultiplier || perfTier(n.perfScore).mult;
-    const gwBonus = n.hostsGateway ? GATEWAY_BONUS : 1;
-    const eff = delta * mult * gwBonus;
-    n.contributedUnits = (n.contributedUnits || 0) + delta;
-    n.effectiveUnits = (n.effectiveUnits || 0) + eff;
-    n.pendingRewards = (n.pendingRewards || 0) + eff * REWARD_PER_UNIT;
-    n.lastReport = now;
-  }
+  if (delta > 0) creditContribution(n, delta, now);
   n.creditedUnits = cumulative;
   db.nodes[nodeId] = n;
   saveDB(db);
 }
 
-// Poll the hub for per-node inference contribution and credit each participating node
+// Poll the bridge for per-node inference contribution and credit each participating node
 // (the nodes that actually ran the model). Complements the infra uptime reporter.
 async function reportInferenceContribution() {
-  if (!LINKCPP_HUB_URL) return;
+  if (!BRIDGE_URL) return;
   try {
-    const r = await fetch(`${LINKCPP_HUB_URL}/api/contributions`, { headers: hubHeaders(), signal: AbortSignal.timeout(4000) });
+    const r = await fetch(`${BRIDGE_URL}/api/contributions`, { headers: bridgeHeaders(), signal: AbortSignal.timeout(4000) });
     if (!r.ok) return;
     const d = await r.json().catch(() => null);
     for (const c of ((d && d.contributions) || [])) {
       if (!c.node_id || !c.owner) continue;
-      upsertInferenceNode(`infer-${hubKey(LINKCPP_HUB_URL)}-${c.node_id}`, String(c.owner), c.node_name || c.node_id, {
+      upsertInferenceNode(`infer-${bridgeKey(BRIDGE_URL)}-${c.node_id}`, String(c.owner), c.node_name || c.node_id, {
         units: c.units, backend: c.backend, os: c.os,
         accelerator: c.accelerator || 'gpu', deviceKind: c.device_kind || 'node', perfScore: c.perf_tps,
       });
     }
   } catch { /* best-effort */ }
 }
-if (LINKCPP_HUB_URL) { reportInferenceContribution(); setInterval(reportInferenceContribution, INFRA_REPORT_MS); }
+if (BRIDGE_URL) { reportInferenceContribution(); setInterval(reportInferenceContribution, INFRA_REPORT_MS); }
 
-// Run a real completion on a specific hub's OpenAI-compatible gateway.
-async function hubInfer(hubUrl, cid, hubModel, prompt) {
-  const r = await fetch(`${hubUrl}/c/${cid}/v1/chat/completions`, {
+// Run a real completion on a specific bridge's OpenAI-compatible gateway.
+async function bridgeInfer(bridgeUrl, cid, bridgeModel, prompt) {
+  const r = await fetch(`${bridgeUrl}/c/${cid}/v1/chat/completions`, {
     method: 'POST',
-    headers: hubHeaders({ 'Content-Type': 'application/json' }),
+    headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
-      model: hubModel,
+      model: bridgeModel,
       messages: [{ role: 'user', content: prompt }],
       // Reasoning models (Qwen3.x etc.) emit a hidden "thinking" pass into
       // reasoning_content before message.content. With thinking ON, the token budget
@@ -1054,36 +1201,36 @@ async function hubInfer(hubUrl, cid, hubModel, prompt) {
     // mobile client's request timeout.
     signal: AbortSignal.timeout(180000),
   });
-  if (!r.ok) throw new Error(`hub inference failed (${r.status})`);
+  if (!r.ok) throw new Error(`bridge inference failed (${r.status})`);
   const d = await r.json();
   const msg = (d && d.choices && d.choices[0] && d.choices[0].message) || {};
   const content = msg.content || msg.reasoning_content || '';
   // An empty answer must be an ERROR, not a 200 "success" — otherwise the user is
   // charged KVR for a blank reply. (Should not happen with thinking disabled.)
-  if (!content.trim()) throw new Error('hub returned empty content (thinking overflow?)');
+  if (!content.trim()) throw new Error('bridge returned empty content (thinking overflow?)');
   return { content, usage: (d && d.usage) || null };
 }
 
-// A hub advertises itself (and refreshes its TTL) so its served models appear in
+// A bridge advertises itself (and refreshes its TTL) so its served models appear in
 // the aggregated catalog. Gated when admin auth is on: either an admin session or
-// the shared M2M service token (so external hubs self-register unattended) is
-// required — otherwise anyone could poison the catalog with arbitrary hub URLs.
+// the shared M2M service token (so external bridges self-register unattended) is
+// required — otherwise anyone could poison the catalog with arbitrary bridge URLs.
 function adminOrServiceToken(req) {
   if (!gwauth.authEnabled()) return true; // open in trusted-LAN mode (no allowlist)
-  if (HUB_SERVICE_TOKEN && req.headers['x-linkcpp-service-token'] === HUB_SERVICE_TOKEN) return true;
+  if (BRIDGE_SERVICE_TOKEN && SERVICE_TOKEN_HEADERS.some((h) => ctEq(req.headers[h], BRIDGE_SERVICE_TOKEN))) return true;
   return !!adminWallet(req);
 }
-app.post('/api/pay/hub/register', (req, res) => {
+app.post('/api/pay/bridge/register', (req, res) => {
   if (!adminOrServiceToken(req)) return res.status(401).json({ error: 'admin or service token required' });
-  const { hubUrl, name } = req.body || {};
-  if (!hubUrl || !/^https?:\/\//i.test(String(hubUrl))) return res.status(400).json({ error: 'hubUrl (http/https) required' });
-  const url = String(hubUrl).replace(/\/+$/, '');
-  hubRegistry.set(url, { hubUrl: url, name: name || '', expiresAt: Date.now() + HUB_TTL_MS });
-  res.json({ ok: true, hubUrl: url, ttlMs: HUB_TTL_MS, hubs: activeHubUrls().length });
+  const { bridgeUrl, name } = req.body || {};
+  if (!bridgeUrl || !/^https?:\/\//i.test(String(bridgeUrl))) return res.status(400).json({ error: 'bridgeUrl (http/https) required' });
+  const url = String(bridgeUrl).replace(/\/+$/, '');
+  bridgeRegistry.set(url, { bridgeUrl: url, name: name || '', expiresAt: Date.now() + BRIDGE_TTL_MS });
+  res.json({ ok: true, bridgeUrl: url, ttlMs: BRIDGE_TTL_MS, bridges: activeBridgeUrls().length });
 });
 
-app.get('/api/pay/hubs', (_req, res) => {
-  res.json({ ttlMs: HUB_TTL_MS, hubs: activeHubUrls() });
+app.get('/api/pay/bridges', (_req, res) => {
+  res.json({ ttlMs: BRIDGE_TTL_MS, bridges: activeBridgeUrls() });
 });
 
 // Public read of the governed pricing so follower gateways can adopt it (pricing
@@ -1127,6 +1274,51 @@ app.get('/api/pay/models', async (_req, res) => {
   });
 });
 
+// How long a pay-per-call request keeps what the user actually wrote.
+//
+// The request row is a billing record — who paid, how much, which signature —
+// and that has to stay auditable. The prompt and the answer are not billing
+// records; they were kept only because nothing removed them. After this window
+// the content is dropped and the accounting row remains, so a refund or a
+// dispute can still be settled from it. Zero disables the sweep.
+const REQUEST_CONTENT_TTL_SEC = Number(process.env.KVR_REQUEST_CONTENT_TTL_SEC ?? 30 * 24 * 3600);
+
+/** Drop prompts and answers past the window; keep the row that money moved on. */
+function sweepRequestContent(db, now = nowSec()) {
+  if (!REQUEST_CONTENT_TTL_SEC) return 0;
+  let redacted = 0;
+  for (const record of Object.values(db.requests || {})) {
+    const at = Number(record.createdAt || 0);
+    if (!at || now - at < REQUEST_CONTENT_TTL_SEC) continue;
+    if (record.prompt === undefined && record.result === undefined) continue;
+    delete record.prompt;
+    delete record.result;
+    record.contentRedactedAt = now;
+    redacted += 1;
+  }
+  return redacted;
+}
+
+// Once at startup as well: a service that is restarted more often than the
+// interval would otherwise never reach a sweep.
+const sweepNow = () => {
+  try {
+    const db = loadDB();
+    const redacted = sweepRequestContent(db);
+    if (redacted) { saveDB(db); console.log(`[retention] redacted ${redacted} request(s) past the content window`); }
+  } catch (error) { console.warn(`[retention] sweep failed: ${error.message}`); }
+};
+setTimeout(sweepNow, 2_000).unref?.();
+
+// Hourly is often enough for a 30-day window and cheap enough not to matter.
+setInterval(() => {
+  try {
+    const db = loadDB();
+    const redacted = sweepRequestContent(db);
+    if (redacted) { saveDB(db); console.log(`[retention] redacted ${redacted} request(s) past the content window`); }
+  } catch (error) { console.warn(`[retention] sweep failed: ${error.message}`); }
+}, 3600_000).unref?.();
+
 app.post('/api/pay/quote', async (req, res) => {
   try {
     const { model, prompt } = req.body || {};
@@ -1138,8 +1330,9 @@ app.post('/api/pay/quote', async (req, res) => {
     const requestId = crypto.randomUUID();
     const db = loadDB();
     db.requests = db.requests || {};
+    sweepRequestContent(db);
     db.requests[requestId] = {
-      model: m.id, name: m.name, hubUrl: m.hubUrl || null, cid: m.cid || null, hubModel: m.hubModel || null,
+      model: m.id, name: m.name, bridgeUrl: m.bridgeUrl || null, cid: m.cid || null, bridgeModel: m.bridgeModel || null,
       basePrice: m.basePrice, perToken: m.perToken, estOut: m.estOut,
       prompt, priceToken: q.priceToken, recipient: TREASURY_OWNER, paid: false, createdAt: nowSec(),
     };
@@ -1182,14 +1375,14 @@ app.post('/api/inference', async (req, res) => {
       r.signature = signature;
       r.payer = payer;
       db.usedSignatures[signature] = { kind: 'payment', requestId, amount: r.priceToken, at: nowSec() };
-      if (r.hubUrl && r.cid) {
-        // Real inference on the model's own hub; bill on the hub's actual token usage.
+      if (r.bridgeUrl && r.cid) {
+        // Real inference on the model's own bridge; bill on the bridge's actual token usage.
         // The KVR already settled on-chain (client-signed transfer) BEFORE this call,
-        // so a hub failure (5xx / empty) would otherwise charge for nothing. Refund
+        // so a bridge failure (5xx / empty) would otherwise charge for nothing. Refund
         // the payer from the treasury and surface a 502 so the client isn't billed.
         let res2;
         try {
-          res2 = await hubInfer(r.hubUrl, r.cid, r.hubModel, r.prompt);
+          res2 = await bridgeInfer(r.bridgeUrl, r.cid, r.bridgeModel, r.prompt);
         } catch (ie) {
           let refundSig = null;
           try { if (payer) refundSig = await payout(payer, r.priceToken); } catch (re) { console.error(`refund FAILED for ${requestId} payer=${payer}: ${re.message}`); }
@@ -1207,8 +1400,20 @@ app.post('/api/inference', async (req, res) => {
         const ct = res2.usage && res2.usage.completion_tokens != null ? res2.usage.completion_tokens : estimateTokens(r.result);
         r.usage = { promptTokens: pt, completionTokens: ct, totalTokens: pt + ct, costToken: round6(r.basePrice + (pt + ct) * r.perToken) };
       } else {
-        r.result = mockInfer(r.model, r.prompt);
-        r.usage = usageFor({ basePrice: r.basePrice, perToken: r.perToken }, r.prompt, r.result); // actual tokens used
+        // No bridge behind this model. The KVR already settled on-chain before
+        // this call, so the payer is refunded rather than billed for nothing.
+        let refundSig = null;
+        try { if (payer) refundSig = await payout(payer, r.priceToken); }
+        catch (re) { console.error(`refund FAILED for ${requestId} payer=${payer}: ${re.message}`); }
+        r.failed = true; r.refunded = !!refundSig; r.refundSig = refundSig;
+        r.error = 'model is not served by any bridge';
+        db.usedSignatures[signature].refunded = !!refundSig;
+        db.requests[requestId] = r;
+        saveDB(db);
+        const e = new Error(refundSig
+          ? `inference failed (${r.error}); ${r.priceToken} KVR refunded to ${payer} (${refundSig})`
+          : `inference failed (${r.error}); refund could not be issued automatically${payer ? '' : ' (payer not derivable)'}`);
+        e.status = 502; throw e;
       }
       db.requests[requestId] = r;
       saveDB(db);
@@ -1223,7 +1428,7 @@ app.post('/api/inference', async (req, res) => {
 // ---- gateway admin auth (SIWS + TOTP 2FA) ---------------------------------
 // A wallet-address owner from the KVR_ADMIN_WALLETS allowlist proves ownership by
 // signing a nonce (first factor), then a TOTP code if enrolled (second factor).
-// This gates the gateway's administrative surface (network node registry, hub
+// This gates the gateway's administrative surface (network node registry, bridge
 // catalog). User settlement flows (stake/claim/register) are intentionally NOT
 // gated. Admin 2FA enrollment is persisted in the DB under `adminAuth`.
 const ADMIN_COOKIE = 'kvr_admin_session';
@@ -1402,7 +1607,7 @@ app.post('/api/admin/pricing/relays/remove', requireAdmin, requireLocalDesktop, 
 // ==== prepaid credits + OpenAI-compatible endpoint (whitelist + prepaid) ======
 // A whitelisted wallet prepays KVR (genesis grant or on-chain deposit) into a
 // credit balance, mints an API key by signing (SIWS), and calls a native
-// OpenAI-compatible endpoint that streams straight from the hub (stream + tools).
+// OpenAI-compatible endpoint that streams straight from the bridge (stream + tools).
 // Each call debits the balance by the governed per-token price — no per-request
 // quote/pay handshake. This is the reporter's "whitelist / fund our wallet" path.
 const CREDIT_WHITELIST = (process.env.KVR_CREDIT_WHITELIST || '')
@@ -1472,7 +1677,9 @@ function bearerWallet(req) {
   const m = String(req.get('authorization') || '').match(/^Bearer\s+(.+)$/i);
   if (!m) return null;
   const ent = loadApiKeys(loadDB())[hashKey(m[1].trim())];
-  return ent ? ent.wallet : null;
+  // A revoked key is kept, not deleted: the record is what lets an operator see
+  // that a key existed, when it was withdrawn, and that it stopped working.
+  return ent && !ent.revokedAt ? ent.wallet : null;
 }
 function creditAudit(db, entry) {
   db.creditAudit = db.creditAudit || [];
@@ -1522,16 +1729,69 @@ app.post('/api/credits/register', (req, res) => {
   res.json({ ok: true, wallet: w, whitelisted: true, added });
 });
 app.post('/api/credits/apikey', (req, res) => {
-  const { wallet, nonce, signature, label } = req.body || {};
+  const { wallet, nonce, signature, label, replace } = req.body || {};
   const w = String(wallet || '').trim();
   if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
   if (!creditWhitelisted(w)) return res.status(403).json({ error: 'wallet is not whitelisted' });
   const key = 'kvr-' + crypto.randomBytes(24).toString('base64url');
   const db = loadDB();
-  loadApiKeys(db)[hashKey(key)] = { wallet: w, label: String(label || ''), createdAt: nowSec() };
+  const keys = loadApiKeys(db);
+  // Reissuing used to leave every earlier key working, which makes "I rotated
+  // it" mean nothing. The caller says whether this replaces the old ones.
+  let replaced = 0;
+  if (replace) {
+    for (const entry of Object.values(keys)) {
+      if (entry.wallet === w && !entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'replaced'; replaced += 1; }
+    }
+  }
+  keys[hashKey(key)] = { wallet: w, label: String(label || ''), createdAt: nowSec() };
   creditAcct(db, w);
   saveDB(db);
-  res.json({ apiKey: key, wallet: w, note: 'store this key now; it is not shown again' });
+  res.json({
+    apiKey: key, wallet: w, replaced,
+    note: 'store this key now; it is not shown again',
+  });
+});
+
+/** Withdraw a key, or every key, for a wallet that proves it owns them. */
+app.post('/api/credits/apikey/revoke', (req, res) => {
+  const { wallet, nonce, signature, apiKey, all } = req.body || {};
+  const w = String(wallet || '').trim();
+  if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
+  if (!apiKey && !all) return res.status(400).json({ error: 'apiKey or all required' });
+  const db = loadDB();
+  const keys = loadApiKeys(db);
+  let revoked = 0;
+  if (all) {
+    for (const entry of Object.values(keys)) {
+      if (entry.wallet === w && !entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'owner'; revoked += 1; }
+    }
+  } else {
+    // The key itself is presented, never its hash: the server stores only the
+    // hash, so this proves the caller holds the key rather than a list of them.
+    const entry = keys[hashKey(String(apiKey).trim())];
+    // A key belonging to another wallet reads as "not found" — this must not
+    // become a way to discover whether someone else's key exists.
+    if (!entry || entry.wallet !== w) return res.status(404).json({ error: 'no such key for this wallet' });
+    if (!entry.revokedAt) { entry.revokedAt = nowSec(); entry.revokedBy = 'owner'; revoked = 1; }
+  }
+  saveDB(db);
+  res.json({ ok: true, wallet: w, revoked });
+});
+
+/** What keys this wallet has, by hash prefix — never the keys themselves. */
+app.post('/api/credits/apikey/list', (req, res) => {
+  const { wallet, nonce, signature } = req.body || {};
+  const w = String(wallet || '').trim();
+  if (!gwauth.verifyLogin(w, nonce, signature)) return res.status(401).json({ error: 'signature verification failed' });
+  const keys = Object.entries(loadApiKeys(loadDB()))
+    .filter(([, entry]) => entry.wallet === w)
+    .map(([hash, entry]) => ({
+      id: hash.slice(0, 12), label: entry.label || '', createdAt: entry.createdAt,
+      revokedAt: entry.revokedAt ?? null, revokedBy: entry.revokedBy ?? null,
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  res.json({ wallet: w, keys });
 });
 app.get('/api/credits/balance', (req, res) => {
   const w = bearerWallet(req);
@@ -1602,10 +1862,32 @@ app.post('/api/credits/deposit', async (req, res) => {
   } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
 });
 
+/**
+ * Say which of the two things went wrong.
+ *
+ * Answering "invalid API key" to a request that carried no key at all sends the
+ * developer looking for a fault in a key they never sent. A reviewer copying
+ * the documented curl example hit exactly that and read the whole gateway as
+ * broken. The status is the same; the sentence is not.
+ */
+function unauthenticated(req, res) {
+  const supplied = /^Bearer\s+\S/i.test(String(req.headers.authorization ?? ''))
+    || Boolean(req.headers['x-api-key']);
+  return res.status(401).json({
+    error: {
+      message: supplied
+        ? 'invalid API key'
+        : 'this endpoint needs an API key: send Authorization: Bearer <key>. '
+          + 'A wallet can issue one for itself — see https://kvasir-ai.net/docs/api',
+      type: 'invalid_request_error',
+    },
+  });
+}
+
 // OpenAI-compatible model list (API-key auth).
 app.get('/v1/models', async (req, res) => {
   const mw = bearerWallet(req);
-  if (!mw) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  if (!mw) return unauthenticated(req, res);
   if (creditUnmetered(mw) && !unmeteredIpAllowed(req)) {
     return res.status(403).json({ error: { message: 'key not permitted from this address', type: 'access_denied' } });
   }
@@ -1614,46 +1896,44 @@ app.get('/v1/models', async (req, res) => {
 });
 // OpenAI-compatible chat completions: streaming + tools passthrough, credit-debited.
 // ---- ring resilience: auto-recover a crashed serving ring -------------------
-// A ring stage/coordinator can die under load; the hub keeps phase=running and
+// A ring stage/coordinator can die under load; the bridge keeps phase=running and
 // every inference then 500s until a manual reload (this is what banya-agent saw
 // as intermittent "500 {}"). Detect an upstream outage, return a *typed 503*
 // (not empty {}), and trigger a debounced reload of the ring's last-served
 // config so it self-heals in ~1 min instead of staying down.
 const RING_RELOAD = {}; // cid -> { at, inflight }
 const RING_RELOAD_COOLDOWN_MS = Number(process.env.KVR_RING_RELOAD_COOLDOWN_MS || 120000);
-async function reloadRing(hubUrl, cid) {
-  const st = RING_RELOAD[cid] || (RING_RELOAD[cid] = { at: 0, inflight: false });
+async function reloadRing(bridgeUrl, cid) {
+  const st = RING_RELOAD[cid] || (RING_RELOAD[cid] = { at: 0, inflight: false, external: false });
   const now = Date.now();
+  // On p4 the placement plan is an operator artifact: which layers sit on which
+  // GPU, at which load generation, is decided when the plan is written and the
+  // bridge answers 409 to anyone asking it to serve. There is no remote reload
+  // to perform, so this says so once and then stops asking.
+  if (st.external) return false;
   if (st.inflight || (now - st.at) < RING_RELOAD_COOLDOWN_MS) return false;
   st.inflight = true; st.at = now;
   try {
-    const cr = await (await fetch(`${hubUrl}/api/controllers?full=1`, { headers: hubHeaders(), signal: AbortSignal.timeout(8000) })).json();
-    const c = (Array.isArray(cr) ? cr : (cr.controllers || [])).find((x) => x.id === cid);
-    const ll = c && c.last_load;
-    if (!ll || !ll.model) { console.warn(`ring reload ${cid}: no last_load`); return false; }
-    const serveBody = {
-      model: ll.model, ctx: ll.ctx || 4096, parallel: ll.parallel || 1,
-      kv_bits: ll.kv_bits || 16, cache_type_k: ll.cache_type_k || 'f16', cache_type_v: ll.cache_type_v || 'f16',
-      no_cpu_offload: !!ll.no_cpu_offload, reserve_mib: ll.reserve_mib || 1024,
-      placement_strategy: ll.placement_strategy || 'ring-stage-vram-weighted',
-      runtime_mode: 'ring_proxy', batch: ll.batch || 2048, ubatch: ll.ubatch || 512,
-    };
-    await fetch(`${hubUrl}/api/controllers/${cid}/unload`, { method: 'POST', headers: hubHeaders({ 'Content-Type': 'application/json' }), body: '{}', signal: AbortSignal.timeout(30000) }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 2000));
-    const r = await fetch(`${hubUrl}/api/controllers/${cid}/serve`, { method: 'POST', headers: hubHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(serveBody), signal: AbortSignal.timeout(30000) });
-    console.log(`ring auto-reload ${cid}: serve ${r.status} ctx=${serveBody.ctx}`);
-    return r.ok;
-  } catch (e) { console.warn(`ring auto-reload ${cid} failed: ${e.message}`); return false; }
-  finally { setTimeout(() => { st.inflight = false; }, 60000); } // hold ~ load time
+    const probe = await fetch(`${bridgeUrl}/api/controllers/${cid}/serve`, {
+      method: 'POST', headers: bridgeHeaders({ 'Content-Type': 'application/json' }), body: '{}',
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => null);
+    if (probe && probe.status === 409) st.external = true;
+    console.warn(
+      `ring ${cid} is not serving and cannot be reloaded from here: p4 placement is an operator action — `
+      + 'load the stages from the placement plan, then update the bridge catalog',
+    );
+    return false;
+  } finally { setTimeout(() => { st.inflight = false; }, 60000); }
 }
 function ringOutage(res, m, detail) {
-  if (m && m.hubUrl && m.cid) reloadRing(m.hubUrl, m.cid); // fire-and-forget, debounced
+  if (m && m.bridgeUrl && m.cid) reloadRing(m.bridgeUrl, m.cid); // fire-and-forget, debounced
   return res.status(503).json({ error: {
     message: 'the model is temporarily unavailable — the serving ring is recovering; retry in ~60s',
     type: 'hub_unavailable', code: 'ring_recovering', detail: String(detail || '').slice(0, 200),
   } });
 }
-// A hub "ring down" shows up either as a non-2xx, or as a 200 SSE whose FIRST
+// A bridge "ring down" shows up either as a non-2xx, or as a 200 SSE whose FIRST
 // chunk is a data:{"error":...} — treat both as an outage.
 function sseFirstError(text) {
   for (const line of String(text || '').split('\n')) {
@@ -1666,6 +1946,130 @@ function sseFirstError(text) {
   return null;
 }
 
+/* ---- Anthropic-compatible surface -----------------------------------------
+ *
+ * The site has advertised an Anthropic surface alongside the OpenAI one, and
+ * until now there was none: /anthropic/v1/messages answered 404 and
+ * /anthropic/v1/models answered with the wallet app. A reviewer found it with
+ * one curl.
+ *
+ * This translates and re-dispatches rather than re-implementing. The OpenAI
+ * route already carries authentication, the whitelist, the credit check and
+ * debit, model resolution, the ring-outage path and streaming; a parallel
+ * implementation would have to keep all of that in step forever, and would not.
+ * A loopback request costs a millisecond and cannot drift.
+ */
+
+/** Anthropic allows a content block array where OpenAI wants a string. */
+function anthropicTextOf(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block && (block.type === 'text' || typeof block.text === 'string'))
+    .map((block) => block.text ?? '')
+    .join('');
+}
+
+const STOP_REASON = { stop: 'end_turn', length: 'max_tokens', tool_calls: 'tool_use' };
+
+app.post('/anthropic/v1/messages', async (req, res) => {
+  const body = req.body || {};
+  if (body.stream) {
+    // Anthropic's stream is a different event protocol from OpenAI's, not a
+    // reformat of it. Saying so is better than emitting OpenAI frames under an
+    // Anthropic content type and letting the SDK fail somewhere harder to read.
+    return res.status(400).json({
+      type: 'error',
+      error: {
+        type: 'invalid_request_error',
+        message: 'streaming is not implemented on the Anthropic surface yet; '
+          + 'send stream:false here, or use /v1/chat/completions for streaming',
+      },
+    });
+  }
+  const messages = [];
+  if (body.system) messages.push({ role: 'system', content: anthropicTextOf(body.system) });
+  for (const message of Array.isArray(body.messages) ? body.messages : []) {
+    messages.push({ role: message.role, content: anthropicTextOf(message.content) });
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(`http://127.0.0.1:${PORT}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
+        ...(req.headers['x-api-key'] ? { authorization: `Bearer ${req.headers['x-api-key']}` } : {}),
+      },
+      body: JSON.stringify({
+        model: body.model,
+        messages,
+        max_tokens: body.max_tokens,
+        temperature: body.temperature,
+        top_p: body.top_p,
+        stop: body.stop_sequences,
+        stream: false,
+      }),
+    });
+  } catch (e) {
+    return res.status(502).json({
+      type: 'error',
+      error: { type: 'api_error', message: `gateway could not reach itself: ${e.message}` },
+    });
+  }
+
+  const raw = await upstream.text().catch(() => '');
+  let d; try { d = JSON.parse(raw); } catch { d = null; }
+  if (!upstream.ok || !d) {
+    // Carry the OpenAI-side status and reason across rather than flattening
+    // every failure to 500: a 401 must still read as a 401 to an Anthropic SDK.
+    return res.status(upstream.status || 502).json({
+      type: 'error',
+      error: {
+        type: upstream.status === 401 ? 'authentication_error' : 'api_error',
+        message: d?.error?.message ?? raw.slice(0, 300) ?? 'upstream failure',
+      },
+    });
+  }
+
+  const choice = d.choices?.[0] ?? {};
+  return res.json({
+    id: (d.id ?? '').replace(/^chatcmpl/, 'msg') || `msg_${Date.now().toString(36)}`,
+    type: 'message',
+    role: 'assistant',
+    model: d.model ?? body.model,
+    content: [{ type: 'text', text: choice.message?.content ?? '' }],
+    stop_reason: STOP_REASON[choice.finish_reason] ?? 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: d.usage?.prompt_tokens ?? 0,
+      output_tokens: d.usage?.completion_tokens ?? 0,
+    },
+  });
+});
+
+app.get('/anthropic/v1/models', async (req, res) => {
+  const w = bearerWallet(req);
+  if (!w) {
+    return res.status(401).json({
+      type: 'error',
+      error: {
+        type: 'authentication_error',
+        message: 'this endpoint needs an API key: send x-api-key or '
+          + 'Authorization: Bearer <key>. See https://kvasir-ai.net/docs/api',
+      },
+    });
+  }
+  const pool = await resolveModels().catch(() => []);
+  return res.json({
+    data: pool.map((m) => ({
+      type: 'model', id: m.id, display_name: m.name ?? m.id, created_at: null,
+    })),
+    has_more: false,
+  });
+});
+
 app.post('/v1/chat/completions', async (req, res) => {
  // Wrap the whole handler: any unforeseen throw must become a typed error, never
  // an Express default 500 with an empty {} body (the exact symptom banya-agent
@@ -1673,7 +2077,7 @@ app.post('/v1/chat/completions', async (req, res) => {
  let m;
  try {
   const w = bearerWallet(req);
-  if (!w) return res.status(401).json({ error: { message: 'invalid API key', type: 'invalid_request_error' } });
+  if (!w) return unauthenticated(req, res);
   if (!creditWhitelisted(w)) return res.status(403).json({ error: { message: 'wallet is not whitelisted', type: 'access_denied' } });
   if (creditUnmetered(w)) {
     if (!unmeteredIpAllowed(req)) {
@@ -1685,10 +2089,10 @@ app.post('/v1/chat/completions', async (req, res) => {
   const body = req.body || {};
   const pool = await resolveModels().catch(() => []);
   m = pool.find((x) => x.id === body.model) || pool.find((x) => x.name === body.model);
-  if (!m || !m.hubUrl || !m.cid) {
+  if (!m || !m.bridgeUrl || !m.cid) {
     // No model matched: distinguish "the model isn't served right now" (ring
     // reloading / down) from a genuinely bad name, so the client can retry vs fix.
-    const served = pool.some((x) => x.hubUrl && x.cid);
+    const served = pool.some((x) => x.bridgeUrl && x.cid);
     return res.status(served ? 400 : 503).json({ error: {
       message: served ? `unknown model '${body.model}'` : 'no model is currently served — the ring is starting or recovering; retry in ~60s',
       type: served ? 'invalid_request_error' : 'hub_unavailable',
@@ -1696,18 +2100,18 @@ app.post('/v1/chat/completions', async (req, res) => {
     } });
   }
   const wantStream = !!body.stream;
-  const fwd = { ...body, model: m.hubModel };
+  const fwd = { ...body, model: m.bridgeModel };
   // Reasoning models (Qwen3.x, MiniMax-M3, ...) emit a hidden "thinking" pass into
   // reasoning_content that can consume the whole token budget and leave content
   // EMPTY — a blank reply, or a slow crawl toward the timeout. The pay path
-  // (hubInfer) already disables it; do the same here so the OpenAI endpoint the
+  // (bridgeInfer) already disables it; do the same here so the OpenAI endpoint the
   // app uses does not error on M3. An explicit caller value still wins.
   fwd.chat_template_kwargs = { enable_thinking: false, ...(body.chat_template_kwargs || {}) };
   if (wantStream) fwd.stream_options = { ...(body.stream_options || {}), include_usage: true };
   let upstream;
   try {
-    upstream = await fetch(`${m.hubUrl}/c/${m.cid}/v1/chat/completions`, {
-      method: 'POST', headers: hubHeaders({ 'Content-Type': 'application/json' }),
+    upstream = await fetch(`${m.bridgeUrl}/c/${m.cid}/v1/chat/completions`, {
+      method: 'POST', headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(fwd), signal: AbortSignal.timeout(300000),
     });
   } catch (e) { return ringOutage(res, m, `upstream unreachable: ${e.message}`); }
@@ -1785,11 +2189,11 @@ app.post('/v1/chat/completions', async (req, res) => {
 // in-flight work when the ring is served --parallel 1, so a busy-but-healthy ring
 // (a legitimate 20K-token prefill runs ~26s > the old 20s probe timeout) looked
 // "dead" and got reloaded — and the reload WAS the outage banya-agent saw. The
-// hub already knows the controller phase; asking it costs no slot and never
+// bridge already knows the controller phase; asking it costs no slot and never
 // false-times-out. Returns true (serving), false (down), or null (unknown/unreachable).
-async function ringServing(hubUrl, cid) {
+async function ringServing(bridgeUrl, cid) {
   try {
-    const r = await fetch(`${hubUrl}/api/controllers`, { headers: hubHeaders(), signal: AbortSignal.timeout(5000) });
+    const r = await fetch(`${bridgeUrl}/api/controllers`, { headers: bridgeHeaders(), signal: AbortSignal.timeout(5000) });
     if (!r.ok) return null;
     const d = await r.json();
     const ctrls = Array.isArray(d) ? d : (d.controllers || []);
@@ -1812,30 +2216,30 @@ app.get(['/v1/health'], async (_req, res) => {
   const pool = await resolveModels().catch(() => []);
   const m = pool[0];
   const set = (code, b) => { HEALTH_CACHE = { at: Date.now(), body: b, code }; return res.status(code).json(b); };
-  if (!m || !m.hubUrl || !m.cid) return set(503, { status: 'no_model', detail: 'no model is currently served' });
+  if (!m || !m.bridgeUrl || !m.cid) return set(503, { status: 'no_model', detail: 'no model is currently served' });
   // Recent real traffic OR a serving controller phase = healthy. No slot-consuming
   // probe, so a busy ring is never reported unhealthy (and never reloaded).
   if (RING_LAST_OK[m.cid] && (now - RING_LAST_OK[m.cid]) < RING_WATCHDOG_MS) {
     return set(200, { status: 'ok', model: m.id, name: m.name });
   }
-  const serving = await ringServing(m.hubUrl, m.cid);
+  const serving = await ringServing(m.bridgeUrl, m.cid);
   if (serving === true || serving === null) return set(200, { status: 'ok', model: m.id, name: m.name });
-  reloadRing(m.hubUrl, m.cid);
+  reloadRing(m.bridgeUrl, m.cid);
   return set(503, { status: 'unhealthy', model: m.id, detail: 'controller not serving', recovering: true });
 });
 
 // Proactive self-heal: periodically confirm the ring is still SERVING (via the
-// hub's controller phase — no decode slot consumed) and reload ONLY a genuinely
+// bridge's controller phase — no decode slot consumed) and reload ONLY a genuinely
 // down ring, never a busy one. Requires two consecutive "down" reads to debounce
-// a transient hub blip, and skips a ring that served real traffic this interval.
+// a transient bridge blip, and skips a ring that served real traffic this interval.
 const RING_WATCHDOG_MS = Number(process.env.KVR_RING_WATCHDOG_MS || 30000);
 const RING_DOWN_STREAK = {}; // cid -> consecutive "not serving" reads
 async function ringWatchdog() {
   const models = await resolveModels().catch(() => []);
   const seen = new Set();
   for (const m of models) {
-    if (!m || !m.hubUrl || !m.cid) continue;
-    const key = `${m.hubUrl}|${m.cid}`;
+    if (!m || !m.bridgeUrl || !m.cid) continue;
+    const key = `${m.bridgeUrl}|${m.cid}`;
     if (seen.has(key)) continue;
     seen.add(key);
     await probeModel(m);
@@ -1844,16 +2248,16 @@ async function ringWatchdog() {
 async function probeModel(m) {
   // Real traffic proves liveness — don't probe a ring that just served a request.
   if (RING_LAST_OK[m.cid] && (Date.now() - RING_LAST_OK[m.cid]) < RING_WATCHDOG_MS) { RING_DOWN_STREAK[m.cid] = 0; return; }
-  const serving = await ringServing(m.hubUrl, m.cid);
+  const serving = await ringServing(m.bridgeUrl, m.cid);
   if (serving !== false) { RING_DOWN_STREAK[m.cid] = 0; return; } // serving or unknown -> leave it alone
   RING_DOWN_STREAK[m.cid] = (RING_DOWN_STREAK[m.cid] || 0) + 1;
   if (RING_DOWN_STREAK[m.cid] >= 2) {
     console.warn(`ring watchdog: ${m.id} not serving x${RING_DOWN_STREAK[m.cid]} -> reload`);
-    reloadRing(m.hubUrl, m.cid);
+    reloadRing(m.bridgeUrl, m.cid);
     RING_DOWN_STREAK[m.cid] = 0;
   }
 }
-if (LINKCPP_HUB_URL) setInterval(ringWatchdog, RING_WATCHDOG_MS);
+if (BRIDGE_URL) setInterval(ringWatchdog, RING_WATCHDOG_MS);
 
 app.post('/api/admin/logout', (req, res) => {
   res.clearCookie(ADMIN_COOKIE, { path: '/' });
@@ -1908,8 +2312,8 @@ app.get('/api/admin/nodes', requireAdmin, (_req, res) => {
     return {
       nodeId, status, owner: n.owner, os: n.os || 'unknown', label: n.label || nodeId,
       accelerator: n.accelerator || 'cpu', backend: n.backend || null,
-      tier: n.tier || perfTier(n.perfScore).tier, perfScore: n.perfScore || 0,
-      hostsGateway: !!n.hostsGateway, hostsHub: !!n.hostsHub,
+      tier: n.tier || tierFor(n).tier, perfScore: n.perfScore || 0,
+      hostsGateway: !!n.hostsGateway, hostsBridge: !!n.hostsBridge,
       effectiveUnits: n.effectiveUnits || 0, pendingRewards: n.pendingRewards || 0,
       claimedTotal: n.claimedTotal || 0, registeredAt: n.registeredAt || null, lastReport: last,
     };
@@ -1925,16 +2329,17 @@ app.post('/api/admin/node/remove', requireAdmin, (req, res) => {
   res.json({ removed: nodeId });
 });
 
-app.get('/api/admin/hubs', requireAdmin, (_req, res) => {
-  const list = Array.from(hubRegistry.values()).map((h) => ({
-    hubUrl: h.hubUrl, name: h.name || '', expiresAt: h.expiresAt, active: h.expiresAt > Date.now(),
+app.get('/api/admin/bridges', requireAdmin, (_req, res) => {
+  const list = Array.from(bridgeRegistry.values()).map((h) => ({
+    bridgeUrl: h.bridgeUrl, name: h.name || '',
+    expiresAt: h.expiresAt, active: h.expiresAt > Date.now(),
   }));
-  res.json({ hubs: list });
+  res.json({ bridges: list });
 });
 
-app.post('/api/admin/hub/remove', requireAdmin, (req, res) => {
-  const url = String((req.body || {}).hubUrl || '').replace(/\/+$/, '');
-  const had = hubRegistry.delete(url);
+app.post('/api/admin/bridge/remove', requireAdmin, (req, res) => {
+  const url = String((req.body || {}).bridgeUrl || '').replace(/\/+$/, '');
+  const had = bridgeRegistry.delete(url);
   res.json({ removed: had ? url : null });
 });
 
@@ -1957,13 +2362,120 @@ if (WEB_ENABLED) {
     else if (/\/assets\//.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   };
   app.use(express.static(WEB_DIR, { setHeaders: noCacheIndex }));
-  // SPA fallback: serve index.html for client-side routes (never for /api or /health).
+  // SPA fallback: serve index.html for client-side routes, never for an API
+  // path. An unregistered API route must fail as an API route: handing an SDK a
+  // page of HTML where it expects JSON turns "this endpoint does not exist"
+  // into a parse error three frames deep, which is a much longer afternoon.
+  // GET /anthropic/v1/models used to answer 200 with the wallet app.
   app.use((req, res, next) => {
-    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path === '/health') return next();
+    if (API_PATH.test(req.path)) return next();
+    if (req.method !== 'GET' || req.path === '/health') return next();
     res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.sendFile(path.join(WEB_DIR, 'index.html'));
   });
 }
+
+/**
+ * Nothing matched, and it was an API path. Answer in the shape the caller's
+ * client can read, and say what does exist rather than only what does not.
+ *
+ * The list is read off the router instead of being written out here. The
+ * hand-kept copy that used to live in this string named only the OpenAI pair,
+ * so a typo against /anthropic/v1/messages answered by pointing the caller at
+ * an endpoint on the other surface, in the other surface's error shape.
+ */
+const SURFACES = [
+  { prefix: '/anthropic/', anthropic: true },
+  { prefix: '/v1/', anthropic: false },
+];
+
+let servedBySurface = null;
+function servedUnder(prefix) {
+  if (!servedBySurface) {
+    // Safe to read now: every route is registered before a request can arrive.
+    servedBySurface = new Map(SURFACES.map((s) => [s.prefix, []]));
+    for (const layer of (app._router && app._router.stack) || []) {
+      const routePath = layer.route && layer.route.path;
+      if (typeof routePath !== 'string') continue;
+      for (const s of SURFACES) {
+        const list = servedBySurface.get(s.prefix);
+        if (routePath.startsWith(s.prefix) && !list.includes(routePath)) list.push(routePath);
+      }
+    }
+    for (const list of servedBySurface.values()) list.sort();
+  }
+  return servedBySurface.get(prefix) || [];
+}
+
+const andList = (xs) => (xs.length > 1
+  ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`
+  : xs[0]);
+
+// Registered BEFORE the surface-aware 404 below, which is the whole point: that
+// middleware answers every /api/ path it does not recognise, and Express matches
+// in registration order, so while this block sat after it the entire
+// participation surface was unreachable from outside — a phone asking for a
+// challenge got "no such endpoint" even though both sides implemented it.
+// ---- bridge participation API pass-through ---------------------------------------
+// Remote expert workers (NAT) reach the LAN-only bridge's participation surface
+// through the gateway: node-token issuance, market calls, and shard download.
+// The caller's OWN token forwards untouched — the bridge enforces auth, the
+// gateway grants nothing.
+//
+// /api/auth/* is deliberately in this list and deliberately not authenticated
+// here: it is how a phone that has no token yet gets one, and it proves itself
+// with a wallet signature the bridge verifies. The gateway's own admin login is
+// /api/admin/*, which is a different surface with a different lifetime.
+app.all(['/api/auth/challenge', '/api/auth/node-token',
+         '/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
+         '/api/proxy/models/:model/expert-shard',
+         '/api/proxy/models/:model/stage'], async (req, res) => {
+  if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
+  try {
+    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    const headers = {};
+    for (const h of [...SERVICE_TOKEN_HEADERS, 'authorization', 'content-type']) {
+      if (req.headers[h]) headers[h] = req.headers[h];
+    }
+    const r = await fetch(BRIDGE_URL + req.path + qs, {
+      method: req.method, headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
+    });
+    res.status(r.status);
+    // x-kvasir-shard-digest names the checkpoint a shard came from. It is also
+    // inside the GGUF, so dropping it loses nothing that cannot be recovered —
+    // but a worker that holds several shards wants to compare them before
+    // parsing megabytes, and this is how it does that cheaply.
+    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest']) {
+      const v = r.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    require('stream').Readable.fromWeb(r.body).pipe(res);
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+app.use((req, res, next) => {
+  if (!API_PATH.test(req.path)) return next();
+  const surface = SURFACES.find((s) => req.path.startsWith(s.prefix));
+  const served = surface ? servedUnder(surface.prefix) : [];
+  const message = `no such endpoint: ${req.method} ${req.path}. `
+    + (served.length
+      ? `This gateway serves ${andList(served)}; see https://kvasir-ai.net/docs/api`
+      : 'See https://kvasir-ai.net/docs/api');
+  if (surface && surface.anthropic) {
+    // An Anthropic SDK reads {type:"error",error:{...}}; the OpenAI envelope
+    // would reach it as an object with no error field it recognises.
+    return res.status(404).json({
+      type: 'error',
+      error: { type: 'invalid_request_error', message },
+    });
+  }
+  res.status(404).json({
+    error: { message, type: 'invalid_request_error', code: 'unknown_endpoint' },
+  });
+});
 
 // Final backstop: any error that escapes a route handler (sync throw, next(err))
 // returns a typed JSON body, never Express's default empty 500. Must be last.
@@ -1980,47 +2492,23 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`gatewayBonus=${GATEWAY_BONUS}  webUI=${WEB_ENABLED ? WEB_DIR : 'disabled'}  publicUrl=${PUBLIC_URL || '(unset)'}`);
 });
 
-// ---- hub participation API pass-through ---------------------------------------
-// Remote expert workers (NAT) reach the LAN-only hub's participation surface
-// through the gateway: market calls + shard download. The caller's OWN token
-// forwards untouched — the hub enforces auth, the gateway grants nothing.
-app.all(['/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
-         '/api/proxy/models/:model/expert-shard'], async (req, res) => {
-  if (!LINKCPP_HUB_URL) return res.status(503).json({ error: 'no hub configured' });
-  try {
-    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-    const headers = {};
-    for (const h of ['x-linkcpp-service-token', 'authorization', 'content-type']) {
-      if (req.headers[h]) headers[h] = req.headers[h];
-    }
-    const r = await fetch(LINKCPP_HUB_URL + req.path + qs, {
-      method: req.method, headers,
-      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
-    });
-    res.status(r.status);
-    for (const h of ['content-type', 'content-length']) {
-      const v = r.headers.get(h);
-      if (v) res.setHeader(h, v);
-    }
-    require('stream').Readable.fromWeb(r.body).pipe(res);
-  } catch (e) {
-    res.status(502).json({ error: String(e.message || e) });
-  }
-});
 
-// ---- hub relay WS pass-through ----------------------------------------------
-// NAT/remote workers dial wss://gate/api/{expert,ring}-relay over 443; the hub
+// ---- bridge relay WS pass-through ----------------------------------------------
+// NAT/remote workers dial wss://gate/api/{expert,ring}-relay over 443; the bridge
 // (LAN-only) does the actual WS handshake, auth, and bridging. The gateway just
-// splices the raw upgraded socket to the hub — it never parses WS frames, so
+// splices the raw upgraded socket to the bridge — it never parses WS frames, so
 // relay traffic is opaque to it. Anything else on the upgrade port is dropped.
 const net = require('net');
+/** Paths that belong to an API rather than to the wallet app. */
+const API_PATH = /^\/(api|v1|anthropic|c)\//;
+
 const RELAY_WS_PATHS = ['/api/expert-relay', '/api/ring-relay'];
 server.on('upgrade', (req, socket, head) => {
   let pathname = '';
   try { pathname = new URL(req.url, 'http://x').pathname; } catch { /* fall through */ }
-  if (!LINKCPP_HUB_URL || !RELAY_WS_PATHS.includes(pathname)) { socket.destroy(); return; }
+  if (!BRIDGE_URL || !RELAY_WS_PATHS.includes(pathname)) { socket.destroy(); return; }
   let hub;
-  try { hub = new URL(LINKCPP_HUB_URL); } catch { socket.destroy(); return; }
+  try { hub = new URL(BRIDGE_URL); } catch { socket.destroy(); return; }
   const up = net.connect(Number(hub.port || 80), hub.hostname, () => {
     let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
     for (let i = 0; i < req.rawHeaders.length; i += 2) raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;

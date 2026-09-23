@@ -1,6 +1,6 @@
-# linkcpp token tooling (devnet)
+# KVR token tooling (devnet)
 
-Node scripts that create and manage the linkcpp SPL token on Solana **devnet**.
+Node scripts that create and manage the KVR SPL token on Solana **devnet**.
 No Solana CLI required — everything runs via `@solana/web3.js` + `@solana/spl-token`.
 
 ## Setup
@@ -43,4 +43,4 @@ npm run add-metadata            # optional/deferred: on-chain Metaplex metadata
   operator key; never reuse it or its mnemonic on mainnet.
 - Public devnet's faucet is rate-limited. If `create-mint` reports an airdrop
   failure, fund the printed admin address via https://faucet.solana.com and re-run.
-- To point at a different RPC: `LINKCPP_RPC_URL=... npm run create-mint`.
+- To point at a different RPC: `KVR_RPC_URL=... npm run create-mint`.

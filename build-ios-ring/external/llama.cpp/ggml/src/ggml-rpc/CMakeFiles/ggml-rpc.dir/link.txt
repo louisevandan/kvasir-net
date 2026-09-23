@@ -1,0 +1,2 @@
+/usr/bin/ar qc libggml-rpc.a "CMakeFiles/ggml-rpc.dir/ggml-rpc.cpp.o" "CMakeFiles/ggml-rpc.dir/transport.cpp.o"
+/usr/bin/ranlib libggml-rpc.a

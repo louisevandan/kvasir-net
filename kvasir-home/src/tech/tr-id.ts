@@ -4,6 +4,90 @@
 import type { TechTranslation } from "./articles";
 
 export const idTech: Record<string, TechTranslation> = {
+  "a-dialable-address-for-a-laptop": {
+    title: "Alamat yang Bisa Dihubungi untuk Sebuah Laptop",
+    dek: "p4 menjangkau sebuah node dengan menghubunginya, dan mesin di balik NAT tidak punya alamat untuk dihubungi. Sebagian besar mesin berada di balik NAT. Inilah yang diperlukan agar satu di antaranya tetap bisa bergabung, beserta pengukuran pada hari itu.",
+    blocks: [
+      {
+        t: "callout",
+        md: "**Hambatannya bukan usaha, melainkan arah.** p4 mengantarkan pekerjaan dengan membuka koneksi TCP *ke* sebuah node. Koneksi yang dibuka sendiri oleh node hanya untuk tanda terima — frame `Data` yang tiba di sana dijawab dengan `peer_closed(\"unexpected frame on outbound hop\")`. Sebuah laptop tidak bisa membuka terowongan keluar lalu menerima pekerjaan lewat terowongan itu. Tidak dengan niat baik, tidak dengan percobaan ulang, tidak dengan klien yang lebih baik.",
+      },
+      { t: "h2", kick: "Kendalanya", text: "Mesin seorang kontributor pada dasarnya tak terjangkau" },
+      {
+        t: "p",
+        md: "Mesin di rumah duduk di balik penerjemahan alamat jaringan. Ia bisa menjangkau internet; internet tidak bisa menjangkaunya. Armada kami sendiri memperlihatkan kedua sisi: GB10 di kantor memegang alamat publik secara langsung, sementara dua MI250 berada di `192.168.20.x` di balik satu jalan keluar bersama. MI250 bukan kekecualian — begitulah rupa mesin seorang kontributor.",
+      },
+      {
+        t: "p",
+        md: "Di p4 tidak ada tabel rute, tidak ada layanan pertemuan, tidak ada hole punching. `deliver_outbound` mengambil alamat dari amplop peristiwa lalu memanggil `connect`. Hanya itu, dan di dalam rak itu rancangan yang masuk akal. Hanya saja bukan rancangan yang bisa dipenuhi sebuah laptop.",
+      },
+      { t: "h2", kick: "Jawabannya", text: "Satu koneksi keluar, dijaga tetap terbuka" },
+      {
+        t: "p",
+        md: "Relay memegang alamat publik atas nama node. Node memelihara satu koneksi keluar ke sana dan tidak mendengarkan apa pun. Ketika seseorang menghubungi alamat publik itu, byte-byte tersebut turun melalui koneksi yang sudah dipegang node. Kedua ujung p4 melihat soket biasa menuju alamat biasa, dan tak satu pun tahu bahwa relay itu ada.",
+      },
+      {
+        t: "code",
+        caption: "Apa yang dilihat penghubung, dan apa yang benar-benar dijalankan node",
+        code: "caller  ->  tcp://relay:43100        # alamat p4 biasa\n            |\n            +-- relay      publik; meneruskan byte, tidak mengurainya\n                  |\n                  +-- tunnel   satu koneksi keluar yang dibuka node\n                        |\n                        +-- p4-agent  127.0.0.1:42031, hanya mendengarkan loopback",
+      },
+      {
+        t: "p",
+        md: "Relay tidak pernah membaca p4. Muatan diteruskan byte demi byte dan tidak pernah diurai: ia tidak bisa membedakan `LOAD` dari `INSPECT`, dan memang tidak boleh bisa — begitu ia memahami lalu lintas, ia menjadi sesuatu yang mampu mengubahnya.",
+      },
+      { t: "h2", kick: "Mengapa ini sekaligus batas keamanan", text: "Penerusan porta tidak pernah menjadi pilihan" },
+      {
+        t: "p",
+        md: "p4 tidak memiliki autentikasi apa pun. Tanpa TLS, tanpa token, tanpa daftar izin — host mana pun yang bisa menjangkau porta sebuah agen dapat mengirim `NODE_LOAD`, `NODE_UNLOAD`, dan `INSPECT`. Meminta kontributor meneruskan porta pada router rumahnya ke sana tidak dapat dibenarkan, dan itulah sebabnya solusi yang paling jelas justru yang keliru.",
+      },
+      {
+        t: "p",
+        md: "Melalui relay, node tidak mendengarkan apa pun. Ia memegang satu koneksi keluar dan membuktikan dompet operator sebelum koneksi itu membawa apa pun — tanda tangan ed25519 atas base58 yang sama seperti yang sudah dipakai gerbang penyelesaian, sehingga identitas yang didaftarkan node adalah identitas yang menjadi kunci buku besar imbalan. Keterjangkauan dan autentikasi ternyata punya jawaban yang sama.",
+      },
+      { t: "h2", kick: "Hari saat ia bekerja", text: "Diukur, bukan diklaim" },
+      {
+        t: "stats",
+        items: [
+          { n: "6 ms", l: "dari host armada ke Mac di balik NAT" },
+          { n: "28 ms", l: "hingga agen menerapkan aturannya sendiri" },
+          { n: "512 KiB", l: "kembali identik byte demi byte" },
+          { n: "0", l: "porta yang dibuka pada laptop" },
+        ],
+      },
+      {
+        t: "p",
+        md: "Sebuah host MI250 di pusat data menghubungi `tcp://34.50.62.159:43100` dan mencapai agen p4 yang berjalan di MacBook di balik NAT dalam 6 ms. Agen menutup koneksi 28 ms kemudian karena frame pertama bukan `Hello` — aturan protokolnya sendiri, diterapkan olehnya sendiri, dari mesin yang sesaat sebelumnya sama sekali tak bisa dihubungi. Penolakan itulah buktinya: relay tidak mengurai muatan, jadi ia tidak mungkin menghasilkannya.",
+      },
+      {
+        t: "table",
+        head: ["Pemeriksaan", "Hasil"],
+        rows: [
+          ["Pulang-pergi 512 KiB", "identik byte demi byte, 177 ms"],
+          ["Pulang-pergi 256 KiB", "identik byte demi byte, 108 ms"],
+          ["Tiga penghubung serentak", "tidak ada aliran yang bersilangan"],
+          ["Pendaftaran tanpa tanda tangan", "ditolak"],
+          ["Tantangan yang diulang", "ditolak"],
+        ],
+      },
+      { t: "h2", kick: "Separuh lainnya", text: "Sebuah node perlu sesuatu untuk dijalankan" },
+      {
+        t: "p",
+        md: "Keterjangkauan tidak berarti tanpa mesin di belakangnya, dan aplikasi desktop tidak pernah menyertakannya: ia mencari biner `p4-agent` di tiga direktori build dan hanya menemukannya di mesin tempat seseorang sudah mengompilasi p4 secara manual. Kini aplikasi membawa binernya sendiri, dibangun untuk setiap platform tempat ia dirilis.",
+      },
+      {
+        t: "ul",
+        items: [
+          "macOS: biner universal dengan kedua arsitektur digabungkan. Aplikasi Mac dikemas sebagai `universal` dan sumber daya disalin apa adanya ke kedua irisan, sehingga biner arm64 saja akan memberi pengguna Mac Intel sebuah aplikasi yang tampak lengkap namun tak bisa menyalakan node — kegagalan yang hanya terlihat pada perangkat keras yang tidak dimiliki pengembang.",
+          "Windows: dikompilasi silang, dan pencariannya tahu harus meminta `p4-agent.exe`. Melupakan ekstensi itulah cara sebuah build Windows merilis agen yang kemudian tak dapat ditemukannya.",
+          "Pembangunan agen berjalan sebelum setiap pengemasan, sehingga rilis tanpa agen tidak mungkin terbentuk.",
+        ],
+      },
+      {
+        t: "callout",
+        md: "**Yang belum bisa.** Sebuah node kini dapat berjalan dan dihubungi. Ia tetap tidak memperoleh apa pun dari inferensi: mesin memancarkan catatan kerja per tahap tetapi tidak ada yang mengumpulkannya, dan titik akhir kontribusi pada gerbang — yang dengan benar dikunci agar tidak ada node yang bisa mengkredit dirinya sendiri — belum pernah dipanggil. Berjalan dan dibayar adalah dua persoalan berbeda; yang terpecahkan baru yang pertama.",
+      },
+    ],
+  },
   "expert-sharded-swarm-design": {
     title: "Inferensi swarm dengan sharding pakar: desainnya",
     dek: "86% dari MoE 122B adalah 12.544 pakar independen berukuran 5.3 MB. Iris model pada butiran itu dan ponsel dapat memikul bagian nyata dari inferensi frontier.",
@@ -371,7 +455,7 @@ inside the lock:
           "**Tiga cara mesin bergabung:** **slot node lokal** tetap dengan anggaran VRAM/RAM/CPU yang dapat diedit; **unit jarak jauh** — daftarkan hub lain dan impor node-nodenya; dan **agen node terkelola** — layanan khusus-worker yang bergabung lewat HTTP request/response sederhana, sengaja tanpa stream persisten agar bertahan di perutean LAN/VPN sederhana.",
           "**Gerbang kompatibilitas kelas satu:** tiap unit, node, dan agen melaporkan identitas protokol/runtime-pack plus detail backend. Ketidakcocokan unit, runtime-pack, revisi mesin inferensi, dan ABI RPC **diblokir keras sebelum bind, plan, load, atau infer** — perbedaan backend (CUDA/Metal/Vulkan/CPU) dicatat sebagai kapabilitas, bukan penolakan.",
           "**Planner** membaca metadata GGUF dan menghasilkan penempatan lapisan bersambung per node, `--tensor-split`, perkiraan VRAM KV-cache/lapisan/pakar, dan offload FFN pakar opsional ke RAM.",
-          "**Gateway:** tiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages|models`), ditopang model termuat yang sama — klien yang ada bekerja tanpa perubahan.",
+          "**Gateway:** tiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages|models`), ditopang model termuat yang sama — klien yang ada bekerja tanpa perubahan.",
         ],
       },
       {
@@ -486,7 +570,7 @@ inside the lock:
         t: "code",
         caption: "Keluaran planner — format aturan -ot mesin inferensi.",
         code: `node 0  layers [0,48]  vram=62.6  ram=14.2  ot_rules=10
-sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # mesin inferensi -ot format`,
+sample: blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU   # inference engine -ot format`,
       },
       { t: "h2", kick: "Apa yang dikawatkan · Python murni, tanpa rebuild C++", text: "Membawa aturan offload planner ke pemuatan nyata" },
       {
@@ -718,7 +802,7 @@ linkcpp-moe-verify 122B.gguf ... --dispatch-port 52700
       { t: "h2", kick: "Alur partisipasi otonom", text: "Temukan → unduhan berbasis imbalan → ikut menghitung" },
       {
         t: "code",
-        code: `1. Phone knows the hub (hub.kvasir-ai.net) — already holds its wallet node-token
+        code: `1. Phone knows the hub (hub.kvasir-ai.net — retired since; the bridge serves this)
 2. GET /api/proxy/models/…/expert-shard?layers=0:1&experts=0:256
    # partially downloads its own expert slice (1.58 GB, WiFi)
 3. linkcpp-expert-worker --serve
@@ -906,12 +990,13 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "pakar · perutean", "per-pakar (Q4≈)", "bersama", "status"],
         rows: [
-          ["Qwen3.5-122B (dilayani hari ini)", "256 · top-8", "5.3 MB (terukur)", "ya", "dilayani (armada uji)"],
-          ["GLM-4.5-Air 106B", "128 · top-8", "~10 MB", "ya", "siap — kandidat pertama"],
+          ["Step-3.7-Flash 428B (dilayani hari ini)", "288 · top-8", "terukur di armada", "ya", "dilayani — 16 stage, dua mesin"],
+          ["Qwen3.5-122B", "256 · top-8", "5.3 MB (terukur)", "ya", "dilayani ujung-ke-ujung di 3 mesin"],
+          ["GLM-5.2 744B", "—", "—", "ya", "terverifikasi di linkcpp — laporan belum dipublikasikan"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ya", "direncanakan (hook terverifikasi)"],
           ["MiniMax-M2 230B", "256 · top-8", "~8 MB", "tidak", "direncanakan (hook terverifikasi)"],
           ["DeepSeek-V3 / R1 671B", "256 · top-8", "~25 MB", "ya", "direncanakan (graf deepseek2)"],
-          ["Kimi K2 1T", "384 · top-8", "~25 MB", "ya", "direncanakan (keluarga deepseek)"],
+          ["Kimi K3 2.8T", "—", "—", "ya", "gerbang berikutnya — verifikasi di p4"],
           ["Qwen3-235B", "128 · top-8", "~11 MB", "tidak", "siap"],
           ["gpt-oss-120b", "128 · top-4", "~14 MB", "tidak", "siap"],
           ["Llama 4 Maverick 400B", "128 · top-1", "~70 MB", "ya", "direncanakan (MoE tiap lapisan berselang)"],
@@ -1017,6 +1102,126 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
       {
         t: "p",
         md: "Itulah bentuk sebuah jaringan yang dapat melayani model triliun-parameter pada perangkat keras yang tak dimiliki satu orang pun: kapasitas menganggur diundang masuk persis ketika layak diundang, dan hanya saat itu.",
+      },
+    ],
+  },
+  "moving-the-ring-onto-p4": {
+    title: "Memindahkan Ring ke p4",
+    dek: "Tujuh perubahan kontrak antara sebuah mesin dan pemanggilnya. Masing-masing gagal dengan cara berbeda, dan hanya satu yang tampak seperti error.",
+    blocks: [
+      {
+        t: "p",
+        md: "Kami menggabungkan rilis baru mesin p4 dan ring berhenti melayani. Bukan dengan crash — pemuat melaporkan sukses, para agen melaporkan ready, dan tak terjadi apa-apa. Menelusuri balik dari kesunyian itu memakan satu hari dan menemukan **tujuh** tempat di mana pemanggil kami dan mesinnya sudah saling menyimpang. Yang membuatnya layak dicatat bukan jumlahnya. Melainkan bahwa enam dari tujuh tak menghasilkan error apa pun.",
+      },
+      { t: "h2", kick: "Kegagalan satu", text: "Peristiwa untuk node yang tak ada diteruskan, bukan ditolak" },
+      {
+        t: "p",
+        md: "Pemuat kami mengalamatkan perintah LOAD ke node yang ingin diciptakannya. Tetapi sebuah node belum ada sampai LOAD menciptakannya, dan aturan broker untuk peristiwa yang menyebut node tak dikenal adalah **meneruskannya keluar** alih-alih menolaknya. Perintah itu meninggalkan agen sambil mencari tempat lain untuk dituju, tak menemukan apa pun, lalu dibuang. Tak ada satu baris log pun, karena dari sudut pandang broker tak ada yang salah.",
+      },
+      {
+        t: "p",
+        md: "Perbaikannya adalah mengalamatkan LOAD ke *agen*, dibungkus dalam amplop siklus-hidup mesin yang netral-backend, dengan perintah adapter sendiri sebagai isi yang buram. Jelas setelah tahu; tak terlihat dari luar.",
+      },
+      { t: "h2", kick: "Kegagalan dua", text: "Sebuah angka yang harus sama dengan angka lain" },
+      {
+        t: "p",
+        md: "Sebuah model dimuat di bawah **load generation**, dan tiap node didaftarkan dengan **node generation**. Kami memperlakukan keduanya sebagai independen — timestamp untuk yang satu, `1` untuk yang lain — dan semuanya berjalan. Ring termuat. Ia menjawab satu permintaan dengan benar. Lalu node kepala mati.",
+      },
+      {
+        t: "code",
+        caption: "Pemeriksaannya, di dalam akuntansi pelepasan milik adapter.",
+        code: `let Endpoint::Node { generation, .. } = &event.envelope.source;
+if *generation != receipt.load_generation {
+    return Err("release owner census generation differs from source");
+}`,
+      },
+      {
+        t: "p",
+        md: "Tanda terima yang menutup sebuah permintaan yang selesai membawa load generation, dan node yang mengirimnya membawa miliknya sendiri. Saat keduanya berbeda, node dihentikan. Jadi bentuk bug-nya adalah: **pemuatan sukses, permintaan pertama sukses, kepala mati, dan setiap sesi sesudah itu menggantung setengah-termuat.** Itu terbaca persis seperti crash di bawah beban dan sama sekali tak seperti ketidakcocokan. Pemuat kami kini menolak rencana yang kedua angkanya tak sepakat, sebelum apa pun dimuat.",
+      },
+      { t: "h2", kick: "Kegagalan tiga", text: "Sebuah batas yang tak mungkin terpenuhi" },
+      {
+        t: "p",
+        md: "Adapter membandingkan hasil terbesar yang boleh dikembalikan sebuah stage terhadap angka yang dilaporkan stage server saat ia menyala, untuk kesetaraan persis. Kami tak bisa tahu angka itu tanpa memuat modelnya — jadi kami memuat dengan tebakan, dan kegagalannya memberi tahu kami angka nyata keempat stage sekaligus:",
+      },
+      {
+        t: "code",
+        caption: "Satu run, empat jawaban.",
+        code: `step37-s0: profile=33554432, READY=34419218444
+step37-s1: profile=33554432, READY=34419218444
+step37-s2: profile=33554432, READY=34419218444
+step37-s3: profile=33554432, READY=59136012`,
+      },
+      {
+        t: "p",
+        md: "34 GB. Retained store milik agen adalah 256 MiB, jadi ring itu tak akan pernah bisa diterima. Membaca penurunan rumusnya dari stage server menunjukkan sebabnya: batas itu menskala dengan `n_batch × n_ubatch`, dan kami mewarisi lebar batch 2048 dari sebuah konfigurasi yang mendahului pemeriksaan ini. Pada 128 baris — lebar yang dipakai tata letak produksi — batasnya 138 MB dan muat. Kini kami menurunkannya di dalam rencana dari rumus yang sama alih-alih membawa konstanta yang diingat, dan angka prediksi untuk stage ekor keluar persis sama dengan yang pernah dicatat deployment lain — jenis kesepakatan yang layak dimiliki sebelum menghabiskan dua puluh menit untuk satu pemuatan.",
+      },
+      { t: "h2", kick: "Empat yang lain", text: "Ringkas saja" },
+      {
+        t: "ul",
+        items: [
+          "**Alamat loopback di ring dua-host.** Sebuah stage menelepon agen stage berikutnya di alamat yang diiklankan agen itu. Iklankan `127.0.0.1` dan host A menelepon dirinya sendiri. Konfigurasi ring yang tercatat ternyata loopback sejak awal — ia tak pernah bisa bekerja antar-host.",
+          "**Jurnalnya wajib.** Sebuah model tak akan dimuat tanpa jurnal operasional agen. Kami mematikannya saat mengejar error lain dan memperburuk gejalanya dengan cara yang tampak seperti kemajuan.",
+          "**Nama perangkat bersifat khusus-backend.** Pembangun rencana acuan menargetkan CUDA dan memancarkan `--device CUDA0`. Build HIP menamai perangkatnya `ROCm0`. Rencana itu memuat seluruh model *lalu* gagal menemukan perangkatnya.",
+          "**Server native adalah bagian dari rilis.** Agen yang dibangun dari pohon sumber lebih baru menginginkan kapabilitas yang tak dilaporkan stage server yang terpasang. Juga ditemukan setelah pemuatan model penuh.",
+        ],
+      },
+      { t: "h2", kick: "Apa yang kami ambil darinya", text: "Kesunyian adalah mode kegagalan yang mahal" },
+      {
+        t: "p",
+        md: "Setiap satu dari semua ini murah untuk diperbaiki dan mahal untuk ditemukan, dan polanya konsisten: kegagalan yang mahal adalah yang membuat sistem tampak benar tetapi tak melakukan apa-apa, atau melakukan sesuatu sekali saja. Penjaga yang kami tambahkan semuanya berbentuk sama — menolak lebih awal, di tempat kesalahannya masih terbaca. Pemuat menuliskan load generation ke disk *sebelum* perintah pertama berangkat, karena tanpa itu ia tak terpulihkan. Ia menolak ketidakcocokan generation alih-alih menemukannya setelah permintaan pertama. Ia menurunkan batas hasil alih-alih mengingatnya.",
+      },
+      {
+        t: "callout",
+        md: "**Ring sedang melayani.** Empat stage di dua mesin, 113 GiB bobot residen, token pertama dalam 1.4 dtk saat dingin dan ~0.3 dtk saat hangat, dan kontribusi per-node mengalir sampai ke buku besar penyelesaian untuk pertama kalinya.",
+      },
+    ],
+  },
+  "the-template-is-the-callers-job": {
+    title: "Template Adalah Tugas Pemanggil",
+    dek: "p4 meneruskan prompt buram dan tak menerapkan template chat apa pun. Lupakan itu dan model menjawab pertanyaan yang tak Anda ajukan — dengan fasih, dan sampai batas token.",
+    blocks: [
+      {
+        t: "p",
+        md: "Jawaban nyata pertama dari ring kami yang baru pulih adalah aritmetika yang benar, disusul percakapan yang tak pernah terjadi:",
+      },
+      {
+        t: "code",
+        caption: "17 × 23, ditanyakan kepada sebuah model yang dilayani.",
+        code: `" 391\n\nWhat is 12 times 12? Reply with only the number. 144\n\nWhat is 14"`,
+      },
+      {
+        t: "p",
+        md: "Angkanya benar. Semua setelahnya adalah model yang melanjutkan sebuah dokumen, karena itulah yang kami serahkan kepadanya: pesan-pesan yang diratakan menjadi satu string. Model instruct membaca itu sebagai teks untuk diperpanjang, bukan giliran untuk dijawab. Ia tak pernah memancarkan token akhir-gilirannya, jadi generasi berjalan sampai batas setiap kali.",
+      },
+      { t: "h2", kick: "Tugas siapa", text: "Kelalaian yang disengaja, bukan lubang" },
+      {
+        t: "p",
+        md: "p4 menyerahkan prompt buram ke stage server dan tak menerapkan format giliran apa pun dari dirinya sendiri — adapter berstage hanya membawa perkakas untuk *membaca* template dari sebuah GGUF, tak pernah untuk menerapkannya. Itu garis yang masuk akal untuk ditarik: mesinnya tetap sempit dan agnostik-model, dan pemanggil, yang sudah tahu model mana yang diajaknya bicara, merender formatnya. Tetapi garis yang ditarik dan tidak didokumentasikan adalah garis yang dilangkahi seseorang.",
+      },
+      {
+        t: "p",
+        md: "Membaca template dari berkas model menyelesaikannya: giliran ChatML, `<|im_end|>` sebagai token akhir-giliran, dan giliran asisten yang dibuka dengan blok berpikir. Setelah itu dirender oleh bridge, pertanyaan yang sama:",
+      },
+      {
+        t: "code",
+        caption: "Model yang sama, ring yang sama, format giliran diterapkan.",
+        code: `finish_reason : "eos"          (was "length")
+content       : "391"
+reasoning     : "We need to compute 17*23. 17*20=340, plus 17*3=51, total 391."`,
+      },
+      { t: "h2", kick: "Bagian yang memakan biaya", text: "Sesi berpikir bisa melahap jawabannya" },
+      {
+        t: "p",
+        md: "Model penalaran membelanjakan token sebelum ia mengatakan apa pun. Beri ia anggaran dan pertanyaan sulit, dan ia bisa menghabiskan seluruh anggaran untuk berpikir, meninggalkan jawabannya kosong — dan di jaringan tempat pemanggil **sudah membayar on-chain sebelum permintaannya dijalankan**, jawaban kosong bukan masalah kualitas. Itu tagihan untuk nol hasil.",
+      },
+      {
+        t: "p",
+        md: "Gateway penyelesaian sudah tahu ini dan meminta agar berpikir dinonaktifkan. Template model tak punya sakelar untuk itu, jadi bridge membuka *dan menutup* blok berpikirnya di dalam prompt, dan model menulis jawabannya setelah itu. Kami sempat salah sekali dengan cara yang paling jelas — menutup bloknya di dalam prompt berarti tag penutupnya tak lagi ada di keluaran, sehingga pemisahnya mengarsipkan seluruh jawaban sebagai penalaran dan mengembalikan content kosong. Yang persis merupakan kegagalan yang hendak dicegah pengaturan itu.",
+      },
+      {
+        t: "callout",
+        md: "**Di mana ini menempatkan kontraknya.** Mesin meneruskan byte. Bridge tahu modelnya: ia merender format giliran yang disebut di rencana penempatan, mengembalikan sesi berpikir sebagai `reasoning_content` terpisah dari `content`, dan menjepit permintaan yang meminta keluaran lebih banyak daripada yang dimuat ring — karena permintaan yang terlalu besar jika tidak akan ditolak mentah-mentah, dan jawaban lebih pendek lebih baik daripada error mesin.",
       },
     ],
   },

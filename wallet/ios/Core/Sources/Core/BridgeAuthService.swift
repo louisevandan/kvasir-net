@@ -1,0 +1,73 @@
+import Foundation
+import TweetNacl
+
+/// Sign-In-With-Solana against a Kvasir bridge to obtain the bearer token an
+/// autonomous node uses to poll/enroll on an auth-gated (public, remote) bridge.
+///
+/// Mirrors `wallet/android/.../BridgeAuthService.kt`. The server side of this flow
+/// — controller/siws.py and controller/hub.py — was deleted with the retired
+/// control plane, so /api/auth/* 404s until the bridge serves node tokens:
+///   1. POST /api/auth/challenge {wallet}          -> {nonce, message}
+///   2. sign the message bytes with the wallet key -> base64 ed25519 signature
+///   3. POST /api/auth/node-token {wallet,nonce,signature} -> {node_token}
+/// The node token is scoped to participation, so the bridge skips 2FA (which a
+/// mobile wallet has no UI for). Returns the bearer token the node polls with.
+public actor BridgeAuthService {
+    private let baseString: String
+    private let mnemonic: [String]
+    private let session = URLSession(configuration: .ephemeral)
+
+    public init(baseUrl: String, mnemonic: [String]) {
+        var b = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        while b.hasSuffix("/") { b.removeLast() }
+        self.baseString = b
+        self.mnemonic = mnemonic.map { $0.lowercased() }
+    }
+
+    private struct Challenge: Decodable { let nonce: String?; let message: String? }
+    private struct TokenResp: Decodable { let node_token: String? }
+
+    /// Mint a long-lived NODE token with a wallet signature alone — no OTP.
+    public func nodeToken() async throws -> String {
+        let kp = try await WalletDeriver.keyPair(phrase: mnemonic)
+        let wallet = kp.publicKey.base58EncodedString
+
+        let ch: Challenge = try await post("/api/auth/challenge", ["wallet": wallet])
+        guard let message = ch.message, let nonce = ch.nonce,
+              !message.isEmpty, !nonce.isEmpty else {
+            throw BridgeAuthError.message("bridge did not issue a challenge")
+        }
+        let sig = try NaclSign.signDetached(message: Data(message.utf8), secretKey: kp.secretKey)
+        let sigB64 = sig.base64EncodedString()
+
+        let resp: TokenResp = try await post("/api/auth/node-token",
+            ["wallet": wallet, "nonce": nonce, "signature": sigB64])
+        guard let token = resp.node_token, !token.isEmpty else {
+            throw BridgeAuthError.message("bridge issued no node token")
+        }
+        return token
+    }
+
+    // MARK: transport (mirrors StakingService)
+    private func post<T: Decodable>(_ path: String, _ body: [String: Any]) async throws -> T {
+        guard let url = URL(string: baseString + path) else { throw BridgeAuthError.message("bad bridge URL") }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 20
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await session.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            let msg = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+                ?? String(data: data, encoding: .utf8) ?? "HTTP \(code)"
+            throw BridgeAuthError.message(msg)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+}
+
+public enum BridgeAuthError: Error, CustomStringConvertible {
+    case message(String)
+    public var description: String { if case let .message(m) = self { return m }; return "bridge auth error" }
+}

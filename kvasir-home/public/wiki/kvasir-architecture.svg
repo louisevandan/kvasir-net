@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1080" width="1280" height="1080" role="img" aria-label="Kvasir end-to-end architecture">
+  <defs>
+    <style>
+      .bg   { fill:#0b0c11 }
+      .band { fill:#12141b; stroke:#262a35; stroke-width:1; rx:14 }
+      .box  { fill:#181b23; stroke:#333846; stroke-width:1.2; rx:10 }
+      .boxa { fill:#1d1522; stroke:#ff3d8b; stroke-width:1.4; rx:10 }
+      .boxp { fill:#171a28; stroke:#a855f7; stroke-width:1.4; rx:10 }
+      .boxg { fill:#12211c; stroke:#3cbf8e; stroke-width:1.4; rx:10 }
+      .boxd { fill:#15171f; stroke:#4a5063; stroke-width:1.2; stroke-dasharray:5 4; rx:10 }
+      .t    { fill:#f4f5f8; font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif }
+      .ttl  { font-size:15px; font-weight:650 }
+      .sub  { fill:#9aa1b4; font-size:11.5px }
+      .mono { fill:#c9cedd; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px }
+      .band-label { fill:#6b7183; font-size:11px; font-weight:650; letter-spacing:.12em }
+      .edge { stroke:#5b6377; stroke-width:1.6; fill:none }
+      .edge-live { stroke:#3cbf8e; stroke-width:1.8; fill:none }
+      .edge-plan { stroke:#6b7183; stroke-width:1.6; fill:none; stroke-dasharray:6 5 }
+      .elabel { fill:#8b92a6; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px }
+      .head { fill:#f4f5f8; font-size:22px; font-weight:700 }
+      .dek  { fill:#9aa1b4; font-size:13px }
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5b6377"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#3cbf8e"/>
+    </marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6b7183"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1280" height="1080"/>
+  <text class="t head" x="48" y="54">Kvasir — end to end</text>
+  <text class="t dek" x="48" y="78">Who holds the keys, who takes the payment, who runs the layers, and what is still a proposal.</text>
+
+  <!-- ============ 1. clients ============ -->
+  <rect class="band" x="48" y="106" width="1184" height="122"/>
+  <text class="t band-label" x="66" y="130">WALLETS · self-custody, keys never leave the device</text>
+  <g>
+    <rect class="box" x="66" y="142" width="256" height="70"/>
+    <text class="t ttl" x="82" y="168">iOS wallet</text>
+    <text class="t sub" x="82" y="188">Swift · wallet/ios</text>
+    <text class="t sub" x="82" y="204">stake · claim · node monitor</text>
+  </g>
+  <g>
+    <rect class="box" x="338" y="142" width="256" height="70"/>
+    <text class="t ttl" x="354" y="168">Android wallet</text>
+    <text class="t sub" x="354" y="188">Kotlin · wallet/android</text>
+    <text class="t sub" x="354" y="204">stake · claim · node monitor</text>
+  </g>
+  <g>
+    <rect class="boxa" x="610" y="142" width="286" height="70"/>
+    <text class="t ttl" x="626" y="168">Desktop app  (Electron)</text>
+    <text class="t sub" x="626" y="188">wallet/desktop · React + Electron</text>
+    <text class="t sub" x="626" y="204">wallet · AI inference · runs a node</text>
+  </g>
+  <g>
+    <rect class="box" x="912" y="142" width="304" height="70"/>
+    <text class="t ttl" x="928" y="168">Browser wallet</text>
+    <text class="t sub" x="928" y="188">same build, served by the gateway at /</text>
+    <text class="t sub" x="928" y="204">full wallet, not a read-only console</text>
+  </g>
+
+  <!-- clients -> tunnel -->
+  <path class="edge" d="M194 212 L194 262" marker-end="url(#a)"/>
+  <path class="edge" d="M466 212 L466 262" marker-end="url(#a)"/>
+  <path class="edge" d="M753 212 L753 262" marker-end="url(#a)"/>
+  <path class="edge" d="M1064 212 L1064 262" marker-end="url(#a)"/>
+
+  <!-- ============ 2. public edge ============ -->
+  <rect class="boxp" x="48" y="264" width="1184" height="54"/>
+  <text class="t ttl" x="66" y="288">Cloudflare Tunnel</text>
+  <text class="t sub" x="66" y="306">the only public path — one connector per tunnel, or routing goes non-deterministic</text>
+  <text class="t mono" x="1000" y="296">gate.kvasir-ai.net</text>
+
+  <path class="edge" d="M640 318 L640 356" marker-end="url(#a)"/>
+
+  <!-- ============ 3. gateway ============ -->
+  <rect class="band" x="48" y="358" width="1184" height="150"/>
+  <text class="t band-label" x="66" y="382">GATEWAY · solana/staking-service :8791</text>
+  <g>
+    <rect class="box" x="66" y="394" width="368" height="96"/>
+    <text class="t ttl" x="82" y="420">API gateway</text>
+    <text class="t sub" x="82" y="440">OpenAI-compatible surface</text>
+    <text class="t mono" x="82" y="459">/v1/chat/completions</text>
+    <text class="t mono" x="82" y="476">/api/pay/quote · /api/inference</text>
+  </g>
+  <g>
+    <rect class="boxg" x="450" y="394" width="368" height="96"/>
+    <text class="t ttl" x="466" y="420">Settlement gateway</text>
+    <text class="t sub" x="466" y="440">same process, different surface</text>
+    <text class="t mono" x="466" y="459">/api/stake · /api/node/* · /api/credits/*</text>
+    <text class="t sub" x="466" y="476">verifies KVR on-chain · credits contribution</text>
+  </g>
+  <g>
+    <rect class="box" x="834" y="394" width="382" height="96"/>
+    <text class="t ttl" x="850" y="420">Solana (devnet)</text>
+    <text class="t sub" x="850" y="440">KVR mint · treasury ATA</text>
+    <text class="t sub" x="850" y="459">payment verified before inference</text>
+    <text class="t sub" x="850" y="476">refunded when the bridge fails</text>
+  </g>
+  <path class="edge" d="M818 442 L834 442" marker-end="url(#a)"/>
+
+  <path class="edge-live" d="M250 490 L250 556" marker-end="url(#ag)"/>
+  <text class="t elabel" x="262" y="516">X-Kvasir-Service-Token</text>
+  <path class="edge-live" d="M634 490 L634 556" marker-end="url(#ag)"/>
+  <text class="t elabel" x="646" y="516">/api/contributions  every 30 s</text>
+
+  <!-- ============ 4. bridge ============ -->
+  <rect class="boxa" x="48" y="558" width="800" height="106"/>
+  <text class="t ttl" x="66" y="584">p4 bridge — p4bridge/server.js  :19000</text>
+  <text class="t sub" x="66" y="604">loopback only · the HTTP face of the p4 engine, and an OUTER in p4 terms</text>
+  <text class="t mono" x="66" y="624">/api/controllers · /api/runtime · /api/contributions · /c/&lt;model&gt;/v1/chat/completions</text>
+  <text class="t sub" x="66" y="646">renders the chat template and splits the reasoning block — p4 applies neither</text>
+
+  <!-- p4 studio, planned -->
+  <rect class="boxd" x="872" y="558" width="344" height="106"/>
+  <text class="t ttl" x="888" y="584">P4 Studio</text>
+  <text class="t sub" x="888" y="604">p4's own operator console</text>
+  <text class="t sub" x="888" y="624">wants per-request observability from the</text>
+  <text class="t sub" x="888" y="642">agents — proposed upstream, not implemented</text>
+  <path class="edge-plan" d="M872 640 L848 640" marker-end="url(#ap)"/>
+
+  <path class="edge-live" d="M300 664 L300 724" marker-end="url(#ag)"/>
+  <text class="t elabel" x="312" y="698">P4E3 events → each agent's advertised address</text>
+
+  <!-- ============ 5. p4 network ============ -->
+  <rect class="band" x="48" y="726" width="1184" height="314"/>
+  <text class="t band-label" x="66" y="750">p4 NETWORK · agents own nodes, stage servers hold layers</text>
+
+  <!-- server hosts -->
+  <g>
+    <rect class="box" x="66" y="762" width="560" height="176"/>
+    <text class="t ttl" x="82" y="788">Server hosts  (MI250 ×2, 8 GCD each)</text>
+    <text class="t sub" x="82" y="807">agents advertise over the fastest shared network — InfiniBand here,</text>
+    <text class="t sub" x="82" y="823">never loopback: a stage dials the next stage's agent directly</text>
+
+    <rect class="boxg" x="82" y="838" width="256" height="82"/>
+    <text class="t ttl" x="96" y="862">p4 agent</text>
+    <text class="t mono" x="96" y="881">p4-agent 0.0.0.0:42011</text>
+    <text class="t mono" x="96" y="897">tcp://10.10.10.111:42011</text>
+    <text class="t sub" x="96" y="913">operational journal required for LOAD</text>
+
+    <rect class="boxg" x="354" y="838" width="256" height="82"/>
+    <text class="t ttl" x="368" y="862">Stage servers</text>
+    <text class="t mono" x="368" y="881">p4_staged_server</text>
+    <text class="t sub" x="368" y="897">one process per layer slice</text>
+    <text class="t sub" x="368" y="913">s0 [0,12) s1 [12,23) s2 s3 …</text>
+    <path class="edge-live" d="M338 879 L354 879" marker-end="url(#ag)"/>
+  </g>
+
+  <!-- edge nodes + relay -->
+  <g>
+    <rect class="box" x="650" y="762" width="566" height="176"/>
+    <text class="t ttl" x="666" y="788">Edge nodes  (desktop, mobile)</text>
+    <text class="t sub" x="666" y="807">no dialable address of their own, so they reach the network</text>
+    <text class="t sub" x="666" y="823">through the relay rather than being dialled</text>
+
+    <rect class="box" x="666" y="838" width="228" height="82"/>
+    <text class="t ttl" x="680" y="862">Desktop / mobile node</text>
+    <text class="t sub" x="680" y="881">installer ships the p4 agent</text>
+    <text class="t sub" x="680" y="897">macOS universal · Windows .exe</text>
+    <text class="t sub" x="680" y="913">signs with the wallet keypair</text>
+
+    <rect class="boxp" x="926" y="838" width="274" height="82"/>
+    <text class="t ttl" x="940" y="862">Kvasir relay</text>
+    <text class="t sub" x="940" y="881">KVR1 framing · ed25519 challenge</text>
+    <text class="t sub" x="940" y="897">the auth boundary; never parses payloads</text>
+    <text class="t sub" x="940" y="913">gives a laptop a dialable address</text>
+    <path class="edge-live" d="M894 879 L926 879" marker-end="url(#ag)"/>
+  </g>
+
+  <!-- edge nodes serving expert shards: designed, not yet running -->
+  <path class="edge-plan" d="M1063 970 L490 970" marker-end="url(#ap)"/>
+  <text class="t elabel" x="512" y="958">expert shards from edge nodes — designed, not yet running</text>
+
+  <!-- p4 binaries note -->
+  <text class="t sub" x="66" y="1004">p4 binaries — </text>
+  <text class="t mono" x="150" y="1004">p4-agent</text>
+  <text class="t sub" x="214" y="1004">and</text>
+  <text class="t mono" x="244" y="1004">p4_staged_server</text>
+  <text class="t sub" x="360" y="1004">are one release: an agent newer than the</text>
+  <text class="t sub" x="66" y="1022">native server fails at READY with a missing HELLO capability, after loading the whole model.</text>
+
+  <!-- legend -->
+  <g>
+    <line class="edge-live" x1="800" y1="1014" x2="840" y2="1014"/>
+    <text class="t sub" x="848" y="1018">running today</text>
+    <line class="edge-plan" x1="972" y1="1014" x2="1012" y2="1014"/>
+    <text class="t sub" x="1020" y="1018">designed / proposed</text>
+  </g>
+</svg>

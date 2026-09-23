@@ -8,7 +8,10 @@
 
 export const LINKS = {
   github: "https://github.com/louisevandan/kvasir-net",
-  hub: "https://hub.kvasir-ai.net",
+  // There is no hub link. The control plane that answered at hub.kvasir-ai.net
+  // was retired, the bridge took over its role, and the DNS record was removed
+  // on 2026-09-21 — the host does not resolve, so a link to it cannot even fail
+  // informatively.
   gateway: "https://gate.kvasir-ai.net",
   runNode: "/run-node",
   technology: "/technology",
@@ -23,14 +26,22 @@ export const LINKS = {
 /* Download destinations for the node-operator guide. Empty string => the guide
    renders a "준비 중 (coming soon)" state instead of a dead link. Fill these in
    as the desktop installers ship and the mobile apps are published. */
-// Desktop installers live in the Cloudflare R2 bucket `kvasir-downloads`
-// (public r2.dev URL). Version-less object keys keep these links stable across
-// releases — re-upload the same key to publish a new build.
-const R2_DOWNLOADS = "https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev";
+// Desktop installers are published under kvasir-ai.net/download/... — see
+// public/_redirects, which forwards each key to the Cloudflare R2 bucket
+// `kvasir-downloads`. Keys carry no version, so re-uploading the same key ships
+// a new build without invalidating a single published link.
+const DOWNLOAD_BASE = "/download";
 export const DOWNLOADS = {
-  desktopMac: `${R2_DOWNLOADS}/Kvasir-Wallet-mac-universal.dmg`,
-  desktopWin: `${R2_DOWNLOADS}/Kvasir-Wallet-win-x64.exe`,
-  desktopLinux: `${R2_DOWNLOADS}/Kvasir-Wallet-linux-x64.tar.gz`,
+  desktopMac: `${DOWNLOAD_BASE}/Kvasir-Wallet-mac-universal.dmg`,
+  desktopWin: `${DOWNLOAD_BASE}/Kvasir-Wallet-win-x64.exe`,
+  desktopLinux: `${DOWNLOAD_BASE}/Kvasir-Wallet-linux-x64.tar.gz`,
+  // A development build, signed with a development key. /install says what that
+  // means before anyone taps it — Android refuses the install until the owner
+  // permits it, and a download with no explanation just reads as broken.
+  android: `${DOWNLOAD_BASE}/Kvasir-Wallet-android-arm64.apk`,
+  // iOS has no equivalent file to host: Apple will not run an application that
+  // is not signed for the specific device, so /install explains building it.
+  installGuide: "/install",
   appStore: "",
   googlePlay: "",
 };
@@ -50,6 +61,10 @@ export const NAV_ITEMS = [
       { key: "wiki", href: "/wiki" },
     ],
   },
+  // Top level rather than tucked into a dropdown: at seed stage the question
+  // "who is building this" is asked early and answered nowhere else, and the
+  // footer link was invisible on mobile, where the nav is a hamburger.
+  { key: "team", href: "/team" },
 ] as const;
 
 /* Example request — code, never translated. */
@@ -57,7 +72,7 @@ export const CODE_SNIPPET = `curl https://gate.kvasir-ai.net/v1/chat/completions
   -H "Authorization: Bearer $KVR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "Qwen3.5-122B-A10B",
+    "model": "step-3.7-flash",
     "messages": [
       { "role": "user", "content": "Explain layer-split inference." }
     ]
@@ -79,8 +94,8 @@ export const PERF_TIERS = [
   { tier: "C", tps: "< 30 tok/s", mult: "×0.7" },
 ];
 
-/* linkcpp's own one-liner — a verbatim English quote, shown as a callout. */
-export const LINKCPP_TAGLINE =
+/* The engine's own one-liner — a verbatim English quote, shown as a callout. */
+export const ENGINE_TAGLINE =
   "Run large AI models across multiple GPUs and machines on an inference engine kept close to upstream.";
 
 /* Device types (name + status are universal; the detail line is translated in
@@ -92,17 +107,22 @@ export const DEVICE_META = [
   { name: "Mobile", status: "live" as const },
 ];
 
-/* Proof stats — the numbers are universal; labels are translated in t.proof.items. */
-export const PROOF_STATS = ["122B", "4", "2", "4"];
+/* Proof stats — the numbers are universal; labels are translated in t.proof.items.
+   Each one is something an operator can check: the model serving right now, how
+   many stages it is placed as, the cross-backend agreement we measured, and the
+   platforms the wallet ships on. */
+export const PROOF_STATS = ["428B", "16", "0.9999", "4"];
 
 /* Roadmap tone per item (positive = live, caution = coming). */
-export const ROADMAP_TONE = ["positive", "caution", "caution"] as const;
+export const ROADMAP_TONE = ["positive", "caution", "caution", "caution"] as const;
 
-/* A 49-layer model split across a heterogeneous set of devices — one of each,
-   to show that any device can be a node. Layers sum to 49 (Qwen3.5-122B). */
+/* A 45-layer model split across a heterogeneous set of devices — one of each, to
+   show that any device can be a node. Layers sum to 45 (Step-3.7-Flash, the 428B
+   MoE serving today). Illustrative: production places it as 16 stages on two
+   machines, not one device per kind. */
 export const NODE_SPLIT = [
-  { id: "GPU", layers: 15, tier: "S" },
-  { id: "CPU", layers: 12, tier: "B" },
-  { id: "NPU", layers: 12, tier: "B" },
-  { id: "Phone", layers: 10, tier: "C" },
+  { id: "GPU", layers: 14, tier: "S" },
+  { id: "CPU", layers: 11, tier: "B" },
+  { id: "NPU", layers: 11, tier: "B" },
+  { id: "Phone", layers: 9, tier: "C" },
 ];

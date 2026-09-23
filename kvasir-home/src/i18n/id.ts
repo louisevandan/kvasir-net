@@ -14,6 +14,7 @@ export const id: Dict = {
     technology: "Teknologi",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Tim",
   },
 
   actions: {
@@ -33,25 +34,25 @@ export const id: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · AI Terdesentralisasi — melampaui monopoli",
-    headline1: "Sumbangkan komputasi.",
-    headline2: "Dapatkan KVR.",
-    sub: "Kvasir membagi model open besar di seluruh perangkat keras bersama dengan linkcpp, sehingga tidak ada satu node pun yang harus menyimpan seluruh model. Sumbangkan GPU, CPU, atau ponsel — dan dapatkan KVR atas layer yang Anda jalankan.",
+    eyebrow: "DePIN · Model frontier tanpa pusat data",
+    headline1: "Anda tidak punya perangkat keras",
+    headline2: "untuk model 428B. Kami juga tidak.",
+    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 428 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",
       "Kompatibel dengan OpenAI + Anthropic",
-      "Sumber tersedia (BSL)",
+      "Sumber tersedia (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "satu ring · tanpa master",
     topologyCaption:
-      "Sebuah ring perangkat — GPU, CPU, NPU, dan ponsel — masing-masing menyimpan beberapa dari 49 layer. Setiap node menjalankan bagiannya dan hanya meneruskan batas hidden-state ke tetangganya; node terakhir mengembalikan token melalui ring. Tidak ada node yang harus menyimpan seluruh model, dan ring tidak memiliki master pusat — ilustratif.",
+      "Sebuah ring perangkat — GPU, CPU, NPU, dan ponsel — masing-masing menyimpan beberapa layer dari model. Setiap node menjalankan bagiannya dan hanya meneruskan batas hidden-state ke tetangganya; node terakhir mengembalikan token melalui ring. Tidak ada node yang harus menyimpan seluruh model, dan ring tidak memiliki master pusat — ilustratif.",
   },
 
   thesis: {
     eyebrow: "Mengapa AI terdesentralisasi",
     title: "AI tidak seharusnya dimiliki oleh segelintir perusahaan",
-    lede: "Inferensi terdepan kian terkonsentrasi di balik segelintir pusat data tertutup — bobot tertutup, akses berbayar, satu tagihan dibayar ke satu pemilik. Kvasir menempuh arah sebaliknya: model open yang disajikan melalui jaringan tanpa izin dari perangkat sehari-hari, dimiliki dan dihasilkan oleh orang-orang yang menjalankannya.",
+    lede: "Inferensi terdepan kian terkonsentrasi di balik segelintir pusat data tertutup — bobot tertutup, akses berbayar, satu tagihan dibayar ke satu pemilik. Kvasir dibangun dengan arah sebaliknya: model open yang disajikan melalui jaringan perangkat sehari-hari, dimiliki dan dihasilkan oleh orang-orang yang menjalankannya. Hari ini engine itu beserta penyelesaiannya berjalan di armada kami sendiri, dan sebuah perangkat sudah bisa mendaftar, menyumbang komputasi, dan dibayar; membuka ring penyajian itu sendiri untuk siapa pun adalah gate berikutnya. Peta jalan di bawah menyebutkan sejauh mana setiap bagian sudah sampai.",
     centralizedLabel: "AI Terpusat",
     centralizedPoints: [
       "Segelintir hyperscaler memiliki GPU",
@@ -62,7 +63,7 @@ export const id: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Perangkat apa pun bergabung ke ring peer-to-peer — tanpa master pusat di dalam ring",
-      "Engine linkcpp bersumber tersedia — berlisensi BSL dan dapat diperiksa sepenuhnya",
+      "Engine p4 bersumber tersedia — BSL 1.1 dan dapat diperiksa sepenuhnya",
       "Kontributor mendapatkan KVR atas komputasi nyata yang mereka berikan",
       "Dompet kustodi mandiri — kunci Anda tidak pernah meninggalkan perangkat Anda",
     ],
@@ -99,7 +100,7 @@ export const id: Dict = {
       {
         title: "Bagi",
         body: "Model dibagi menjadi jendela layer yang berdekatan. Setiap perangkat menyimpan salinan file model tetapi hanya memuat jendelanya sendiri ke memori, sehingga tidak ada node yang harus menjalankan seluruhnya.",
-        note: "Qwen3.5-122B · 49 layer · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layer · 16 stage",
       },
       {
         title: "Sajikan",
@@ -154,10 +155,10 @@ export const id: Dict = {
     title: "Satu endpoint, didukung banyak perangkat",
     lede: "Pertahankan klien OpenAI atau Anthropic Anda yang sudah ada. Arahkan ke gateway Kvasir dan bayar per inferensi dengan KVR — tanpa penulisan ulang.",
     points: [
-      "Kompatibel dengan OpenAI: langsung pakai untuk /v1/chat/completions, /v1/responses, /v1/models",
+      "Kompatibel dengan OpenAI: langsung pakai untuk /v1/chat/completions dan /v1/models",
       "Kompatibel dengan Anthropic: /anthropic/v1/messages dan /anthropic/v1/models",
       "Bayar per inferensi dengan KVR: kuotasi → pembayaran → inferensi",
-      "Katalog model langsung yang diagregasi dari hub yang dapat dijangkau",
+      "Katalog model langsung yang diagregasi dari bridge yang dapat dijangkau",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -165,7 +166,7 @@ export const id: Dict = {
   token: {
     eyebrow: "Token & imbalan",
     title: "KVR membayar komputasi — dan memberi imbalan atasnya",
-    lede: "KVR adalah unit yang dibelanjakan pengembang untuk inferensi dan unit yang didapatkan kontributor atas layer yang mereka jalankan. Imbalan komputasi berasal dari kerja yang terukur; host gateway dan hub juga memperoleh imbalan atas uptime.",
+    lede: "KVR adalah unit yang dibelanjakan pengembang untuk inferensi dan unit yang didapatkan kontributor atas layer yang mereka jalankan. Imbalan komputasi berasal dari kerja yang terukur; host gateway dan bridge juga memperoleh imbalan atas uptime.",
     facts: [
       { k: "Simbol", v: "KVR", note: "nama on-chain “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "devnet hari ini" },
@@ -188,7 +189,7 @@ export const id: Dict = {
   network: {
     eyebrow: "Jaringan & imbalan",
     title: "Setiap peran dalam jaringan mendapatkan KVR",
-    lede: "Ring node komputasi dikoordinasikan oleh peran hub dan gateway. Masing-masing dibayar dengan KVR atas apa yang sebenarnya dilakukannya — komputasi atas layer yang dijalankan, infrastruktur atas uptime yang dijaga.",
+    lede: "Di depan ring node komputasi berdiri bridge dan gateway penyelesaian. Masing-masing dibayar dengan KVR atas apa yang sebenarnya dilakukannya — komputasi atas layer yang dijalankan, infrastruktur atas uptime yang dijaga.",
     roles: [
       {
         role: "Node komputasi",
@@ -203,14 +204,14 @@ export const id: Dict = {
         earns: "uptime per jam + bonus inferensi ×1.5",
       },
       {
-        role: "Host hub",
-        tagline: "Bidang kendali",
-        body: "Menemukan perangkat, merencanakan penempatan layer, dan mengorkestrasi ring. Peran paling krusial — sehingga mendapatkan imbalan uptime per jam tertinggi karena menjaga jaringan tetap terkoordinasi.",
+        role: "Host bridge",
+        tagline: "Pintu depan engine",
+        body: "Memasang sesi di seluruh stage sebuah model, mengirim permintaan ke node kepala, mengumpulkan aliran token, dan melaporkan kontribusi setiap node — serta menyajikan market yang diikuti perangkat yang berkontribusi. Tidak ada yang mencapai ring tanpanya, sehingga mendapatkan imbalan uptime per jam tertinggi.",
         earns: "uptime per jam tertinggi",
       },
     ],
     rolesNote:
-      "Peran bisa ditumpuk: satu mesin bisa menjadi komputasi, gateway, dan hub sekaligus, dan imbalannya dijumlahkan. Semuanya diselesaikan dalam KVR ke dompet milik node itu sendiri.",
+      "Peran bisa ditumpuk: satu mesin bisa menjadi komputasi, gateway, dan bridge sekaligus, dan imbalannya dijumlahkan. Semuanya diselesaikan dalam KVR ke dompet milik node itu sendiri.",
     formulaTitle: "Bagaimana imbalan dihitung",
     formulaLabels: ["Unit komputasi", "Efektif", "Uptime infra"],
     tiersTitle: "Tingkat performa",
@@ -220,25 +221,25 @@ export const id: Dict = {
 
   tech: {
     eyebrow: "Di balik layar",
-    title: "linkcpp — engine di balik jaringan",
-    lede: "linkcpp adalah hub kendali terbuka yang mengubah perangkat keras sehari-hari menjadi engine inferensi terdistribusi. Ring runtime-nya memungkinkan setiap perangkat hanya menyimpan beberapa layer dan meneruskan hidden state ke tetangganya — tanpa master pusat di dalam ring — sementara data plane mesin inferensi tetap dekat dengan upstream, dengan sekumpulan kecil patch.",
-    taglineCaption: "— linkcpp, dalam kata-katanya sendiri",
+    title: "p4 — engine di balik jaringan",
+    lede: "p4 menyatukan perangkat keras campuran menjadi satu kumpulan penyaji: setiap perangkat menyimpan beberapa layer model dan hanya meneruskan hidden state ke tetangganya, tanpa master pusat di dalam ring. Ia menggantikan linkcpp, engine yang dijalankan Kvasir hingga pertengahan 2026, dan menjaga data plane tetap dekat dengan upstream dengan sekumpulan kecil patch.",
+    taglineCaption: "— p4, dalam kata-katanya sendiri",
     points: [
       {
         title: "Ring runtime",
         body: "Setiap perangkat menyimpan model yang sama dan hanya memuat jendela layer-nya, lalu membuka satu tautan ke pendahulunya dan satu ke penerusnya. Batas hidden-state bersirkulasi mengelilingi ring dan rank terakhir mengembalikan token — tanpa master pusat, tidak ada node yang menyimpan semuanya.",
       },
       {
-        title: "Hub kendali linkcpp",
-        body: "Satu hub ber-Docker — bidang kendali yang tak dimiliki data plane RPC mesin inferensi. Ia menemukan perangkat, merencanakan penempatan layer, meluncurkan worker, dan mengekspos gateway. Sumber tersedia di bawah Business Source License (BSL) 1.1.",
+        title: "Bidang kendali p4",
+        body: "Bidang kendali yang tak dimiliki data plane RPC. Ia menemukan perangkat, merencanakan penempatan layer dan expert, meluncurkan worker, dan mengekspos gateway. Rencana penempatan adalah artefak operator — engine tidak akan memuat model hanya karena diminta oleh sebuah permintaan web. Sumber tersedia di bawah Business Source License (BSL) 1.1.",
       },
       {
         title: "Penempatan layer terdistribusi",
-        body: "linkcpp membaca metadata GGUF dan menghitung jendela layer berdekatan per node melalui rank manifest, ditambah opsi offload expert-FFN MoE ke RAM node.",
+        body: "p4 membaca metadata GGUF dan menghitung jendela layer berdekatan per node dari sebuah rencana penempatan, ditambah opsi offload expert-FFN MoE ke RAM node. Step-3.7-Flash, MoE 428B, saat ini ditempatkan sebagai 16 stage di dua mesin.",
       },
       {
         title: "Keamanan SIWS + 2FA",
-        body: "Untuk deployment publik, akses operator adalah tanda tangan Sign-In With Solana atas nonce server, ditambah TOTP 2FA dan kode cadangan sekali pakai — di hub maupun gateway.",
+        body: "Untuk deployment publik, akses operator adalah tanda tangan Sign-In With Solana atas nonce server, ditambah TOTP 2FA dan kode cadangan sekali pakai. Perangkat yang hanya ingin menyumbang komputasi tidak pernah masuk: ia membuktikan kepemilikan dompet ke bridge dan menerima token yang cakupannya hanya partisipasi, tidak lebih.",
       },
     ],
     openText:
@@ -252,13 +253,18 @@ export const id: Dict = {
     items: [
       {
         phase: "Sekarang",
-        title: "Inferensi lintas perangkat, aktif",
-        body: "GPU, CPU, dan ponsel menyajikan layer melalui ring runtime (dukungan NPU sedang dikembangkan). Model 122B berjalan menyeluruh di tiga mesin fisik; kontribusi dikreditkan menyeluruh; dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna; akses berjalan melalui HTTPS di domain publik.",
+        title: "Penyajian berskala frontier, aktif",
+        body: "Step-3.7-Flash — MoE 428B — ditempatkan sebagai 16 stage di dua mesin AMD MI250 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
+      },
+      {
+        phase: "Sedang berjalan",
+        title: "Ring, gateway, klien",
+        body: "Gateway penyelesaian sudah diporting ke p4 dan sudah melayani: satu permintaan berbayar melewati gateway, bridge, dan ring MI250, lalu ditagih berdasarkan token yang dipakainya. Di ring yang menyajikan, Step-3.7-Flash mengembalikan 28–31 token per detik pada satu stream, dengan token pertama dalam 270–285 ms. Masih berjalan: ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti, klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4 bukan sekadar mendaftarkannya, dan sharding bergranularitas expert sedang dibawa ke p4 — perangkat sudah bisa mengklaim window dan membuka relay, tetapi unduhan shard dan dispatch di sisi engine belum ditulis.",
       },
       {
         phase: "Segera",
-        title: "Mainnet & penyelesaian on-chain",
-        body: "Semua yang ada hari ini berjalan di Solana devnet dengan layanan penyelesaian off-chain. Program imbalan on-chain dan mainnet sedang direncanakan.",
+        title: "Kimi K3, dan penyelesaian melampaui devnet",
+        body: "Verifikasi Kimi K3 (MoE 2.8T) di p4 adalah gate berikutnya, dan laporan GLM-5.2 — diukur di linkcpp, engine sebelumnya — masih belum dipublikasikan. Penyelesaian berjalan di Solana devnet dengan layanan off-chain; program imbalan on-chain dan mainnet sedang direncanakan.",
       },
       {
         phase: "Segera",
@@ -269,16 +275,16 @@ export const id: Dict = {
   },
 
   proof: {
-    pill: "Terverifikasi di armada uji kami",
-    title: "Inferensi terdistribusi nyata, terverifikasi di beberapa mesin",
+    pill: "Diukur di mesin kami sendiri",
+    title: "Apa yang berjalan, dan apa yang terukur",
     items: [
-      "param disajikan menyeluruh di 3 mesin fisik",
-      "dompet node terpisah, masing-masing dikreditkan atas bagian layer-nya (armada uji)",
-      "permukaan API — kompatibel dengan OpenAI + Anthropic",
+      "MoE yang disajikan hari ini — Step-3.7-Flash, di dua mesin AMD MI250",
+      "stage tempat model dipecah, ditempatkan di dua agen",
+      "kemiripan kosinus antara ROCm, CUDA, dan CPU ponsel — perangkat keras campuran sepakat",
       "platform dompet — web · desktop · iOS · Android",
     ],
     strip:
-      "122B disajikan di 3 mesin · kompatibel dengan OpenAI + Anthropic · dompet di web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B di dua mesin MI250 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
@@ -287,11 +293,11 @@ export const id: Dict = {
     ctaBody:
       "Jalankan node dan dapatkan KVR atas layer yang Anda sajikan, atau sambungkan gateway ke aplikasi Anda dengan endpoint yang kompatibel dengan OpenAI/Anthropic.",
     tagline:
-      "Merek jaringan untuk inferensi AI terdesentralisasi, ditenagai oleh hub kendali linkcpp — engine bersumber tersedia (BSL) yang membagi model besar di seluruh perangkat sehari-hari (pada data plane mesin inferensi yang tetap dekat dengan upstream).",
+      "Merek jaringan untuk inferensi AI terdesentralisasi, ditenagai oleh engine p4 — bersumber tersedia di bawah BSL 1.1, membagi model besar di seluruh perangkat sehari-hari pada data plane yang tetap dekat dengan upstream.",
     disclaimerStrong: "Penafian.",
     disclaimer:
       "KVR adalah token utilitas / kontribusi yang digunakan untuk membayar inferensi dan memberi imbalan komputasi. Saat ini berjalan di Solana devnet — bukan aset mainnet yang dapat diperdagangkan dan tidak ada satu pun di sini yang merupakan penawaran, harga, atau janji imbal hasil finansial. Imbalan komputasi mencerminkan kerja yang terukur; host infrastruktur juga memperoleh imbalan atas uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine di bawah Business Source License (BSL) 1.1 — lihat lisensinya untuk penggunaan yang diizinkan.",
+    rights: "© 2026 Kvasir · p4. Engine di bawah Business Source License (BSL) 1.1 — lihat lisensinya untuk penggunaan yang diizinkan.",
   },
 
   guide: {
@@ -299,28 +305,47 @@ export const id: Dict = {
     eyebrow: "Panduan operator node",
     headline1: "Bawa daya komputasi,",
     headline2: "jalankan node.",
-    sub: "Buat dompet, stake KVR, lalu hubungkan perangkat Anda ke jaringan Kvasir dan dapatkan KVR untuk daya komputasi yang Anda kontribusikan. Pilih platform Anda di bawah untuk langkah unduh, instal, dan jalankan.",
+    sub: "Buat dompet, hubungkan perangkat Anda ke jaringan Kvasir, dan dapatkan KVR untuk daya komputasi yang Anda kontribusikan. Tanpa stake, tanpa saldo minimum. Pilih platform Anda di bawah untuk langkah unduh, instal, dan jalankan.",
     badgeCustody: "Kustodi mandiri — kunci Anda",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR adalah token utilitas Solana devnet — bukan aset mainnet yang dapat diperdagangkan atau imbal hasil finansial.",
-    reqTitle: "Persyaratan operator hub · gateway",
-    reqBody: "Untuk menjalankan node hub atau node gateway, Anda harus men-stake 100.000 KVR di dompet Anda. Node komputasi biasa dapat bergabung tanpa persyaratan ini dan mendapatkan imbalan untuk layer yang mereka jalankan.",
+    reqTitle: "Apa yang dibutuhkan untuk bergabung",
+    reqBody: "Tidak ada. Dompet yang sama sekali tidak memegang KVR pun bisa mendaftarkan node dan memperoleh imbalan atas pekerjaan yang dilakukannya — tidak ada stake dan tidak ada saldo minimum. Peran bridge dan gateway, titik masuk yang menjadi tumpuan trafik orang lain, ditetapkan oleh jaringan, bukan dibeli: sebuah node tidak bisa memberikan peran itu kepada dirinya sendiri, dan waktu aktifnya hanya dihitung selama gateway melihatnya menjawab.",
     tabDesktop: "Desktop",
     tabMobile: "Seluler",
+    tabServer: "Server",
     soon: "Segera hadir",
     download: "Unduh",
     desktopTitle: "Kvasir Wallet · Aplikasi Desktop",
     desktopSub: "macOS · Windows · Linux — dompet dan node dalam satu aplikasi.",
     desktop: [
-      { title: "Unduh aplikasinya", body: "Unduh installer Kvasir Wallet untuk OS Anda di atas. GPU (NVIDIA / AMD / Apple Silicon) direkomendasikan, tetapi CPU juga bisa digunakan.", body2: "" },
-      { title: "Instal dan buka", body: "Jalankan installer-nya, lalu buka Kvasir Wallet. Di macOS, jika Anda melihat peringatan “unidentified developer”, izinkan lewat System Settings → Privacy & Security.", body2: "" },
-      { title: "Buat dompet Anda", body: "Pilih Create new wallet. Catat frasa pemulihan 12 kata Anda dan simpan dengan aman — tidak dapat dipulihkan jika hilang. Kemudian atur passphrase untuk membuka aplikasi. Kunci bersifat non-kustodian dan hanya disimpan di perangkat ini.", body2: "" },
-      { title: "Danai & stake KVR", body: "Terima sejumlah SOL devnet (untuk biaya transaksi) dan KVR (untuk di-stake) di alamat Receive dompet Anda. Di panel staking pada dashboard, masukkan jumlah lalu pilih Stake untuk memenuhi syarat imbalan node.", body2: "" },
-      { title: "Konfigurasi node", body: "Di Node settings, pilih backend komputasi mesin ini (CUDA / ROCm / Metal / CPU) dan pilih Local shard (recommended) — mode ini menjalankan layer shard secara lokal dan hanya meneruskan status batas yang kecil, mode tercepat.", body2: "" },
-      { title: "Jalankan node", body: "Aktifkan Run node (live) untuk mendaftarkan mesin ini ke jaringan di bawah dompet Anda (pemilik) dan membuatnya online.", body2: "Untuk node komputasi GPU yang sesungguhnya, jalankan juga agent native di bawah ini. Planner pada hub menempatkan layer model di mesin Anda, dan node Anda mendapatkan bagian KVR per layer yang dikreditkan ke dompet pemilik." },
-      { title: "Pantau kontribusi & imbalan", body: "Di Node status, pantau nodes / online / effective contribution / claimable. Node dikelompokkan berdasarkan tier throughput (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); raw × tier = effective. Gunakan Claim rewards untuk memindahkan KVR yang terkumpul ke dompet Anda.", body2: "" },
+      { title: "Unduh aplikasi", body: "Unduh penginstal untuk sistem operasi Anda dari bagian di atas. GPU menghasilkan imbalan lebih besar, tetapi komputer tanpa GPU tetap bisa bergabung — aplikasi akan menunjukkan kemampuan komputer Anda.", body2: "" },
+      { title: "Instal dan buka", body: "Jalankan penginstal, lalu buka Kvasir Wallet. Aplikasi ini belum memiliki tanda tangan digital untuk kodenya, jadi sistem akan menampilkan peringatan: di macOS, izinkan aplikasi melalui System Settings → Privacy & Security; di Windows, pilih More info → Run anyway pada peringatan SmartScreen berwarna biru. Jika Windows menyatakan bahwa Smart App Control memblokir aplikasi, pemblokiran ini terkadang hilang beberapa jam setelah versi baru dirilis — coba lagi nanti.", body2: "" },
+      { title: "Buat dompet Anda", body: "Pilih Buat dompet baru. Catat frasa pemulihan yang terdiri dari 12 kata dan simpan di tempat yang hanya bisa Anda akses — siapa pun yang membacanya dapat menggunakan dana di dompet, dan jika frasa itu hilang, Anda akan kehilangan akses ke akun. Lalu tetapkan frasa sandi untuk membuka kunci aplikasi. Kunci dompet sepenuhnya milik Anda dan tidak pernah keluar dari perangkat ini.", body2: "" },
+      { title: "Tidak perlu staking", body: "Tidak ada setoran atau saldo minimum. Dompet tanpa KVR maupun SOL tetap bisa mendaftarkan node dan mulai memperoleh imbalan — menjalankan node hanya memerlukan biaya listrik. Biaya penyelesaian pembayaran ditanggung jaringan, bukan Anda.", body2: "" },
+      { title: "Tentukan sumber daya yang dipinjamkan", body: "Buka Node settings. Compute engines menunjukkan mesin komputasi yang benar-benar dapat digunakan komputer ini; GPU tanpa mesin komputasi tidak bisa menerima tugas, dan untuk kartu NVIDIA, aplikasi menawarkan unduhan mesin untuk menjalankan expert. Anda bebas mengatur GPU memory to lend — aplikasi menghitung berapa banyak expert yang bisa ditampung dengan alokasi tersebut dan menampilkan jumlahnya. Jika GPU itu juga digunakan untuk game atau pembuat gambar, sisakan memori untuknya.", body2: "" },
+      { title: "Jalankan node", body: "Aktifkan node. Node akan terdaftar pada dompet Anda, meminta informasi dari jaringan tentang expert yang masih kurang tersedia, mengunduh hanya bobot model expert tersebut, lalu mulai memproses permintaan untuknya. Tugas yang Anda terima bergantung pada kebutuhan jaringan saat itu, jadi dua komputer jarang menyimpan expert yang sama.", body2: "Untuk menjalankan node yang melayani lapisan model, bukan expert, jalankan agen native di bawah ini; lapisan yang ditempatkan di komputer Anda akan ditentukan oleh rencana penempatan yang dimuat oleh operator." },
+      { title: "Pantau imbalan", body: "Status node menampilkan komputer yang terhubung ke dompet Anda, kontribusinya, dan imbalan yang bisa diklaim. Pekerjaan expert dihitung penuh — Anda dibayar sesuai beban kerja yang benar-benar ditangani komputer Anda, tanpa pengali kinerja tambahan. (Tingkat S / A / B berlaku untuk node yang menghasilkan token, sedangkan node expert tidak menghasilkan token.) Klaim imbalan memindahkan KVR yang terkumpul ke dompet Anda; biaya transaksi ditanggung jaringan.", body2: "" },
     ],
+    serverTitle: "Linux tanpa monitor · satu perintah",
+    serverSub: "Untuk server tanpa monitor. Instal perangkat lunak, tentukan jumlah memori GPU yang akan dipinjamkan, lalu jalankan node.",
+    serverReqTitle: "Persyaratan sistem",
+    serverReq: [
+      "GPU NVIDIA dengan kapabilitas komputasi 7.5 atau lebih tinggi: GTX 16xx, RTX 20xx, dan model yang lebih baru.",
+      "Driver yang mendukung CUDA 13 (R580 atau lebih baru). Penginstal memeriksanya sebelum mengunduh berkas berukuran besar.",
+      "glibc 2.27 atau lebih baru: Ubuntu 18.04, Debian 10, RHEL 8, dan versi yang lebih baru.",
+      "Sekitar 1 GB untuk node dan mesin komputasinya, ditambah ruang untuk bobot model pakar yang dipilih untuk disimpan, sekitar 9.5 MB per pakar.",
+    ],
+    serverNoRoot: "Tidak ada langkah yang memerlukan akses root. Jika dijalankan sebagai pengguna biasa, perangkat lunak diinstal di ~/.local dengan layanan pengguna; jika dijalankan sebagai root, perangkat lunak diinstal di /opt dengan layanan sistem.",
+    server: [
+      { title: "Instal", body: "Cukup satu perintah. Penginstal mendeteksi arsitektur, menggunakan Node yang tersedia di sistem jika versinya cukup baru, atau mengunduh versinya sendiri jika tidak. Penginstal mengunduh rilis dan memverifikasi SHA-256 sebelum mengekstraknya, membuat kunci dompet, lalu menulis berkas unit systemd.", body2: "Penginstal tidak menjalankan node. Dua langkah berikutnya harus Anda lakukan sendiri." },
+      { title: "Unduh mesin komputasi", body: "Mesin komputasi diunduh secara terpisah karena harus sesuai dengan GPU Anda. Mesin ini menyertakan pustaka CUDA sendiri, sehingga Anda tidak perlu menginstal toolkit atau mengatur jalur pencarian pustaka. Satu-satunya komponen yang diperlukan dari sistem adalah driver.", body2: "" },
+      { title: "Tentukan alokasi memori", body: "Buka berkas unit dan ganti REPLACE_ME dengan jumlah memori dalam GiB. Nilai ini harus Anda tentukan sendiri karena mengatur berapa banyak memori kartu yang digunakan node. Jika mesin juga menjalankan tugas lain, sisakan memori untuk tugas tersebut. Node menghitung jumlah pakar yang dapat ditampung berdasarkan alokasi ini dan menampilkan jumlahnya saat mulai berjalan.", body2: "" },
+      { title: "Jalankan", body: "Node mendaftar atas nama dompet Anda, menanyakan kepada jaringan pakar mana yang ketersediaannya kurang, mengunduh hanya bobot pakar tersebut, lalu mulai memproses permintaan yang terkait. Pakar yang ditugaskan kepada Anda bergantung pada kebutuhan jaringan saat itu.", body2: "" },
+      { title: "Pantau imbalan", body: "Imbalan kontribusi dikreditkan ke dompet yang terkait dengan kunci. Pekerjaan pakar dibayar penuh berdasarkan pekerjaan yang benar-benar ditangani mesin Anda, tanpa faktor pengali kinerja tambahan.", body2: "" },
+    ],
+    serverKeyWarn: "Cadangkan ~/.config/kvasir/node-key.json. Imbalan dibayarkan ke alamat tersebut dan tidak ada salinan kunci lainnya.",
     faucetTitle: "Dapatkan SOL devnet (faucet gratis)",
     faucetIntro: "Anda memerlukan sedikit SOL devnet untuk biaya transaksi (gunakan alamat Receive dompet Anda):",
     faucetWeb: "Web: faucet.solana.com — tempel alamat Anda dan pilih jaringan Devnet",
@@ -332,7 +357,7 @@ export const id: Dict = {
     mobile: [
       { title: "Instal aplikasinya", body: "Instal Kvasir Wallet dari {0}. Gunakan tombol di atas untuk membuka halaman store. Perangkat yang cukup baru dengan GPU/NPU direkomendasikan.", note: "" },
       { title: "Buat / pulihkan dompet", body: "Buka aplikasi dan pilih Create new wallet atau Restore from recovery phrase. Jaga keamanan frasa 12 kata Anda dan atur passphrase — akun yang sama dapat dipulihkan di desktop dan perangkat lain menggunakan frasa ini. Kunci bersifat non-kustodian, hanya disimpan di perangkat.", note: "" },
-      { title: "Konfigurasi node", body: "Di Mobile node settings, pilih backend komputasi (GPU · OpenCL/Vulkan · CPU) dan Local shard (recommended). Perkiraan throughput (tok/s) serta dampak memori / termal / performa akan ditampilkan.", note: "" },
+      { title: "Konfigurasi node", body: "Di Mobile node settings, pilih backend komputasi dan Local shard (recommended). Pilihan GPU berbeda per platform: Android memakai GPU Adreno lewat OpenCL atau Vulkan, iOS memakai GPU Apple lewat MLX; keduanya bisa turun ke CPU. Perkiraan throughput (tok/s) serta dampak memori / termal / performa akan ditampilkan.", note: "" },
       { title: "Stake & imbalan", body: "Di Staking & node rewards, stake KVR dan periksa / klaim imbalan yang terkumpul dari node Anda. Node status menampilkan tier performa dan kontribusi Anda.", note: "Partisipasi inferensi local-shard di perangkat mobile sedang diluncurkan bertahap; saat ini node komputasi utama adalah mesin GPU/CPU yang menjalankan agent." },
     ],
     viewGithub: "Lihat di GitHub",
@@ -345,6 +370,9 @@ export const id: Dict = {
     capBackend: "Backend komputasi (CUDA · ROCm · Metal · CPU)",
     capMode: "Mode node — Local shard (recommended)",
     capRunlive: "Run node (live) — indikator langsung · node id · OS",
+    capEnginesMac: "macOS — mesin Metal sudah disertakan dalam aplikasi, dan penggeser mengubah alokasi memori menjadi jumlah expert",
+    capEnginesWin: "Windows — tampilan yang sama setelah mesin NVIDIA terinstal",
+    capEngineOffer: "Windows — mesin ditawarkan sebagai unduhan terpisah karena disesuaikan dengan GPU",
     capNodes: "Node status — total · tier · kontribusi per node",
     capClaim: "Claim rewards — KVR yang dapat diklaim",
     capWallet: "Wallet home — saldo KVR (alamat disamarkan)",
@@ -356,7 +384,7 @@ export const id: Dict = {
     docTitle: "Kvasir — Blog Teknologi",
     pill: "Blog teknologi",
     title: "Rekayasa di balik swarm",
-    lede: "Catatan desain dan tonggak yang terverifikasi di perangkat nyata dari pembangunan inferensi swarm dengan sharding pakar di atas linkcpp — bagaimana model 122B berjalan melintasi GPU, CPU, dan ponsel.",
+    lede: "Catatan desain dan tonggak yang terverifikasi di perangkat nyata dari pembangunan inferensi swarm dengan sharding pakar — bagaimana model 122B berjalan melintasi GPU, CPU, dan ponsel. Tulisan sampai pertengahan 2026 membahas linkcpp, engine yang digantikan p4; gagasannya tetap, namanya berubah.",
     langNote: "",
     sidebarTitle: "Jelajahi artikel",
     allArticles: "Semua artikel",
@@ -406,7 +434,7 @@ export const id: Dict = {
     apiModels: "Menampilkan model yang sedang dilayani swarm saat ini — array kosong bila tidak ada, jadi jangan pernah hardcode sebuah id.",
     apiQuote: "Dapatkan penawaran harga dan requestId yang terikat pada prompt-mu. priceToken adalah jumlah KVR yang harus dibayar; tagihan akhir berdasarkan penggunaan token nyata.",
     apiPay: "Transfer KVR yang ditawarkan ke akun token terasosiasi milik penerima (vault) dan tanda tangani dengan dompetmu. Tanda tangan hanya sekali pakai.",
-    apiInfer: "Gateway melakukan polling ke chain untuk memverifikasi pembayaran, menjalankan inferensi di hub, lalu mengembalikan hasil beserta penggunaan dan biaya nyata.",
+    apiInfer: "Gateway melakukan polling ke chain untuk memverifikasi pembayaran, menjalankan inferensi melalui bridge, lalu mengembalikan hasil beserta penggunaan dan biaya nyata.",
     codeTitle: "Contoh ujung ke ujung",
     codeLede: "Muat kunci rahasia dompet dari environment, minta penawaran, bayar, dan tukarkan — satu cuplikan mandiri. Langkah 1, 2, dan 4 adalah HTTP murni; hanya langkah 3 (transfer SPL) yang berbeda per SDK.",
     adapterTitle: "Adapter kompatibel OpenAI",
@@ -443,7 +471,7 @@ export const id: Dict = {
     catUseApi: "Gunakan API",
     selfHostTitle: "Jalankan node, dapatkan inferensi gratis",
     selfHostPitch: "Ingin memakai model AI gratis? Suruh agen coding-mu menautkan mesinmu ke jaringan sebagai node — dan mengembalikan sebuah endpoint inferensi untukmu.",
-    selfHostBody: "Satu skrip menyalakan hub (dan, opsional, gateway KVR) dengan Docker. Tambahkan GPU-mu dan muat model terbuka di UI hub, lalu panggil endpoint standar kompatibel OpenAI — /c/<id>/v1/chat/completions — yang berjalan di perangkat kerasmu sendiri. Arahkan alat apa pun yang berbicara OpenAI ke sana.",
+    selfHostBody: "Nyalakan bridge di depan agen p4 milikmu sendiri, opsional dengan gateway KVR di sampingnya. Muat model terbuka dengan rencana penempatan, lalu panggil endpoint standar kompatibel OpenAI — /c/<id>/v1/chat/completions — yang berjalan di perangkat kerasmu sendiri. Arahkan alat apa pun yang berbicara OpenAI ke sana.",
     selfHostNote: "Ini menyajikan model terbuka yang bisa ditampung mesinmu secara gratis — itu komputasimu. Untuk model frontier yang terlalu besar untuk satu mesin, bergabunglah dengan swarm: itulah gunanya API bayar per pakai KVR di bawah.",
     inferenceApiTitle: "API Inferensi (kredit)",
     inferenceApiLede: "Jalur paling sederhana: endpoint OpenAI native dengan kunci API. Streaming (SSE) dan tool call native langsung berfungsi, dan setiap panggilan dipotong dari saldo KVR prabayar — tanpa penandatanganan dompet per panggilan. Akses dikendalikan oleh whitelist dompet.",
@@ -490,7 +518,7 @@ export const id: Dict = {
     pill: "Kami merekrut",
     headline1: "Marketing & Growth",
     headline2: "besarkan jaringan bersama kami",
-    sub: "Kvasir adalah jaringan inferensi AI terdesentralisasi (DePIN) di Solana. Mesin linkcpp bersumber tersedia membagi model terbuka berukuran besar ke banyak GPU dan mesin yang dikontribusikan, dan setiap node memperoleh KVR untuk layer yang benar-benar dilayaninya. Sisi teknisnya sudah berjalan — kami butuh orang yang menceritakannya ke dunia.",
+    sub: "Kvasir adalah jaringan inferensi AI terdesentralisasi (DePIN) di Solana. Mesin p4 bersumber tersedia membagi model terbuka berukuran besar ke banyak GPU dan mesin yang dikontribusikan, dan setiap node memperoleh KVR untuk layer yang benar-benar dilayaninya. Sisi teknisnya sudah berjalan — kami butuh orang yang menceritakannya ke dunia.",
     factRole: "Peran",
     factRoleV: "Marketing & growth — purnawaktu",
     factLocation: "Lokasi",

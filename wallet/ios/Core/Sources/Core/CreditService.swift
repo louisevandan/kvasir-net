@@ -10,7 +10,7 @@ import SolanaSwift
 /// ~1 tok/s), returning 524. `/v1/chat/completions` with `stream: true` flows SSE
 /// chunks from the first token, so Cloudflare never idles the connection out.
 ///
-/// Auth mirrors HubAuthService (controller/siws.py-style ed25519): the wallet signs
+/// Auth mirrors BridgeAuthService (SIWS-style ed25519): the wallet signs
 /// a server nonce, base64 signature. Credits are debited per completion's usage.
 public actor CreditService {
     private let baseString: String

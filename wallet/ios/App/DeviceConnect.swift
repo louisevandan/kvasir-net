@@ -20,7 +20,9 @@ struct DeviceConnectView: View {
     @ObservedObject private var loc = Localizer.shared
 
     private var command: String {
-        "LINKCPP_SERVICE=\(staking.serviceURL) LINKCPP_OWNER=\(staking.owner ?? loc.t("device.accountAddressPlaceholder")) node connect.js"
+        // KVR_SERVICE / KVR_OWNER are what solana/node-client/connect.js reads;
+        // a copied command with the old names exits 1 with a usage line.
+        "KVR_SERVICE=\(staking.serviceURL) KVR_OWNER=\(staking.owner ?? loc.t("device.accountAddressPlaceholder")) node solana/node-client/connect.js"
     }
 
     var body: some View {

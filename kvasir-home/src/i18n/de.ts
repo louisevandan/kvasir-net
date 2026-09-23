@@ -1,7 +1,8 @@
 /* German (Deutsch) — mirrors the shape of en.ts exactly.
-   Technische Begriffe und Bezeichner bleiben unverändert (KVR, linkcpp,
+   Technische Begriffe und Bezeichner bleiben unverändert (KVR, p4, linkcpp,
    Inferenz-Engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, Layer, Qwen3.5-122B usw.). Die Ehrlichkeits-
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, Layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2 usw.). Die Ehrlichkeits-
    Rahmung bleibt erhalten (Devnet, Utility-Token, keine Investition, non-custodial). */
 import type { Dict } from "./types";
 
@@ -19,6 +20,7 @@ export const de: Dict = {
     technology: "Technologie",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Team",
   },
 
   actions: {
@@ -38,25 +40,25 @@ export const de: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · Dezentrale KI — jenseits des Monopols",
-    headline1: "Rechenleistung einbringen.",
-    headline2: "KVR verdienen.",
-    sub: "Kvasir verteilt große offene Modelle mit linkcpp über gemeinsam genutzte Hardware, sodass kein einzelner Node das gesamte Modell halten muss. Steuere eine GPU, eine CPU oder ein Smartphone bei und verdiene KVR für die Layer, die du ausführst.",
+    eyebrow: "DePIN · Frontier-Modelle ohne Rechenzentrum",
+    headline1: "Du hast nicht die Hardware",
+    headline2: "für ein 428B-Modell. Und wir? Auch nicht.",
+    sub: "Nichts in dieser Flotte kann Step-3.7-Flash halten — 428 Milliarden Parameter, weit jenseits jedes einzelnen Geräts, das uns gehört. Kvasir zerschneidet es in Layer-Fenster, sodass jede Maschine nur ihr eigenes hält und einen Hidden State an die nächste weitergibt. Heute auf dem Serving-Ring gemessen: 28–31 Tokens pro Sekunde, das erste Token nach 270 ms.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",
       "OpenAI- + Anthropic-kompatibel",
-      "Quellcode verfügbar (BSL)",
+      "Quellcode verfügbar (BSL 1.1)",
       "Solana-Devnet",
     ],
     ringCenter: "ein Ring · kein Master",
     topologyCaption:
-      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der 49 Layer halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node muss das gesamte Modell halten, und der Ring hat keinen zentralen Master — illustrativ.",
+      "Ein Ring aus Geräten — eine GPU, CPU, NPU und ein Smartphone — die jeweils einige der Layer des Modells halten. Jeder Node führt seinen Abschnitt aus und gibt nur die Hidden-State-Grenze an seinen Nachbarn weiter; der letzte gibt das Token durch den Ring zurück. Kein Node muss das gesamte Modell halten, und der Ring hat keinen zentralen Master — illustrativ.",
   },
 
   thesis: {
     eyebrow: "Warum dezentrale KI",
     title: "KI sollte nicht einer Handvoll Unternehmen gehören",
-    lede: "Spitzen-Inferenz konzentriert sich hinter wenigen abgeschotteten Rechenzentren — geschlossene Gewichte, nutzungsbasierte Abrechnung, eine Rechnung an einen Eigentümer. Kvasir weist in die andere Richtung: offene Modelle, bereitgestellt über ein erlaubnisfreies Netzwerk aus Alltagsgeräten — im Besitz der Menschen, die es betreiben, und von ihnen verdient.",
+    lede: "Spitzen-Inferenz konzentriert sich hinter wenigen abgeschotteten Rechenzentren — geschlossene Gewichte, nutzungsbasierte Abrechnung, eine Rechnung an einen Eigentümer. Kvasir ist andersherum gebaut: offene Modelle, bereitgestellt über ein Netzwerk aus Alltagsgeräten — im Besitz der Menschen, die es betreiben, und von ihnen verdient. Heute laufen diese Engine und ihre Abrechnung auf unserer eigenen Flotte, und ein Gerät kann sich bereits registrieren, Rechenleistung beisteuern und dafür bezahlt werden; den Serving-Ring selbst für alle zu öffnen, ist das nächste Gate. Die Roadmap weiter unten sagt, wo jeder Teil steht.",
     centralizedLabel: "Zentralisierte KI",
     centralizedPoints: [
       "Wenige Hyperscaler besitzen die GPUs",
@@ -67,7 +69,7 @@ export const de: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Jedes Gerät tritt einem Peer-to-Peer-Ring bei — kein zentraler Master im Ring",
-      "linkcpp-Engine mit verfügbarem Quellcode — BSL-lizenziert und vollständig einsehbar",
+      "p4-Engine mit verfügbarem Quellcode — BSL 1.1 und vollständig einsehbar",
       "Mitwirkende verdienen KVR für die tatsächliche Rechenleistung, die sie beisteuern",
       "Wallet in Eigenverwahrung — deine Schlüssel verlassen nie dein Gerät",
     ],
@@ -104,7 +106,7 @@ export const de: Dict = {
       {
         title: "Aufteilen",
         body: "Das Modell wird in zusammenhängende Layer-Fenster unterteilt. Jedes Gerät hat eine Kopie der Modelldatei, lädt aber nur sein eigenes Fenster in den Speicher, sodass kein Node das ganze Modell ausführen muss.",
-        note: "Qwen3.5-122B · 49 Layer · Rank-Manifest",
+        note: "Step-3.7-Flash 428B · 45 Layer · 16 stages",
       },
       {
         title: "Bereitstellen",
@@ -159,10 +161,10 @@ export const de: Dict = {
     title: "Ein Endpunkt, gestützt von vielen Geräten",
     lede: "Behalte deinen bestehenden OpenAI- oder Anthropic-Client. Richte ihn auf das Kvasir-Gateway aus und bezahle pro Inferenz in KVR — ohne Umschreiben.",
     points: [
-      "OpenAI-kompatibel: Drop-in für /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-kompatibel: Drop-in für /v1/chat/completions und /v1/models",
       "Anthropic-kompatibel: /anthropic/v1/messages und /anthropic/v1/models",
       "Pay-per-Inference in KVR: quote → payment → inference",
-      "Live-Modellkatalog, aggregiert aus erreichbaren Hubs",
+      "Live-Modellkatalog, aggregiert aus erreichbaren Bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -170,7 +172,7 @@ export const de: Dict = {
   token: {
     eyebrow: "Token & Belohnungen",
     title: "KVR bezahlt für Rechenleistung — und belohnt sie",
-    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Compute-Belohnungen ergeben sich aus gemessener Arbeit; Gateway- und Hub-Hosts verdienen zusätzlich für Uptime.",
+    lede: "KVR ist die Einheit, die Entwickler für Inferenz ausgeben, und die Einheit, die Mitwirkende für die Layer verdienen, die sie ausführen. Compute-Belohnungen ergeben sich aus gemessener Arbeit; Gateway- und Bridge-Hosts verdienen zusätzlich für Uptime.",
     facts: [
       { k: "Symbol", v: "KVR", note: "On-Chain-Name “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "derzeit Devnet" },
@@ -193,7 +195,7 @@ export const de: Dict = {
   network: {
     eyebrow: "Netzwerk & Belohnungen",
     title: "Jede Rolle im Netzwerk verdient KVR",
-    lede: "Der Ring aus Compute-Nodes wird von Hub- und Gateway-Rollen koordiniert. Jede wird in KVR für das bezahlt, was sie tatsächlich leistet — Rechenleistung für die ausgeführten Layer, Infrastruktur für die aufrechterhaltene Uptime.",
+    lede: "Vor dem Ring aus Compute-Nodes stehen die Bridge und das Abrechnungs-Gateway. Jede Rolle wird in KVR für das bezahlt, was sie tatsächlich leistet — Rechenleistung für die ausgeführten Layer, Infrastruktur für die aufrechterhaltene Uptime.",
     roles: [
       {
         role: "Compute-Node",
@@ -208,14 +210,14 @@ export const de: Dict = {
         earns: "stündliche Uptime + ×1.5 Inferenz-Bonus",
       },
       {
-        role: "Hub-Host",
-        tagline: "Die Steuerungsebene",
-        body: "Erkennt Geräte, plant die Layer-Platzierung und orchestriert den Ring. Die kritischste Rolle — daher verdient er die höchste stündliche Uptime-Belohnung dafür, das Netzwerk koordiniert zu halten.",
+        role: "Bridge-Host",
+        tagline: "Die Eingangstür der Engine",
+        body: "Installiert eine Session über die Stages eines Modells hinweg, reicht Anfragen an den Head weiter, sammelt den Token-Stream ein und meldet, was jeder Node beigetragen hat — und stellt den Markt bereit, dem ein beitragendes Gerät beitritt. Ohne sie erreicht nichts den Ring, daher verdient sie die höchste stündliche Uptime-Belohnung.",
         earns: "höchste stündliche Uptime",
       },
     ],
     rolesNote:
-      "Rollen lassen sich kombinieren: Eine Maschine kann gleichzeitig Compute, Gateway und Hub sein, und ihre Belohnungen summieren sich. Alles wird in KVR an die eigene Wallet des Nodes abgerechnet.",
+      "Rollen lassen sich kombinieren: Eine Maschine kann gleichzeitig Compute, Gateway und Bridge sein, und ihre Belohnungen summieren sich. Alles wird in KVR an die eigene Wallet des Nodes abgerechnet.",
     formulaTitle: "Wie Belohnungen berechnet werden",
     formulaLabels: ["Compute-Units", "Effektiv", "Infra-Uptime"],
     tiersTitle: "Leistungsstufen",
@@ -225,25 +227,25 @@ export const de: Dict = {
 
   tech: {
     eyebrow: "Hinter den Kulissen",
-    title: "linkcpp — die Engine hinter dem Netzwerk",
-    lede: "linkcpp ist der offene Control-Hub, der Alltags-Hardware in eine verteilte Inferenz-Engine verwandelt. Seine ring runtime lässt jedes Gerät nur wenige Layer halten und den Hidden State an seinen Nachbarn weitergeben — kein zentraler Master im Ring — während die Datenebene der Inferenz-Engine nah am Upstream bleibt, mit einem kleinen Patch-Set.",
-    taglineCaption: "— linkcpp, in eigenen Worten",
+    title: "p4 — die Engine hinter dem Netzwerk",
+    lede: "p4 bündelt gemischte Hardware zu einem einzigen Serving-Pool: Jedes Gerät hält nur wenige Layer des Modells und gibt ausschließlich den Hidden State an seinen Nachbarn weiter — kein zentraler Master im Ring. p4 löst linkcpp ab, die Engine, die Kvasir bis Mitte 2026 betrieben hat, und hält die Datenebene mit einem kleinen Patch-Set nah am Upstream.",
+    taglineCaption: "— p4, in eigenen Worten",
     points: [
       {
         title: "Ring runtime",
         body: "Jedes Gerät speichert dasselbe Modell und lädt nur sein Layer-Fenster, dann öffnet es eine Verbindung zu seinem Vorgänger und eine zu seinem Nachfolger. Hidden-State-Grenzen zirkulieren durch den Ring, und der letzte Rank gibt das Token zurück — kein zentraler Master, kein Node hält alles.",
       },
       {
-        title: "linkcpp-Control-Hub",
-        body: "Ein einziger dockerisierter Hub — die Steuerungsebene, die der RPC-Datenebene der Inferenz-Engine fehlte. Er erkennt Geräte, plant die Layer-Platzierung, startet die Worker und stellt die Gateways bereit. Quelle verfügbar unter der Business Source License (BSL) 1.1.",
+        title: "p4-Control-Plane",
+        body: "Genau die Steuerungsebene, die der RPC-Datenebene fehlte. Sie erkennt Geräte, plant die Platzierung von Layern und Experten, startet die Worker und stellt die Gateways bereit. Ein Platzierungsplan ist ein Artefakt des Betreibers — die Engine lädt kein Modell, nur weil eine Web-Anfrage es verlangt. Quelle verfügbar unter der Business Source License (BSL) 1.1.",
       },
       {
         title: "Verteilte Layer-Platzierung",
-        body: "linkcpp liest GGUF-Metadaten und berechnet zusammenhängende Layer-Fenster pro Node über ein Rank-Manifest, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM.",
+        body: "p4 liest GGUF-Metadaten und berechnet aus einem Platzierungsplan zusammenhängende Layer-Fenster pro Node, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM. Step-3.7-Flash, ein 428B-MoE, liegt derzeit als 16 stages auf zwei Maschinen.",
       },
       {
         title: "SIWS- + 2FA-Sicherheit",
-        body: "Für öffentliche Deployments erfolgt der Betreiber-Zugang über eine Sign-In-With-Solana-Signatur auf einer Server-Nonce, plus TOTP-2FA und Einmal-Backup-Codes — sowohl auf Hub als auch auf Gateway.",
+        body: "Für öffentliche Deployments erfolgt der Betreiber-Zugang über eine Sign-In-With-Solana-Signatur auf einer Server-Nonce, plus TOTP-2FA und Einmal-Backup-Codes. Ein Gerät, das nur Rechenleistung beisteuern will, meldet sich nie an: Es weist gegenüber der Bridge eine Wallet nach und erhält ein Token, das ausschließlich auf die Teilnahme beschränkt ist.",
       },
     ],
     openText:
@@ -257,13 +259,18 @@ export const de: Dict = {
     items: [
       {
         phase: "Jetzt",
-        title: "Inferenz auf jedem Gerät, live",
-        body: "GPUs, CPUs und Smartphones stellen Layer über die ring runtime bereit (NPU-Unterstützung in Arbeit). Ein 122B-Modell lief durchgängig über drei physische Maschinen; Beiträge werden durchgängig gutgeschrieben; Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers; der Zugang läuft über HTTPS auf öffentlichen Domains.",
+        title: "Serving in Frontier-Größe, live",
+        body: "Step-3.7-Flash — ein 428B-MoE — liegt als 16 stages auf zwei AMD-MI250-Maschinen und ist im Serving-Betrieb. Ein 122B-Modell lief durchgängig über drei physische Maschinen, eine davon ein Smartphone, das einen Teil davon hielt. Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers.",
+      },
+      {
+        phase: "In Arbeit",
+        title: "Ring, Gateway, Client",
+        body: "Das Abrechnungs-Gateway ist auf p4 portiert und antwortet: Eine bezahlte Anfrage läuft über das Gateway, die Bridge und den MI250-Ring und wird nach den tatsächlich verbrauchten Tokens abgerechnet. Auf dem Serving-Ring liefert Step-3.7-Flash im Einzelstream 28–31 Tokens pro Sekunde, das erste Token nach 270–285 ms. Weiterhin in Arbeit: Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates, der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren, und das Sharding auf Expert-Granularität wird auf p4 übertragen — ein Gerät kann bereits ein Window beanspruchen und ein Relay öffnen, aber der Shard-Download und das Dispatch auf Engine-Seite sind noch nicht geschrieben.",
       },
       {
         phase: "Demnächst",
-        title: "Mainnet & On-Chain-Abrechnung",
-        body: "Heute läuft alles auf dem Solana-Devnet mit einem Off-Chain-Abrechnungsdienst. Ein On-Chain-Belohnungsprogramm und Mainnet sind geplant.",
+        title: "Kimi K3 und Abrechnung jenseits des Devnets",
+        body: "Die Verifikation von Kimi K3 (2.8T MoE) auf p4 ist das nächste Gate, und der GLM-5.2-Bericht — gemessen auf linkcpp, der vorherigen Engine — steht noch zur Veröffentlichung aus. Die Abrechnung läuft auf dem Solana-Devnet mit einem Off-Chain-Dienst; ein On-Chain-Belohnungsprogramm und Mainnet sind geplant.",
       },
       {
         phase: "Demnächst",
@@ -274,16 +281,16 @@ export const de: Dict = {
   },
 
   proof: {
-    pill: "Auf unserer Testflotte verifiziert",
-    title: "Echte verteilte Inferenz, über mehrere Maschinen verifiziert",
+    pill: "Auf unseren eigenen Maschinen gemessen",
+    title: "Was läuft — und was gemessen wurde",
     items: [
-      "Parameter, durchgängig über 3 physische Maschinen bereitgestellt",
-      "separate Node-Wallets, jeweils für ihren Layer-Anteil gutgeschrieben (Testflotte)",
-      "API-Schnittstellen — OpenAI- + Anthropic-kompatibel",
+      "MoE heute im Serving — Step-3.7-Flash, auf zwei AMD-MI250-Maschinen",
+      "Stages, in die das Modell aufgeteilt ist, verteilt auf zwei Agents",
+      "Kosinus-Ähnlichkeit über ROCm, CUDA und eine Smartphone-CPU — gemischte Hardware stimmt überein",
       "Wallet-Plattformen — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bereitgestellt auf 3 Maschinen · OpenAI- + Anthropic-kompatibel · Wallets auf web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B auf zwei MI250-Maschinen · 122B durchgängig über drei Maschinen · OpenAI- + Anthropic-kompatibel · Solana devnet",
   },
 
   footer: {
@@ -292,11 +299,11 @@ export const de: Dict = {
     ctaBody:
       "Betreibe einen Node und verdiene KVR für die Layer, die du bereitstellst, oder binde das Gateway mit einem OpenAI/Anthropic-kompatiblen Endpunkt in deine App ein.",
     tagline:
-      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben vom linkcpp-Control-Hub — eine Engine mit verfügbarem Quellcode (BSL), die große Modelle über Alltagsgeräte verteilt (auf einer Inferenz-Engine-Datenebene, die nah am Upstream gehalten wird).",
+      "Die Netzwerk-Marke für dezentrale KI-Inferenz, angetrieben von der p4-Engine — Quellcode verfügbar unter BSL 1.1, die große Modelle über Alltagsgeräte verteilt, auf einer Datenebene, die nah am Upstream gehalten wird.",
     disclaimerStrong: "Haftungsausschluss.",
     disclaimer:
       "KVR ist ein Utility-/Beitrags-Token, das zur Bezahlung von Inferenz und zur Belohnung von Rechenleistung dient. Es läuft heute auf dem Solana-Devnet — es ist kein handelbarer Mainnet-Vermögenswert, und nichts hier ist ein Angebot, ein Preis oder ein Versprechen einer finanziellen Rendite. Compute-Belohnungen spiegeln gemessene Arbeit wider; Infrastruktur-Hosts verdienen zusätzlich für Uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine unter der Business Source License (BSL) 1.1 — zulässige Nutzung siehe Lizenz.",
+    rights: "© 2026 Kvasir · p4. Engine unter der Business Source License (BSL) 1.1 — zulässige Nutzung siehe Lizenz.",
   },
 
   guide: {
@@ -304,28 +311,47 @@ export const de: Dict = {
     eyebrow: "Anleitung für Node-Betreiber",
     headline1: "Rechenleistung einbringen,",
     headline2: "einen Node betreiben.",
-    sub: "Erstelle eine Wallet, stake KVR und verbinde dann dein Gerät mit dem Kvasir-Netzwerk, um KVR für die von dir bereitgestellte Rechenleistung zu verdienen. Wähle unten deine Plattform für Download-, Installations- und Ausführungsschritte.",
+    sub: "Erstelle eine Wallet, verbinde dein Gerät mit dem Kvasir-Netzwerk und verdiene KVR für die von dir bereitgestellte Rechenleistung. Kein Stake, kein Mindestguthaben. Wähle unten deine Plattform für Download-, Installations- und Ausführungsschritte.",
     badgeCustody: "Eigenverwahrung — deine Schlüssel",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR ist ein Utility-Token im Solana-devnet — kein handelbarer Vermögenswert im mainnet und keine finanzielle Rendite.",
-    reqTitle: "Hub · Gateway-Betreiber-Voraussetzung",
-    reqBody: "Um einen Hub-Node oder einen Gateway-Node zu betreiben, musst du 100.000 KVR in deiner Wallet staken. Reguläre Compute-Nodes treten ohne diese Voraussetzung bei und verdienen für die Layer, die sie ausführen.",
+    reqTitle: "Was es zum Mitmachen braucht",
+    reqBody: "Nichts. Auch eine Wallet ohne ein einziges KVR kann einen Node registrieren und für die geleistete Arbeit verdienen — es gibt weder einen Stake noch ein Mindestguthaben. Bridge- und Gateway-Rollen, die Einstiegspunkte, von denen der Traffic anderer abhängt, werden vom Netzwerk vergeben statt gekauft: Ein Node kann sie sich nicht selbst zuweisen, und ihre Uptime wird nur angerechnet, solange das Gateway sie antworten sieht.",
     tabDesktop: "Desktop",
     tabMobile: "Mobil",
+    tabServer: "Server",
     soon: "Demnächst verfügbar",
     download: "Download",
     desktopTitle: "Kvasir Wallet · Desktop-App",
     desktopSub: "macOS · Windows · Linux — Wallet und Node in einer App.",
     desktop: [
-      { title: "App herunterladen", body: "Lade oben das Kvasir-Wallet-Installationsprogramm für dein Betriebssystem herunter. Eine GPU (NVIDIA / AMD / Apple Silicon) wird empfohlen, aber CPU funktioniert auch.", body2: "" },
-      { title: "Installieren und öffnen", body: "Führe das Installationsprogramm aus und öffne dann Kvasir Wallet. Wenn unter macOS die Warnung „nicht verifizierter Entwickler“ erscheint, erlaube dies in den Systemeinstellungen → Datenschutz & Sicherheit.", body2: "" },
-      { title: "Wallet erstellen", body: "Wähle Neue Wallet erstellen. Notiere deine 12-Wörter-Wiederherstellungsphrase und bewahre sie sicher auf — sie kann bei Verlust nicht wiederhergestellt werden. Lege anschließend eine Passphrase fest, um die App zu entsperren. Die Schlüssel sind non-custodial und werden ausschließlich auf diesem Gerät gespeichert.", body2: "" },
-      { title: "KVR einzahlen & staken", body: "Empfange etwas devnet-SOL (für Gebühren) und KVR (zum Staken) an der Empfangsadresse deiner Wallet. Gib im Staking-Bereich des Dashboards einen Betrag ein und wähle Staken, um dich für Node-Rewards zu qualifizieren.", body2: "" },
-      { title: "Node konfigurieren", body: "Wähle in den Node-Einstellungen das Compute-Backend dieses Geräts (CUDA / ROCm / Metal / CPU) und entscheide dich für Lokaler Shard (empfohlen) — dabei läuft der Layer-Shard lokal, und es wird nur ein kleiner Grenzzustand weitergeleitet, der schnellste Modus.", body2: "" },
-      { title: "Node ausführen", body: "Aktiviere Node ausführen (live), um dieses Gerät unter deiner Wallet (Eigentümer) im Netzwerk zu registrieren und online zu bringen.", body2: "Für einen echten GPU-Compute-Node führe zusätzlich den nativen Agenten unten aus. Der Planner des Hubs platziert Modell-Layer auf deinem Gerät, und dein Node verdient einen Layer-Anteil an KVR, der der Eigentümer-Wallet gutgeschrieben wird." },
-      { title: "Beitrag & Rewards verfolgen", body: "Beobachte im Node-Status Nodes / Online / effektiver Beitrag / einlösbar. Nodes werden nach Durchsatz in Stufen eingeteilt (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); Rohwert × Stufe = effektiv. Nutze Rewards einlösen, um aufgelaufene KVR in deine Wallet zu übertragen.", body2: "" },
+      { title: "App herunterladen", body: "Lade oben das Installationsprogramm für dein Betriebssystem herunter. Mit einer GPU verdienst du mehr, aber auch ein Rechner ohne GPU kann teilnehmen — die App zeigt dir, was dein Rechner leisten kann.", body2: "" },
+      { title: "Installieren und öffnen", body: "Führe das Installationsprogramm aus und öffne dann Kvasir Wallet. Die App ist noch nicht mit einer Codesignatur versehen, deshalb weist dein System darauf hin: Erlaube sie unter macOS in System Settings → Privacy & Security; unter Windows findest du im blauen SmartScreen-Hinweis More info → Run anyway. Wenn Windows meldet, dass Smart App Control die App blockiert hat, wird diese Sperre manchmal einige Stunden nach einer neuen Veröffentlichung aufgehoben — versuche es später erneut.", body2: "" },
+      { title: "Wallet erstellen", body: "Wähle Neue Wallet erstellen. Schreibe deine Wiederherstellungsphrase aus 12 Wörtern auf und bewahre sie so auf, dass nur du darauf zugreifen kannst — wer sie liest, kann das Guthaben deiner Wallet ausgeben, und wenn du sie verlierst, verlierst du den Zugang zu deinem Konto. Lege dann eine Passphrase zum Entsperren der App fest. Die Schlüssel gehören dir und verlassen dieses Gerät nie.", body2: "" },
+      { title: "Kein Staking nötig", body: "Es gibt weder eine Einzahlungspflicht noch ein Mindestguthaben. Auch eine Wallet ohne KVR und ohne SOL kann einen Knoten registrieren und Einnahmen erzielen — der Betrieb eines Knotens kostet dich nur den Strom. Die Abrechnungsgebühren übernimmt das Netzwerk, nicht du.", body2: "" },
+      { title: "Festlegen, was du bereitstellst", body: "Öffne Node settings. Compute engines zeigt, womit dieser Rechner tatsächlich Berechnungen ausführen kann; eine GPU ohne Engine kann keine Aufträge übernehmen. Bei einer NVIDIA-Karte bietet die App an, die Engine für Modellexperten herunterzuladen. GPU memory to lend legst du selbst fest — die App rechnet aus, wie viele Modellexperten du damit vorhalten kannst, und zeigt dir die Anzahl. Wenn ein Spiel oder ein Bildgenerator dieselbe GPU nutzt, lass dafür Speicher frei.", body2: "" },
+      { title: "Knoten starten", body: "Schalte den Knoten ein. Er registriert sich unter deiner Wallet, fragt beim Netzwerk nach, welche Modellexperten knapp sind, lädt nur deren Modellgewichte herunter und beginnt, die zugehörigen Anfragen zu bearbeiten. Was deinem Rechner zugewiesen wird, hängt davon ab, was dem Netzwerk gerade fehlt. Deshalb halten zwei Rechner selten dasselbe vor.", body2: "Für einen Knoten, der Modellschichten statt Modellexperten bereitstellt, führe den unten aufgeführten nativen Agenten aus. Welche Schichten dann auf deinem Rechner liegen, bestimmt ein Platzierungsplan, den der Betreiber lädt." },
+      { title: "Einnahmen verfolgen", body: "Der Knotenstatus zeigt die Rechner unter deiner Wallet, ihren Beitrag und die verfügbaren Auszahlungen. Die Arbeit für Modellexperten wird vollständig gutgeschrieben — du wirst für die tatsächlich von deinem Rechner übernommene Arbeit bezahlt, ohne zusätzlichen Leistungsmultiplikator. (Die Stufen S / A / B gelten für Knoten, die Tokens erzeugen. Ein Knoten für Modellexperten tut das nicht.) Mit Belohnungen abholen überträgst du angesammelte KVR in deine Wallet; das Netzwerk übernimmt die Transaktionsgebühr.", body2: "" },
     ],
+    serverTitle: "Linux ohne Bildschirm · ein Befehl",
+    serverSub: "Für einen Server ohne Bildschirm. Installieren, den bereitzustellenden GPU-Speicher festlegen und den Knoten starten.",
+    serverReqTitle: "Systemvoraussetzungen",
+    serverReq: [
+      "Eine NVIDIA GPU mit Compute Capability 7.5 oder höher: GTX 16xx, RTX 20xx und neuere Modelle.",
+      "Ein Treiber mit Unterstützung für CUDA 13 (R580 oder neuer). Das Installationsprogramm prüft dies, bevor es große Dateien herunterlädt.",
+      "glibc 2.27 oder neuer: Ubuntu 18.04, Debian 10, RHEL 8 und neuere Versionen.",
+      "Etwa 1 GB für den Knoten und seine Rechen-Engine sowie Platz für die Gewichte der Experten, die Sie vorhalten möchten: rund 9.5 MB pro Experte.",
+    ],
+    serverNoRoot: "Keiner dieser Schritte erfordert root-Rechte. Bei Ausführung als normaler Benutzer erfolgt die Installation unter ~/.local mit einem Benutzerdienst; bei Ausführung als root unter /opt mit einem Systemdienst.",
+    server: [
+      { title: "Installieren", body: "Ein Befehl genügt. Er erkennt die Architektur und verwendet das auf dem System vorhandene Node, sofern es aktuell genug ist. Andernfalls lädt er eine eigene Version herunter. Er lädt das Release herunter, prüft vor dem Entpacken dessen SHA-256-Prüfsumme, erstellt einen Wallet-Schlüssel und schreibt eine systemd-Unit-Datei.", body2: "Der Knoten wird dabei nicht gestartet. Die nächsten beiden Schritte führen Sie selbst aus." },
+      { title: "Rechen-Engine herunterladen", body: "Die Engine wird separat heruntergeladen, da sie auf Ihre GPU abgestimmt sein muss. Sie bringt ihre eigenen CUDA-Bibliotheken mit. Sie müssen daher weder ein Toolkit installieren noch einen Bibliothekssuchpfad konfigurieren. Vom System benötigt sie lediglich den Treiber.", body2: "" },
+      { title: "Speicherfreigabe festlegen", body: "Öffnen Sie die Unit-Datei und ersetzen Sie REPLACE_ME durch einen Wert in GiB. Diesen Wert müssen Sie selbst festlegen: Er bestimmt, wie viel Speicher Ihrer Grafikkarte der Knoten belegt. Wenn auf dem Rechner weitere Aufgaben laufen, sollten Sie dafür Speicher freihalten. Der Knoten berechnet aus diesem Speicherbudget, wie viele Experten er vorhalten kann, und gibt die Anzahl beim Start aus.", body2: "" },
+      { title: "Starten", body: "Der Knoten registriert sich unter Ihrer Wallet, fragt das Netzwerk nach knapp verfügbaren Experten, lädt nur deren Gewichte herunter und beginnt, die zugehörigen Anfragen zu bearbeiten. Welche Experten Ihnen zugewiesen werden, hängt vom aktuellen Bedarf des Netzwerks ab.", body2: "" },
+      { title: "Vergütung prüfen", body: "Die Vergütung für Ihren Beitrag wird der Wallet des Schlüssels gutgeschrieben. Die Arbeit der Experten wird vollständig vergütet: Maßgeblich ist die tatsächlich von Ihrem Rechner übernommene Arbeit, ohne zusätzlichen Leistungsmultiplikator.", body2: "" },
+    ],
+    serverKeyWarn: "Sichern Sie ~/.config/kvasir/node-key.json. Die Vergütung wird an diese Adresse ausgezahlt, und es gibt keine weitere Kopie des Schlüssels.",
     faucetTitle: "Devnet-SOL erhalten (kostenloser Faucet)",
     faucetIntro: "Du benötigst etwas devnet-SOL für Transaktionsgebühren (nutze die Empfangsadresse deiner Wallet):",
     faucetWeb: "Web: faucet.solana.com — füge deine Adresse ein und wähle das Netzwerk Devnet",
@@ -337,7 +363,7 @@ export const de: Dict = {
     mobile: [
       { title: "App installieren", body: "Installiere Kvasir Wallet über {0}. Nutze die Schaltfläche oben, um die Store-Seite zu öffnen. Ein aktuelles Gerät mit GPU/NPU wird empfohlen.", note: "" },
       { title: "Wallet erstellen / wiederherstellen", body: "Öffne die App und wähle Neue Wallet erstellen oder Aus Wiederherstellungsphrase wiederherstellen. Bewahre deine 12-Wörter-Phrase sicher auf und lege eine Passphrase fest — dasselbe Konto lässt sich mit dieser Phrase auf dem Desktop und anderen Geräten wiederherstellen. Die Schlüssel sind non-custodial und werden nur auf dem Gerät gespeichert.", note: "" },
-      { title: "Node konfigurieren", body: "Wähle in den Einstellungen für den mobilen Node ein Compute-Backend (GPU · OpenCL/Vulkan · CPU) und Lokaler Shard (empfohlen). Der erwartete Durchsatz (tok/s) sowie die Auswirkungen auf Speicher / Temperatur / Leistung werden angezeigt.", note: "" },
+      { title: "Node konfigurieren", body: "Wähle in den Einstellungen für den mobilen Node ein Compute-Backend und Lokaler Shard (empfohlen). Die GPU-Auswahl unterscheidet sich je nach Plattform: Android nutzt die Adreno-GPU über OpenCL oder Vulkan, iOS die Apple-GPU über MLX; beide können auf die CPU zurückfallen. Der erwartete Durchsatz (tok/s) sowie die Auswirkungen auf Speicher / Temperatur / Leistung werden angezeigt.", note: "" },
       { title: "Staking & Rewards", body: "Stake unter Staking & Node-Rewards KVR und prüfe / löse die einlösbaren Rewards ein, die dein Node ansammelt. Der Node-Status zeigt deine Leistungsstufe und deinen Beitrag.", note: "Die Teilnahme an lokaler Shard-Inferenz auf Mobilgeräten wird schrittweise eingeführt; aktuell sind die wichtigsten Compute-Nodes GPU-/CPU-Geräte, auf denen der Agent läuft." },
     ],
     viewGithub: "Auf GitHub ansehen",
@@ -350,6 +376,9 @@ export const de: Dict = {
     capBackend: "Compute-Backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node-Modus — Lokaler Shard (empfohlen)",
     capRunlive: "Node ausführen (live) — Live-Anzeigen · Node-ID · Betriebssystem",
+    capEnginesMac: "macOS — die Metal-Engine ist in der App enthalten, und der Schieberegler rechnet ein Speicherbudget in eine Anzahl von Modellexperten um",
+    capEnginesWin: "Windows — dieselbe Ansicht nach der Installation der NVIDIA-Engine",
+    capEngineOffer: "Windows — die Engine wird als separater Download angeboten, weil sie auf die GPU abgestimmt ist",
     capNodes: "Node-Status — Gesamtwerte · Stufen · Beitrag pro Node",
     capClaim: "Rewards einlösen — einlösbare KVR",
     capWallet: "Wallet-Startseite — KVR-Guthaben (Adresse maskiert)",
@@ -361,7 +390,7 @@ export const de: Dict = {
     docTitle: "Kvasir — Technologie",
     pill: "Tech-Blog",
     title: "Engineering des Schwarms",
-    lede: "Designnotizen und auf echter Hardware verifizierte Meilensteine aus dem Aufbau der experten-geshardeten Schwarm-Inferenz auf linkcpp — wie ein 122B-Modell über GPUs, CPUs und Smartphones läuft.",
+    lede: "Designnotizen und auf echter Hardware verifizierte Meilensteine aus dem Aufbau der experten-geshardeten Schwarm-Inferenz — wie ein 122B-Modell über GPUs, CPUs und Smartphones läuft. Beiträge bis Mitte 2026 beschreiben linkcpp, die Engine, die p4 abgelöst hat; die Ideen wurden übernommen, die Namen haben sich geändert.",
     langNote: "",
     sidebarTitle: "Artikel durchsuchen",
     allArticles: "Alle Artikel",
@@ -411,7 +440,7 @@ export const de: Dict = {
     apiModels: "Listet die Modelle auf, die der Schwarm gerade bereitstellt — ein leeres Array, wenn keines läuft, also codiere niemals eine id fest.",
     apiQuote: "Hole ein Preisangebot und eine an deinen Prompt gebundene requestId. priceToken ist die zu zahlende KVR-Menge; die endgültige Abrechnung erfolgt nach tatsächlicher Token-Nutzung.",
     apiPay: "Überweise die angebotenen KVR an das zugehörige Token-Konto des Empfängers (das Vault) und signiere mit deiner Wallet. Die Signatur ist einmalig gültig.",
-    apiInfer: "Das Gateway pollt die Chain, um die Zahlung zu prüfen, führt die Inferenz auf dem Hub aus und liefert das Ergebnis samt tatsächlicher Nutzung und Kosten.",
+    apiInfer: "Das Gateway pollt die Chain, um die Zahlung zu prüfen, führt die Inferenz über die Bridge aus und liefert das Ergebnis samt tatsächlicher Nutzung und Kosten.",
     codeTitle: "End-to-End-Beispiel",
     codeLede: "Lade den geheimen Wallet-Schlüssel aus der Umgebung, hole ein Angebot, bezahle und löse ein — ein in sich geschlossenes Snippet. Die Schritte 1, 2 und 4 sind reines HTTP; nur Schritt 3 (die SPL-Überweisung) unterscheidet sich je SDK.",
     adapterTitle: "OpenAI-kompatibler Adapter",
@@ -448,7 +477,7 @@ export const de: Dict = {
     catUseApi: "Die API nutzen",
     selfHostTitle: "Betreibe einen Node, bekomme kostenlose Inferenz",
     selfHostPitch: "Willst du KI-Modelle kostenlos nutzen? Lass deinen Coding-Agent deine Maschine als Node ins Netz einklinken — und dir dafür einen Inferenz-Endpunkt zurückgeben.",
-    selfHostBody: "Ein Skript startet den Hub (und optional das KVR-Gateway) mit Docker. Füge in der Hub-UI deine GPU hinzu, lade ein offenes Modell und rufe dann einen standardmäßigen OpenAI-kompatiblen Endpunkt — /c/<id>/v1/chat/completions — auf, der auf deiner eigenen Hardware läuft. Richte jedes Tool, das OpenAI spricht, darauf aus.",
+    selfHostBody: "Bring die Bridge vor deine eigenen p4-Agenten, optional mit dem KVR-Gateway daneben. Lade ein offenes Modell mit einem Platzierungsplan und rufe dann einen standardmäßigen OpenAI-kompatiblen Endpunkt — /c/<id>/v1/chat/completions — auf, der auf deiner eigenen Hardware läuft. Richte jedes Tool, das OpenAI spricht, darauf aus.",
     selfHostNote: "Das stellt offene Modelle, die deine Maschine halten kann, kostenlos bereit — es ist deine Rechenleistung. Für Frontier-Modelle, die zu groß für eine Maschine sind, tritt dem Schwarm bei: dafür ist die KVR-Pay-per-Use-API unten da.",
     inferenceApiTitle: "Inferenz-API (Guthaben)",
     inferenceApiLede: "Der einfachste Weg: ein nativer OpenAI-Endpunkt mit einem API-Key. Streaming (SSE) und native Tool-Calls funktionieren einfach, und jeder Aufruf wird von einem im Voraus aufgeladenen KVR-Guthaben abgezogen — kein Wallet-Signieren pro Aufruf. Der Zugang wird über eine Wallet-Whitelist gesteuert.",
@@ -495,7 +524,7 @@ export const de: Dict = {
     pill: "Wir stellen ein",
     headline1: "Marketing & Growth",
     headline2: "lass das Netzwerk wachsen",
-    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die linkcpp-Engine mit verfügbarem Quellcode verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
+    sub: "Kvasir ist ein dezentrales KI-Inferenz-Netzwerk (DePIN) auf Solana. Die p4-Engine mit verfügbarem Quellcode verteilt große offene Modelle auf viele beigesteuerte GPUs und Maschinen, und jeder Node verdient KVR für die Layer, die er tatsächlich bedient hat. Die Technik läuft — wir brauchen die Person, die es der Welt erzählt.",
     factRole: "Rolle",
     factRoleV: "Marketing & Growth — Vollzeit",
     factLocation: "Standort",

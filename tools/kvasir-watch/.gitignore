@@ -1,0 +1,5 @@
+archive/
+config.json
+log/
+node_modules/
+state/

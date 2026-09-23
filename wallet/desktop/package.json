@@ -11,10 +11,11 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_DEV=1 electron .\"",
     "build:web": "vite build",
     "build": "vite build",
-    "build:win": "vite build && electron-builder --win --x64",
-    "build:mac": "vite build && electron-builder --mac",
-    "build:linux": "vite build && electron-builder --linux --x64",
-    "typecheck": "tsc --noEmit"
+    "build:win": "node scripts/build-agent.cjs --platform win32 && vite build && electron-builder --win --x64",
+    "build:mac": "node scripts/build-agent.cjs --platform darwin && vite build && electron-builder --mac",
+    "build:linux": "node scripts/build-agent.cjs --platform linux && vite build && electron-builder --linux --x64",
+    "typecheck": "tsc --noEmit",
+    "build:agent": "node scripts/build-agent.cjs"
   },
   "overrides": {
     "uuid": "9.0.1"
@@ -35,7 +36,9 @@
     "ed25519-hd-key": "^1.3.0",
     "react-markdown": "^9.1.0",
     "remark-gfm": "^4.0.1",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "kvasir-p4-bridge": "file:../../p4bridge",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -62,6 +65,7 @@
     "productName": "Kvasir Wallet",
     "artifactName": "Kvasir-Wallet-${version}-${os}-${arch}.${ext}",
     "afterPack": "scripts/afterPack.cjs",
+    "artifactBuildCompleted": "scripts/fixLinuxModes.cjs",
     "npmRebuild": false,
     "directories": {
       "output": "release",
@@ -82,7 +86,18 @@
         }
       ],
       "category": "public.app-category.finance",
-      "identity": null
+      "x64ArchFiles": "Contents/Resources/{p4/p4-agent,expert-worker/linkcpp-expert-worker}",
+      "identity": null,
+      "extraResources": [
+        {
+          "from": "resources/p4/darwin",
+          "to": "p4"
+        },
+        {
+          "from": "resources/expert-worker/darwin",
+          "to": "expert-worker"
+        }
+      ]
     },
     "dmg": {
       "title": "Kvasir Wallet ${version}"
@@ -95,6 +110,12 @@
             "x64"
           ]
         }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/p4/win32",
+          "to": "p4"
+        }
       ]
     },
     "linux": {
@@ -106,7 +127,13 @@
           ]
         }
       ],
-      "category": "Finance"
+      "category": "Finance",
+      "extraResources": [
+        {
+          "from": "resources/p4/linux",
+          "to": "p4"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

@@ -1,8 +1,9 @@
 /* Nederlands — mirror van de Engelse brondictionary (en.ts). Zelfde structuur:
    dezelfde keys, nesting, arraylengtes en volgorde; alleen de tekstwaarden zijn
-   vertaald. Technische termen en identifiers blijven verbatim (KVR, linkcpp,
+   vertaald. Technische termen en identifiers blijven verbatim (KVR, p4, linkcpp,
    inferentie-engine, GPU, CPU, NPU, OpenAI, Anthropic, Solana, GGUF, MoE, SIWS, 2FA,
-   TOTP, ring runtime, MIT, tok/s, layer, Qwen3.5-122B, etc.). De eerlijkheids-
+   TOTP, In-Flight Ring, BSL 1.1, tok/s, layer, stage, Step-3.7-Flash, Qwen3.5-122B,
+   Kimi K3, GLM-5.2, etc.). De eerlijkheids-
    framing blijft intact (devnet, utility-token, geen investering, non-custodial). */
 import type { Dict } from "./types";
 
@@ -20,6 +21,7 @@ export const nl: Dict = {
     technology: "Technologie",
     blog: "Blog",
     wiki: "Wiki",
+    team: "Team",
   },
 
   actions: {
@@ -39,25 +41,25 @@ export const nl: Dict = {
   },
 
   hero: {
-    eyebrow: "DePIN · Gedecentraliseerde AI — voorbij het monopolie",
-    headline1: "Lever rekenkracht.",
-    headline2: "Verdien KVR.",
-    sub: "Kvasir verdeelt grote open modellen over gedeelde hardware met linkcpp, zodat geen enkele node het hele model hoeft te bevatten. Draag een GPU, CPU of telefoon bij en verdien KVR voor de layers die je draait.",
+    eyebrow: "DePIN · Frontier-modellen zonder datacenter",
+    headline1: "Jij hebt geen hardware",
+    headline2: "voor een 428B-model. Wij ook niet.",
+    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 428 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 28–31 tokens per seconde, eerste token in 270 ms.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",
-      "Broncode beschikbaar (BSL)",
+      "Broncode beschikbaar (BSL 1.1)",
       "Solana devnet",
     ],
     ringCenter: "één ring · geen master",
     topologyCaption:
-      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de 49 layers bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node hoeft het hele model te bevatten, en de ring heeft geen centrale master — ter illustratie.",
+      "Een ring van apparaten — een GPU, CPU, NPU en telefoon — die elk een paar van de layers van het model bevatten. Elke node draait zijn deel en geeft alleen de hidden-state-grens door aan zijn buur; de laatste stuurt de token via de ring terug. Geen enkele node hoeft het hele model te bevatten, en de ring heeft geen centrale master — ter illustratie.",
   },
 
   thesis: {
     eyebrow: "Waarom gedecentraliseerde AI",
     title: "AI hoort niet in handen te zijn van een handvol bedrijven",
-    lede: "Frontier-inferentie concentreert zich achter een paar afgeschermde datacenters — gesloten gewichten, afgemeten toegang, één rekening betaald aan één eigenaar. Kvasir wijst de andere kant op: open modellen bediend via een permissionless netwerk van alledaagse apparaten, in bezit van en verdiend door de mensen die het draaien.",
+    lede: "Frontier-inferentie concentreert zich achter een paar afgeschermde datacenters — gesloten gewichten, afgemeten toegang, één rekening betaald aan één eigenaar. Kvasir is andersom gebouwd: open modellen bediend via een netwerk van alledaagse apparaten, in bezit van en verdiend door de mensen die het draaien. Vandaag draaien die engine en de afrekening op onze eigen vloot, en een apparaat kan zich al registreren, rekenkracht bijdragen en daarvoor betaald worden; de bedienende ring zelf voor iedereen openstellen is de volgende gate. De roadmap hieronder zegt hoe ver elk onderdeel is.",
     centralizedLabel: "Gecentraliseerde AI",
     centralizedPoints: [
       "Een paar hyperscalers bezitten de GPU’s",
@@ -68,7 +70,7 @@ export const nl: Dict = {
     kvasirLabel: "Kvasir",
     kvasirPoints: [
       "Elk apparaat sluit zich aan bij een peer-to-peer-ring — geen centrale master in de ring",
-      "linkcpp-engine met beschikbare broncode — BSL-gelicentieerd en volledig inspecteerbaar",
+      "p4-engine met beschikbare broncode — BSL 1.1 en volledig inspecteerbaar",
       "Bijdragers verdienen KVR voor de echte rekenkracht die ze leveren",
       "Wallet in eigen beheer — je sleutels verlaten nooit je apparaat",
     ],
@@ -105,7 +107,7 @@ export const nl: Dict = {
       {
         title: "Splitsen",
         body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat bewaart een kopie van het modelbestand, maar laadt alleen zijn eigen venster in het geheugen, zodat geen enkele node het geheel hoeft te draaien.",
-        note: "Qwen3.5-122B · 49 layers · rank manifest",
+        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
       },
       {
         title: "Bedienen",
@@ -160,10 +162,10 @@ export const nl: Dict = {
     title: "Eén endpoint, ondersteund door veel apparaten",
     lede: "Behoud je bestaande OpenAI- of Anthropic-client. Richt hem op de Kvasir-gateway en betaal per inferentie in KVR — zonder te herschrijven.",
     points: [
-      "OpenAI-compatibel: drop-in voor /v1/chat/completions, /v1/responses, /v1/models",
+      "OpenAI-compatibel: drop-in voor /v1/chat/completions en /v1/models",
       "Anthropic-compatibel: /anthropic/v1/messages en /anthropic/v1/models",
       "Betalen per inferentie in KVR: prijsopgave → betaling → inferentie",
-      "Live modelcatalogus samengesteld uit bereikbare hubs",
+      "Live modelcatalogus samengesteld uit bereikbare bridges",
     ],
     codeHeader: "POST /v1/chat/completions",
   },
@@ -171,7 +173,7 @@ export const nl: Dict = {
   token: {
     eyebrow: "Token & beloningen",
     title: "KVR betaalt voor rekenkracht — en beloont het",
-    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen voor rekenkracht komen uit gemeten werk; gateway- en hub-hosts verdienen daarnaast voor uptime.",
+    lede: "KVR is de eenheid die ontwikkelaars uitgeven aan inferentie en de eenheid die bijdragers verdienen voor de layers die ze draaien. Beloningen voor rekenkracht komen uit gemeten werk; gateway- en bridge-hosts verdienen daarnaast voor uptime.",
     facts: [
       { k: "Symbool", v: "KVR", note: "on-chain naam “Kvasir”, 6 decimals" },
       { k: "Chain", v: "Solana", note: "vandaag devnet" },
@@ -194,7 +196,7 @@ export const nl: Dict = {
   network: {
     eyebrow: "Netwerk & beloningen",
     title: "Elke rol in het netwerk verdient KVR",
-    lede: "De ring van compute-nodes wordt gecoördineerd door hub- en gateway-rollen. Elk wordt in KVR betaald voor wat het daadwerkelijk doet — rekenkracht voor de layers die het draait, infrastructuur voor de uptime die het behoudt.",
+    lede: "Voor de ring van compute-nodes staan de bridge en de settlement-gateway. Elk wordt in KVR betaald voor wat het daadwerkelijk doet — rekenkracht voor de layers die het draait, infrastructuur voor de uptime die het behoudt.",
     roles: [
       {
         role: "Compute-node",
@@ -209,14 +211,14 @@ export const nl: Dict = {
         earns: "uurlijkse uptime + ×1.5-inferentiebonus",
       },
       {
-        role: "Hub-host",
-        tagline: "De control plane",
-        body: "Ontdekt apparaten, plant layer-plaatsing en orkestreert de ring. De meest kritieke rol — daarom verdient het de hoogste uurlijkse uptime-beloning voor het gecoördineerd houden van het netwerk.",
+        role: "Bridge-host",
+        tagline: "De voordeur van de engine",
+        body: "Installeert een sessie over de stages van een model, dient verzoeken in bij de kopnode, verzamelt de tokenstroom en rapporteert wat elke node heeft bijgedragen — en bedient de markt waar een bijdragend apparaat zich bij aansluit. Zonder de bridge bereikt niets de ring, dus verdient het de hoogste uurlijkse uptime-beloning.",
         earns: "hoogste uurlijkse uptime",
       },
     ],
     rolesNote:
-      "Rollen stapelen: één machine kan tegelijk compute, gateway en hub zijn, en zijn beloningen tellen op. Alles wordt in KVR afgerekend naar de eigen wallet van die node.",
+      "Rollen stapelen: één machine kan tegelijk compute, gateway en bridge zijn, en zijn beloningen tellen op. Alles wordt in KVR afgerekend naar de eigen wallet van die node.",
     formulaTitle: "Hoe beloningen worden berekend",
     formulaLabels: ["Compute-units", "Effectief", "Infra-uptime"],
     tiersTitle: "Prestatieklassen",
@@ -226,25 +228,25 @@ export const nl: Dict = {
 
   tech: {
     eyebrow: "Onder de motorkap",
-    title: "linkcpp — de engine achter het netwerk",
-    lede: "linkcpp is de open control hub die alledaagse hardware verandert in een gedistribueerde inferentie-engine. De ring runtime laat elk apparaat slechts een paar layers bevatten en hidden state doorgeven aan zijn buur — geen centrale master in de ring — terwijl de inferentie-engine data plane dicht bij upstream blijft, met een kleine set patches.",
-    taglineCaption: "— linkcpp, in zijn eigen woorden",
+    title: "p4 — de engine achter het netwerk",
+    lede: "p4 bindt gemengde hardware samen tot één serving pool: elk apparaat bevat een paar layers van het model en geeft alleen de hidden state door aan zijn buur, zonder centrale master in de ring. Het vervangt linkcpp, de engine waarop Kvasir tot medio 2026 draaide, en houdt de data plane dicht bij upstream met een kleine set patches.",
+    taglineCaption: "— p4, in zijn eigen woorden",
     points: [
       {
         title: "Ring runtime",
         body: "Elk apparaat slaat hetzelfde model op en laadt alleen zijn layer-venster, en opent dan één link naar zijn voorganger en één naar zijn opvolger. Hidden-state-grenzen circuleren door de ring en de laatste rank stuurt de token terug — geen centrale master, geen node bevat alles.",
       },
       {
-        title: "linkcpp control hub",
-        body: "Eén Dockerized hub — de control plane die het RPC data plane van de inferentie-engine miste. Het ontdekt apparaten, plant layer-plaatsing, start de workers en stelt de gateways beschikbaar. Broncode beschikbaar onder de Business Source License (BSL) 1.1.",
+        title: "p4 control plane",
+        body: "De control plane die het RPC data plane miste. Het ontdekt apparaten, plant layer- en expertplaatsing, start de workers en stelt de gateways beschikbaar. Een plaatsingsplan is een operator-artefact — de engine laadt geen model omdat een webverzoek daarom vraagt. Broncode beschikbaar onder de Business Source License (BSL) 1.1.",
       },
       {
         title: "Gedistribueerde layer-plaatsing",
-        body: "linkcpp leest GGUF-metadata en berekent aaneengesloten layer-vensters per node via een rank manifest, plus optionele MoE-expert-FFN-offload naar node-RAM.",
+        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 428B MoE, staat momenteel als 16 stages verdeeld over twee machines.",
       },
       {
         title: "SIWS + 2FA-beveiliging",
-        body: "Bij publieke deployments is operator-toegang een Sign-In With Solana-handtekening over een server-nonce, plus TOTP-2FA en eenmalige back-upcodes — op zowel hub als gateway.",
+        body: "Bij publieke deployments is operator-toegang een Sign-In With Solana-handtekening over een server-nonce, plus TOTP-2FA en eenmalige back-upcodes. Een apparaat dat alleen rekenkracht wil bijdragen logt nooit in: het bewijst een wallet tegenover de bridge en krijgt een token dat alleen tot deelname reikt en verder tot niets.",
       },
     ],
     openText:
@@ -258,13 +260,18 @@ export const nl: Dict = {
     items: [
       {
         phase: "Nu",
-        title: "Inferentie op elk apparaat, live",
-        body: "GPU’s, CPU’s en telefoons bedienen layers via de ring runtime (NPU-ondersteuning in ontwikkeling). Een 122B-model draaide end-to-end over drie fysieke machines; bijdrage wordt end-to-end gecrediteerd; wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker; toegang loopt via HTTPS op publieke domeinen.",
+        title: "Serving op frontier-schaal, live",
+        body: "Step-3.7-Flash — een 428B MoE — is als 16 stages over twee AMD MI250-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
+      },
+      {
+        phase: "In uitvoering",
+        title: "Ring, gateway, client",
+        body: "De settlement-gateway is geport naar p4 en beantwoordt verkeer: een betaald verzoek gaat via de gateway, de bridge en de MI250-ring en wordt afgerekend op de tokens die het heeft gebruikt. Op de bedienende ring geeft Step-3.7-Flash 28–31 tokens per seconde bij één stream, met het eerste token in 270–285 ms. Nog in uitvoering: de ring gaat door herstelgates na een onderbroken run van 64 verzoeken, de desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren, en sharding op expert-korrel wordt naar p4 overgebracht — een apparaat kan al een venster claimen en een relay openen, maar de shard-download en de dispatch aan de engine-kant zijn nog niet geschreven.",
       },
       {
         phase: "Binnenkort",
-        title: "Mainnet & on-chain-afrekening",
-        body: "Alles draait vandaag op Solana devnet met een off-chain afrekenservice. Een on-chain beloningsprogramma en mainnet zijn gepland.",
+        title: "Kimi K3, en afrekening voorbij devnet",
+        body: "Verificatie van Kimi K3 (2.8T MoE) op p4 is de volgende gate, en het GLM-5.2-rapport — gemeten op linkcpp, de vorige engine — moet nog worden gepubliceerd. Afrekening draait op Solana devnet met een off-chain service; een on-chain beloningsprogramma en mainnet zijn gepland.",
       },
       {
         phase: "Binnenkort",
@@ -275,16 +282,16 @@ export const nl: Dict = {
   },
 
   proof: {
-    pill: "Geverifieerd op onze testvloot",
-    title: "Echte gedistribueerde inferentie, geverifieerd over meerdere machines",
+    pill: "Gemeten op onze eigen machines",
+    title: "Wat er draait, en wat het heeft gemeten",
     items: [
-      "parameters end-to-end bediend over 3 fysieke machines",
-      "afzonderlijke node-wallets, elk gecrediteerd voor zijn layer-aandeel (testvloot)",
-      "API-oppervlakken — OpenAI + Anthropic compatibel",
+      "MoE die vandaag bediend wordt — Step-3.7-Flash, over twee AMD MI250-machines",
+      "stages waarin het model is opgesplitst, geplaatst over twee agents",
+      "cosinusgelijkenis tussen ROCm, CUDA en een telefoon-CPU — gemengde hardware komt overeen",
       "wallet-platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "122B bediend over 3 machines · OpenAI + Anthropic compatibel · wallets op web / desktop / iOS / Android · Solana devnet",
+      "Step-3.7-Flash 428B op twee MI250-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
   },
 
   footer: {
@@ -293,11 +300,11 @@ export const nl: Dict = {
     ctaBody:
       "Draai een node en verdien KVR voor de layers die je bedient, of koppel de gateway aan je app via een OpenAI/Anthropic-compatibel endpoint.",
     tagline:
-      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de linkcpp control hub — een engine met beschikbare broncode (BSL) die grote modellen splitst over alledaagse apparaten (op een inferentie-engine data plane die dicht bij upstream blijft).",
+      "Het netwerkmerk voor gedecentraliseerde AI-inferentie, aangedreven door de p4-engine — broncode beschikbaar onder BSL 1.1, die grote modellen splitst over alledaagse apparaten op een data plane die dicht bij upstream blijft.",
     disclaimerStrong: "Disclaimer.",
     disclaimer:
       "KVR is een utility- / bijdrage-token dat wordt gebruikt om voor inferentie te betalen en om rekenkracht te belonen. Het draait vandaag op Solana devnet — het is geen verhandelbaar mainnet-bezit en niets hierin is een aanbod, prijs of belofte van financieel rendement. Beloningen voor rekenkracht weerspiegelen gemeten werk; infrastructuurhosts verdienen daarnaast voor uptime.",
-    rights: "© 2026 Kvasir · linkcpp. Engine onder de Business Source License (BSL) 1.1 — zie de licentie voor toegestaan gebruik.",
+    rights: "© 2026 Kvasir · p4. Engine onder de Business Source License (BSL) 1.1 — zie de licentie voor toegestaan gebruik.",
   },
 
   guide: {
@@ -305,28 +312,47 @@ export const nl: Dict = {
     eyebrow: "Node-operator gids",
     headline1: "Breng rekenkracht,",
     headline2: "draai een node.",
-    sub: "Maak een wallet aan, stake KVR en verbind vervolgens je apparaat met het Kvasir-netwerk om KVR te verdienen met de rekenkracht die je bijdraagt. Kies hieronder je platform voor download-, installatie- en uitvoerstappen.",
+    sub: "Maak een wallet aan, verbind je apparaat met het Kvasir-netwerk en verdien KVR met de rekenkracht die je bijdraagt. Geen stake, geen minimumsaldo. Kies hieronder je platform voor download-, installatie- en uitvoerstappen.",
     badgeCustody: "Eigen beheer — jouw sleutels",
     badgeDevices: "GPU · CPU · NPU",
     badgeToken: "Solana devnet · KVR",
     devnetNote: "KVR is een Solana devnet-utility-token — geen verhandelbaar mainnet-asset en geen financieel rendement.",
-    reqTitle: "Vereiste voor hub- en gateway-operators",
-    reqBody: "Om een hub-node of een gateway-node te draaien, moet je 100.000 KVR staken in je wallet. Reguliere compute-nodes kunnen zonder deze vereiste meedoen en verdienen voor de lagen die ze draaien.",
+    reqTitle: "Wat je nodig hebt om mee te doen",
+    reqBody: "Niets. Een wallet zonder ook maar één KVR kan een node registreren en verdienen voor het werk dat hij doet — er is geen stake en geen minimumsaldo. Bridge- en gateway-rollen, de toegangspunten waarvan het verkeer van anderen afhangt, worden door het netwerk toegewezen en niet gekocht: een node kan ze zichzelf niet geven, en hun uptime telt alleen mee zolang de gateway ze ziet antwoorden.",
     tabDesktop: "Desktop",
     tabMobile: "Mobiel",
+    tabServer: "Server",
     soon: "Binnenkort beschikbaar",
     download: "Download",
     desktopTitle: "Kvasir Wallet · Desktop-app",
     desktopSub: "macOS · Windows · Linux — wallet en node in één app.",
     desktop: [
-      { title: "Download de app", body: "Download hierboven het installatieprogramma van Kvasir Wallet voor jouw besturingssysteem. Een GPU (NVIDIA / AMD / Apple Silicon) wordt aanbevolen, maar CPU werkt ook.", body2: "" },
-      { title: "Installeren en openen", body: "Voer het installatieprogramma uit en open daarna Kvasir Wallet. Zie je op macOS de waarschuwing “niet-geïdentificeerde ontwikkelaar”, sta dit dan toe via Systeeminstellingen → Privacy en beveiliging.", body2: "" },
-      { title: "Maak je wallet aan", body: "Kies Nieuwe wallet aanmaken. Schrijf je herstelzin van 12 woorden op en bewaar deze veilig — bij verlies kan deze niet worden hersteld. Stel vervolgens een wachtwoordzin in om de app te ontgrendelen. Sleutels zijn non-custodial en worden alleen op dit apparaat opgeslagen.", body2: "" },
-      { title: "Wallet vullen & KVR staken", body: "Ontvang wat devnet SOL (voor kosten) en KVR (om te staken) op het ontvangstadres van je wallet. Voer in het staking-paneel van het dashboard een bedrag in en klik op Staken om in aanmerking te komen voor node-beloningen.", body2: "" },
-      { title: "Configureer de node", body: "Kies in Node-instellingen de compute-backend van deze machine (CUDA / ROCm / Metal / CPU) en selecteer Lokale shard (aanbevolen) — dit draait de laag-shard lokaal en stuurt alleen kleine randstatus door, de snelste modus.", body2: "" },
-      { title: "Start de node", body: "Schakel Node draaien (live) in om deze machine onder je wallet (eigenaar) op het netwerk te registreren en online te brengen.", body2: "Voor een echte GPU-compute-node draai je ook de onderstaande native agent. De planner van de hub plaatst modellagen op je machine, en je node verdient een laag-aandeel KVR dat wordt bijgeschreven op de eigenaarswallet." },
-      { title: "Volg bijdrage & beloningen", body: "Bekijk in Node-status: nodes / online / effectieve bijdrage / opeisbaar. Nodes worden ingedeeld in tiers op basis van doorvoer (S ×1.5 · A ×1.25 · B ×1.0 · C ×0.7); ruw × tier = effectief. Gebruik Beloningen claimen om opgebouwde KVR naar je wallet over te maken.", body2: "" },
+      { title: "Download de app", body: "Download hierboven het installatieprogramma voor je besturingssysteem. Met een GPU verdien je meer, maar een computer zonder GPU kan ook meedoen — de app vertelt je wat jouw computer aankan.", body2: "" },
+      { title: "Installeer en open", body: "Voer het installatieprogramma uit en open daarna Kvasir Wallet. De app is nog niet digitaal ondertekend, dus je systeem meldt dat: geef op macOS toestemming via System Settings → Privacy & Security; kies op Windows in de blauwe SmartScreen-melding More info → Run anyway. Als Windows meldt dat Smart App Control de app heeft geblokkeerd, verdwijnt die blokkering soms enkele uren na een nieuwe release — probeer het later opnieuw.", body2: "" },
+      { title: "Maak je wallet aan", body: "Kies Nieuwe wallet aanmaken. Schrijf je herstelzin van 12 woorden op en bewaar die op een plek waar alleen jij bij kunt — iedereen die de zin leest, kan het saldo van je wallet uitgeven, en als je de zin kwijtraakt, verlies je de toegang tot je account. Stel daarna een wachtwoordzin in om de app te ontgrendelen. De sleutels zijn van jou en verlaten dit apparaat nooit.", body2: "" },
+      { title: "Geen staking nodig", body: "Er is geen storting of minimumsaldo vereist. Een wallet zonder KVR en zonder SOL kan een node registreren en beginnen met verdienen — een node draaien kost je alleen elektriciteit. Het netwerk betaalt de afwikkelingskosten, niet jij.", body2: "" },
+      { title: "Bepaal wat je beschikbaar stelt", body: "Open Node settings. Compute engines laat zien waarmee deze computer daadwerkelijk berekeningen kan uitvoeren; een GPU zonder engine kan geen werk aannemen. Bij een NVIDIA-kaart biedt de app aan om de engine voor modelexperts voor je te downloaden. GPU memory to lend stel je zelf in — de app rekent uit hoeveel modelexperts je daarmee kunt opslaan en toont je het aantal. Als een game of een afbeeldingsgenerator dezelfde GPU gebruikt, houd daar dan geheugen voor vrij.", body2: "" },
+      { title: "Start de node", body: "Zet de node aan. De node registreert zich onder je wallet, vraagt het netwerk aan welke modelexperts een tekort is, downloadt alleen de bijbehorende modelgewichten en begint de bijbehorende aanvragen te verwerken. Wat je krijgt toegewezen, hangt af van wat het netwerk op dat moment tekortkomt. Daarom slaan twee computers zelden hetzelfde op.", body2: "Gebruik de native agent hieronder voor een node die modellagen verwerkt in plaats van modelexperts. Welke lagen dan op je computer staan, wordt bepaald door een plaatsingsplan dat de beheerder laadt." },
+      { title: "Volg je verdiensten", body: "Nodestatus toont de computers onder je wallet, wat ze hebben bijgedragen en wat je kunt opnemen. Werk voor modelexperts wordt volledig vergoed — je wordt betaald voor het werk dat je computer daadwerkelijk heeft uitgevoerd, zonder extra prestatiemultiplier. (De niveaus S / A / B gelden voor nodes die tokens genereren, wat een node voor modelexperts niet doet.) Met Beloningen opnemen zet je opgebouwde KVR over naar je wallet; het netwerk betaalt de transactiekosten.", body2: "" },
     ],
+    serverTitle: "Linux zonder beeldscherm · één opdracht",
+    serverSub: "Voor een server zonder beeldscherm. Installeer de software, geef aan hoeveel GPU-geheugen u beschikbaar wilt stellen en start de node.",
+    serverReqTitle: "Systeemvereisten",
+    serverReq: [
+      "Een NVIDIA GPU met compute capability 7.5 of hoger: GTX 16xx, RTX 20xx en latere modellen.",
+      "Een stuurprogramma dat CUDA 13 ondersteunt (R580 of nieuwer). Het installatieprogramma controleert dit voordat het grote bestanden downloadt.",
+      "glibc 2.27 of nieuwer: Ubuntu 18.04, Debian 10, RHEL 8 en latere versies.",
+      "Ongeveer 1 GB voor de node en de rekenengine, plus ruimte voor de gewichten van de experts die u wilt opslaan: ongeveer 9.5 MB per expert.",
+    ],
+    serverNoRoot: "Voor geen van deze stappen zijn root-rechten nodig. Als gewone gebruiker installeert u de software onder ~/.local met een gebruikersservice; als root installeert u deze onder /opt met een systeemservice.",
+    server: [
+      { title: "Installeren", body: "Eén opdracht volstaat. Deze detecteert de architectuur en gebruikt de Node-versie op de machine als die recent genoeg is. Anders wordt een eigen versie opgehaald. Vervolgens wordt de release gedownload en vóór het uitpakken gecontroleerd op SHA-256, wordt een walletsleutel aangemaakt en wordt een systemd-unitbestand geschreven.", body2: "De node wordt nog niet gestart. De volgende twee stappen voert u zelf uit." },
+      { title: "De rekenengine downloaden", body: "De engine wordt apart gedownload omdat deze specifiek is voor uw GPU. De engine bevat eigen CUDA-bibliotheken, zodat u geen toolkit hoeft te installeren en geen zoekpad voor bibliotheken hoeft in te stellen. Alleen het stuurprogramma moet op het systeem aanwezig zijn.", body2: "" },
+      { title: "Geheugen beschikbaar stellen", body: "Open het unitbestand en vervang REPLACE_ME door een hoeveelheid in GiB. Alleen u kunt deze waarde bepalen: dit is de hoeveelheid geheugen op uw kaart die de node gebruikt. Als de machine ook andere taken uitvoert, houd daar dan geheugen voor vrij. De node berekent hoeveel experts er binnen deze limiet passen en meldt dat aantal bij het starten.", body2: "" },
+      { title: "Starten", body: "De node registreert zich onder uw wallet, vraagt het netwerk welke experts onvoldoende beschikbaar zijn, downloadt alleen hun gewichten en begint de bijbehorende verzoeken te verwerken. Welke experts u krijgt toegewezen, hangt af van de behoefte van het netwerk op dat moment.", body2: "" },
+      { title: "Vergoedingen bekijken", body: "De vergoeding voor uw bijdrage wordt bijgeschreven op de wallet die bij de sleutel hoort. Het werk van experts wordt volledig vergoed: u ontvangt een vergoeding voor het werk dat uw machine daadwerkelijk heeft uitgevoerd, zonder extra vermenigvuldigingsfactor op basis van prestaties.", body2: "" },
+    ],
+    serverKeyWarn: "Maak een back-up van ~/.config/kvasir/node-key.json. De beloningen worden aan dat adres uitbetaald en er is geen andere kopie van de sleutel.",
     faucetTitle: "Devnet SOL verkrijgen (gratis faucet)",
     faucetIntro: "Je hebt wat devnet SOL nodig voor transactiekosten (gebruik het ontvangstadres van je wallet):",
     faucetWeb: "Web: faucet.solana.com — plak je adres en kies netwerk Devnet",
@@ -338,7 +364,7 @@ export const nl: Dict = {
     mobile: [
       { title: "Installeer de app", body: "Installeer Kvasir Wallet vanuit {0}. Gebruik de knop hierboven om de winkelpagina te openen. Een recent apparaat met een GPU/NPU wordt aanbevolen.", note: "" },
       { title: "Wallet aanmaken / herstellen", body: "Open de app en kies Nieuwe wallet aanmaken of Herstellen via herstelzin. Bewaar je zin van 12 woorden veilig en stel een wachtwoordzin in — met deze zin herstel je hetzelfde account op desktop en andere apparaten. Sleutels zijn non-custodial en worden alleen op het apparaat opgeslagen.", note: "" },
-      { title: "Configureer de node", body: "Kies in Mobiele node-instellingen een compute-backend (GPU · OpenCL/Vulkan · CPU) en Lokale shard (aanbevolen). De verwachte doorvoer (tok/s) en de impact op geheugen / temperatuur / prestaties worden weergegeven.", note: "" },
+      { title: "Configureer de node", body: "Kies in Mobiele node-instellingen een compute-backend en Lokale shard (aanbevolen). De GPU-keuze verschilt per platform: Android gebruikt de Adreno-GPU via OpenCL of Vulkan, iOS de Apple-GPU via MLX; beide kunnen terugvallen op de CPU. De verwachte doorvoer (tok/s) en de impact op geheugen / temperatuur / prestaties worden weergegeven.", note: "" },
       { title: "Staken & beloningen", body: "Stake in Staking & node-beloningen je KVR en bekijk / claim de opeisbare beloningen die je node opbouwt. Node-status toont je prestatie-tier en bijdrage.", note: "Deelname aan mobiele local-shard-inferentie wordt geleidelijk uitgerold; op dit moment zijn de belangrijkste compute-nodes GPU/CPU-machines waarop de agent draait." },
     ],
     viewGithub: "Bekijk op GitHub",
@@ -351,6 +377,9 @@ export const nl: Dict = {
     capBackend: "Compute-backend (CUDA · ROCm · Metal · CPU)",
     capMode: "Node-modus — Lokale shard (aanbevolen)",
     capRunlive: "Node draaien (live) — live meters · node-id · OS",
+    capEnginesMac: "macOS — de Metal-engine is ingebouwd in de app en de schuifregelaar rekent een geheugenbudget om naar een aantal modelexperts",
+    capEnginesWin: "Windows — hetzelfde scherm nadat de NVIDIA-engine is geïnstalleerd",
+    capEngineOffer: "Windows — de engine wordt als aparte download aangeboden omdat deze specifiek is voor de GPU",
     capNodes: "Node-status — totalen · tiers · bijdrage per node",
     capClaim: "Beloningen claimen — opeisbare KVR",
     capWallet: "Wallet-start — KVR-saldo (adres gemaskeerd)",
@@ -362,7 +391,7 @@ export const nl: Dict = {
     docTitle: "Kvasir — Technologie",
     pill: "Techblog",
     title: "De engineering van de zwerm",
-    lede: "Ontwerpnotities en op echte hardware geverifieerde mijlpalen uit de bouw van expert-gesharde zwerm-inferentie op linkcpp — hoe een 122B-model over GPU’s, CPU’s en telefoons draait.",
+    lede: "Ontwerpnotities en op echte hardware geverifieerde mijlpalen uit de bouw van expert-gesharde zwerm-inferentie — hoe een 122B-model over GPU’s, CPU’s en telefoons draait. Posts tot medio 2026 beschrijven linkcpp, de engine die p4 heeft vervangen; de ideeën bleven, de namen veranderden.",
     langNote: "",
     sidebarTitle: "Artikelen bekijken",
     allArticles: "Alle artikelen",
@@ -412,7 +441,7 @@ export const nl: Dict = {
     apiModels: "Toont de modellen die de swarm nu bedient — een lege array wanneer er geen is, dus codeer nooit een id hard.",
     apiQuote: "Vraag een prijsofferte en een requestId gekoppeld aan je prompt. priceToken is de te betalen hoeveelheid KVR; de eindafrekening is op basis van werkelijk tokengebruik.",
     apiPay: "Stuur de geoffreerde KVR naar de bijbehorende tokenrekening van de ontvanger (de vault) en onderteken met je wallet. De handtekening is eenmalig te gebruiken.",
-    apiInfer: "De gateway pollt de chain om de betaling te verifiëren, voert de inferentie uit op de hub en geeft het resultaat terug samen met het werkelijke gebruik en de kosten.",
+    apiInfer: "De gateway pollt de chain om de betaling te verifiëren, voert de inferentie uit via de bridge en geeft het resultaat terug samen met het werkelijke gebruik en de kosten.",
     codeTitle: "End-to-end voorbeeld",
     codeLede: "Laad de geheime sleutel van je wallet uit de omgeving, offreer, betaal en verzilver — één op zichzelf staand fragment. Stappen 1, 2 en 4 zijn puur HTTP; alleen stap 3 (de SPL-overdracht) verschilt per SDK.",
     adapterTitle: "OpenAI-compatibele adapter",
@@ -449,7 +478,7 @@ export const nl: Dict = {
     catUseApi: "De API gebruiken",
     selfHostTitle: "Draai een node, krijg gratis inferentie",
     selfHostPitch: "Wil je AI-modellen gratis gebruiken? Laat je coding-agent je machine als node aan het netwerk koppelen — en je er een inferentie-endpoint voor teruggeven.",
-    selfHostBody: "Eén script start de hub (en optioneel de KVR-gateway) met Docker. Voeg je GPU toe en laad een open model in de hub-UI, en roep dan een standaard OpenAI-compatibel endpoint aan — /c/<id>/v1/chat/completions — dat op je eigen hardware draait. Richt elk hulpmiddel dat OpenAI spreekt erop.",
+    selfHostBody: "Zet de bridge voor je eigen p4-agents, optioneel met de KVR-gateway ernaast. Laad een open model met een plaatsingsplan en roep dan een standaard OpenAI-compatibel endpoint aan — /c/<id>/v1/chat/completions — dat op je eigen hardware draait. Richt elk hulpmiddel dat OpenAI spreekt erop.",
     selfHostNote: "Dit serveert de open modellen die je machine aankan gratis — het is jouw rekenkracht. Voor frontier-modellen die te groot zijn voor één machine, sluit je aan bij de swarm: daar is de KVR betalen-per-gebruik-API hieronder voor.",
     inferenceApiTitle: "Inference API (credits)",
     inferenceApiLede: "De eenvoudigste weg: een native OpenAI-endpoint met een API-sleutel. Streaming (SSE) en native tool calls werken meteen, en elke aanroep wordt afgeschreven van een vooruitbetaald KVR-saldo — geen wallet-ondertekening per aanroep. Toegang wordt geregeld door een wallet-whitelist.",
@@ -496,7 +525,7 @@ export const nl: Dict = {
     pill: "We nemen aan",
     headline1: "Marketing & Growth",
     headline2: "laat het netwerk groeien",
-    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De linkcpp-engine met beschikbare broncode verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
+    sub: "Kvasir is een gedecentraliseerd AI-inferentienetwerk (DePIN) op Solana. De p4-engine met beschikbare broncode verdeelt grote open modellen over vele bijgedragen GPU's en machines, en elke node verdient KVR voor de lagen die hij daadwerkelijk heeft bediend. De techniek werkt al — we zoeken de persoon die het de wereld vertelt.",
     factRole: "Rol",
     factRoleV: "Marketing & growth — fulltime",
     factLocation: "Locatie",

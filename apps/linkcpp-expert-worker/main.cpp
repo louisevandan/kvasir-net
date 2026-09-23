@@ -29,15 +29,38 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
 #include <thread>
 
+// Sockets: Winsock on Windows, BSD sockets elsewhere. sock_t / sock_close /
+// sock_io_t hide the three real differences (handle type, close call, and the
+// int length Winsock's send/recv take) so the serving code below is shared.
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+using sock_t = SOCKET;
+using sock_io_t = int;
+static const sock_t BAD_SOCK = INVALID_SOCKET;
+static void sock_close(sock_t s) { ::closesocket(s); }
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+using sock_t = int;
+using sock_io_t = ssize_t;
+static const sock_t BAD_SOCK = -1;
+static void sock_close(sock_t s) { ::close(s); }
+#endif
 
 namespace {
 
@@ -48,9 +71,29 @@ const char * arg_value(int argc, char ** argv, const char * key) {
     return nullptr;
 }
 
-int32_t meta_i32(const gguf_context * gguf, const char * key, int32_t fallback) {
+// Reads an integer key whatever width/signedness the writer chose (the gateway
+// writes u32; older slices wrote i32). gguf_get_val_* asserts on a type
+// mismatch, so the type is checked first. Missing or non-integer -> fallback.
+int64_t meta_int(const gguf_context * gguf, const char * key, int64_t fallback) {
     const int64_t id = gguf_find_key(gguf, key);
-    return id < 0 ? fallback : gguf_get_val_i32(gguf, id);
+    if (id < 0) return fallback;
+    switch (gguf_get_kv_type(gguf, id)) {
+        case GGUF_TYPE_UINT8:  return gguf_get_val_u8(gguf, id);
+        case GGUF_TYPE_INT8:   return gguf_get_val_i8(gguf, id);
+        case GGUF_TYPE_UINT16: return gguf_get_val_u16(gguf, id);
+        case GGUF_TYPE_INT16:  return gguf_get_val_i16(gguf, id);
+        case GGUF_TYPE_UINT32: return gguf_get_val_u32(gguf, id);
+        case GGUF_TYPE_INT32:  return gguf_get_val_i32(gguf, id);
+        case GGUF_TYPE_UINT64: return (int64_t) gguf_get_val_u64(gguf, id);
+        case GGUF_TYPE_INT64:  return gguf_get_val_i64(gguf, id);
+        default:               return fallback;
+    }
+}
+
+// The gateway's shards use kvasir.expert_shard.*; slices cut by the older
+// hub tooling use linkcpp.expert_shard.*. Prefer the first, accept the second.
+int32_t shard_meta(const gguf_context * gguf, const char * kvasir_key, const char * linkcpp_key) {
+    return (int32_t) meta_int(gguf, kvasir_key, meta_int(gguf, linkcpp_key, 0));
 }
 
 std::vector<uint8_t> read_file(const char * path, size_t expect_bytes) {
@@ -90,11 +133,16 @@ struct expert_shard {
         gguf = gguf_init_from_file(path, gp);
         (void) mp;
         if (!gguf) { std::fprintf(stderr, "failed to open gguf %s\n", path); return false; }
-        expert_begin    = meta_i32(gguf, "linkcpp.expert_shard.expert_begin", 0);
-        expert_end      = meta_i32(gguf, "linkcpp.expert_shard.expert_end", 0);
-        n_expert_global = meta_i32(gguf, "linkcpp.expert_shard.n_expert_global", 0);
-        n_embd          = meta_i32(gguf, "linkcpp.expert_shard.n_embd", 0);
-        n_layer         = meta_i32(gguf, "linkcpp.expert_shard.n_layer", 0);
+        expert_begin    = shard_meta(gguf, "kvasir.expert_shard.expert_begin",   "linkcpp.expert_shard.expert_begin");
+        expert_end      = shard_meta(gguf, "kvasir.expert_shard.expert_end",     "linkcpp.expert_shard.expert_end");
+        n_expert_global = shard_meta(gguf, "kvasir.expert_shard.n_expert_total", "linkcpp.expert_shard.n_expert_global");
+        n_embd          = shard_meta(gguf, "kvasir.expert_shard.n_embd",         "linkcpp.expert_shard.n_embd");
+        n_layer         = (int32_t) meta_int(gguf, "linkcpp.expert_shard.n_layer", 0);
+        // Older gateway shards did not carry n_embd; it is the input width of
+        // the gate/up matrices, i.e. ne[0] of any ffn_gate_exps tensor.
+        for (ggml_tensor * t = ggml_get_first_tensor(meta); t && n_embd == 0; t = ggml_get_next_tensor(meta, t)) {
+            if (std::strstr(ggml_get_name(t), "ffn_gate_exps")) n_embd = (int32_t) t->ne[0];
+        }
 
         buffer = ggml_backend_alloc_ctx_tensors(meta, backend);
         if (!buffer) { std::fprintf(stderr, "backend buffer alloc failed\n"); return false; }
@@ -103,16 +151,32 @@ struct expert_shard {
         if (!f) return false;
         const size_t data_off = gguf_get_data_offset(gguf);
         const int n = gguf_get_n_tensors(gguf);
-        std::vector<uint8_t> tmp;
+        // One fixed staging buffer, not one tensor's worth. Reading a whole
+        // tensor first cost host memory equal to the shard: a 64-expert slice
+        // asked for ~600 MB of RAM on top of the same bytes in the backend,
+        // and the allocator kept it. On a discrete GPU that is wasted RAM; on
+        // unified memory (Apple, GB10) it is charged twice against the same
+        // pool, which is what made a Mac measure 15.3 MiB per expert against
+        // 9.06 MiB of weights.
+        constexpr size_t STAGE_BYTES = 8u << 20;
+        std::vector<uint8_t> tmp(STAGE_BYTES);
         for (int i = 0; i < n; ++i) {
             const char * tname = gguf_get_tensor_name(gguf, i);
             ggml_tensor * t = ggml_get_tensor(meta, tname);
             const size_t sz  = ggml_nbytes(t);
             const size_t off = data_off + gguf_get_tensor_offset(gguf, i);
-            tmp.resize(sz);
-            std::fseek(f, (long) off, SEEK_SET);
-            if (std::fread(tmp.data(), 1, sz, f) != sz) { std::fclose(f); return false; }
-            ggml_backend_tensor_set(t, tmp.data(), 0, sz);
+            // A multi-layer slice passes 2 GiB; long is 32-bit on Windows.
+#ifdef _WIN32
+            if (_fseeki64(f, (__int64) off, SEEK_SET) != 0) { std::fclose(f); return false; }
+#else
+            if (fseeko(f, (off_t) off, SEEK_SET) != 0) { std::fclose(f); return false; }
+#endif
+            for (size_t done = 0; done < sz; ) {
+                const size_t want = std::min(STAGE_BYTES, sz - done);
+                if (std::fread(tmp.data(), 1, want, f) != want) { std::fclose(f); return false; }
+                ggml_backend_tensor_set(t, tmp.data(), done, want);
+                done += want;
+            }
         }
         std::fclose(f);
         return true;
@@ -127,9 +191,122 @@ struct expert_shard {
 
 // One expert-FFN evaluation for `layer`: (hidden[n_embd,n_used,n_tokens],
 // ids[n_used,n_tokens] local) -> out[n_embd,n_used,n_tokens].
-bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
-             int n_embd, int n_ff, int n_used, int n_tokens,
-             const float * hidden, const int32_t * ids, std::vector<float> & out) {
+// ---- the batch-width cliff --------------------------------------------------
+//
+// ggml picks a kernel for mul_mat_id by how many batch columns it is given: at
+// or below MMVQ_MAX_BATCH_SIZE it runs MMVQ, above it MMQ. Both quantize the
+// activations to q8_1 — but only MMQ's wide path loses enough to matter, and it
+// loses it silently.
+//
+// Measured against a float64 reference on real gateway shards, minimum cosine
+// over the batch (a mean hides this — a failing run still averages ~0.9998):
+//
+//               T=8        T=9        T=64       T=256
+//   CUDA 4060   0.999923   0.998879   0.997950   0.997950  (8 of 256 under 0.999)
+//   CUDA GB10   0.999932   —          —          0.998684  (5 of 256)
+//   Metal M4    1.000000   —          0.999966   0.999962
+//
+// The step lands exactly between 8 and 9 on both CUDA cards. Metal's wide path
+// degrades too, just not past the line. This was shipping: the Windows pack
+// builds with GGML_CUDA_FORCE_MMQ=ON, so every request over 8 tokens was
+// answered slightly wrong, and the check that would have caught it compared two
+// MMQ builds against each other rather than against arithmetic.
+//
+// So a backend that falls off the cliff is never given a graph wider than it.
+// The alternative for CUDA was building against cuBLAS with FP32 accumulation,
+// also exact, but it drags ~550 MB of NVIDIA DLLs back into a pack that is
+// 176 MB today.
+//
+// It is NOT applied everywhere, because it is not free. Measured on an M4 Pro,
+// 64-expert shard, n_used=8, tok/s:
+//
+//               T=1    T=16    T=64    T=256   T=512
+//   unchunked   727    1667    4498    13873   13432
+//   chunked     577    1529    2085     2087    2078
+//
+// Chunked throughput goes flat at ~0.48 ms/token: each block pays for its own
+// graph and allocator, so the work stops amortizing. At T=512 that is 38 ms
+// against 246 ms. Buying Metal an accuracy it already has, at six times the
+// cost, is not a trade worth making — so the width is per backend, and a
+// backend only pays when its arithmetic is actually short.
+static constexpr int MMVQ_MAX_BATCH_SIZE = 8;
+static constexpr int NO_CHUNKING = 1 << 24;
+
+/** How wide a graph this backend may be given.
+ *
+ *  Keyed off the backend name rather than a build flag because one binary can
+ *  carry several backends and picks at runtime — a CUDA build that falls back
+ *  to CPU should not chunk, and does not. KVASIR_EXPERT_CHUNK overrides it, so
+ *  the cost of chunking can be measured on any backend without a rebuild;
+ *  that is how the table above was produced. */
+inline int chunk_width(ggml_backend_t backend) {
+    if (const char * env = std::getenv("KVASIR_EXPERT_CHUNK")) {
+        const int n = std::atoi(env);
+        if (n > 0) return n;
+    }
+#ifdef LINKCPP_CUDA_CUBLAS
+    // Built against cuBLAS with FP32 accumulation, which is exact at every
+    // width (measured 1.000000 at T=256 and over 4096 outputs at 512x8). MMQ is
+    // never reached, so there is no cliff to stay under — and chunking here
+    // would cost 3-6x on wide batches to buy nothing.
+    (void) backend;
+    return NO_CHUNKING;
+#else
+    const char * name = ggml_backend_name(backend);
+    // CUDA's MMQ path is the one measured short; Metal's wide path loses far
+    // less and stays inside the bar, and CPU does not use these kernels at all.
+    return (name && std::strstr(name, "CUDA")) ? MMVQ_MAX_BATCH_SIZE : NO_CHUNKING;
+#endif
+}
+
+/**
+ * Make the cuBLAS build accumulate in FP32, without anyone having to remember.
+ *
+ * What this is NOT justified by: a 0.998918 that stood here claiming FP16
+ * accumulation fell under the bar. That figure was measured on a Qwen3.5 shard
+ * — a different model from the one this serves — and nobody has been able to
+ * say on which machine or which build. Two people then tried to reproduce it
+ * on the model we actually serve and could not:
+ *
+ *                        T=8/9      T=256
+ *   4060, cuBLAS FP16    0.999923   0.999975
+ *   GB10, cuBLAS FP16    0.999936   0.999997
+ *
+ * Both pass. On these two cards the only kernel that breaks the bar is MMQ
+ * (see the table above), and cuBLAS passes either way. So the honest reason
+ * for setting it is the one the numbers do support: FP32 accumulation is
+ * better where it has been measured — 1.000000 against 0.999975 and 0.999997
+ * at T=256 — and it costs nothing here, since the build already pays for
+ * cuBLAS. That is a smaller claim than the one it replaces, and it is one
+ * somebody can check.
+ *
+ * Setting it in the binary rather than leaving it to whoever spawns the worker
+ * is the part that matters most. The app, node-cli and anyone running it by
+ * hand would each have to know, and a correctness property that depends on how
+ * the process was launched is not a property: a GB10 build was found in
+ * production with this define missing, correct only because a wrapper script
+ * exported the variable by hand.
+ *
+ * So the worker sets it for itself, before any backend is created, and only
+ * when it is unset: an operator who deliberately exports 0 to compare builds
+ * still gets what they asked for.
+ */
+inline void force_fp32_accumulation() {
+#ifdef LINKCPP_CUDA_CUBLAS
+    if (!std::getenv("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F")) {
+#ifdef _WIN32
+        _putenv_s("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F", "1");
+#else
+        setenv("GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F", "1", 0);
+#endif
+    }
+#endif
+}
+
+/** One graph, at most MMVQ_MAX_BATCH_SIZE tokens wide. Call run_ffn. */
+bool run_ffn_block(const expert_shard & shard, ggml_backend_t backend, int layer,
+                   int n_embd, int n_ff, int n_used, int n_tokens,
+                   const float * hidden, const int32_t * ids, std::vector<float> & out) {
     const std::string p = "blk." + std::to_string(layer) + ".ffn_";
     ggml_tensor * up_exps   = shard.find(p + "up_exps.weight");
     ggml_tensor * gate_exps = shard.find(p + "gate_exps.weight");
@@ -181,21 +358,53 @@ bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
 }
 
 // ---- serving mode: dispatch experts over TCP (M2 productionization) --------
-bool send_all(int fd, const void * p, size_t n) {
+// Winsock takes an int length, so large transfers go in chunks of at most 1 GiB.
+constexpr size_t IO_CHUNK = size_t(1) << 30;
+bool send_all(sock_t fd, const void * p, size_t n) {
     const char * c = (const char *) p;
-    while (n) { ssize_t k = ::send(fd, c, n, 0); if (k <= 0) return false; c += k; n -= (size_t) k; }
+    while (n) {
+        const size_t want = n < IO_CHUNK ? n : IO_CHUNK;
+        sock_io_t k = ::send(fd, c, (int) want, 0);
+        if (k <= 0) return false;
+        c += k; n -= (size_t) k;
+    }
     return true;
 }
-bool recv_all(int fd, void * p, size_t n) {
+bool recv_all(sock_t fd, void * p, size_t n) {
     char * c = (char *) p;
-    while (n) { ssize_t k = ::recv(fd, c, n, 0); if (k <= 0) return false; c += k; n -= (size_t) k; }
+    while (n) {
+        const size_t want = n < IO_CHUNK ? n : IO_CHUNK;
+        sock_io_t k = ::recv(fd, c, (int) want, 0);
+        if (k <= 0) return false;
+        c += k; n -= (size_t) k;
+    }
+    return true;
+}
+
+/** hidden [n_embd,n_used,n_tokens], ids [n_used,n_tokens] -> [n_embd,n_used,n_tokens].
+ *  The token axis is outermost in all three, so a block of tokens is contiguous
+ *  in each and a chunk is a pointer offset rather than a gather. */
+bool run_ffn(const expert_shard & shard, ggml_backend_t backend, int layer,
+             int n_embd, int n_ff, int n_used, int n_tokens,
+             const float * hidden, const int32_t * ids, std::vector<float> & out) {
+    out.resize((size_t) n_embd * n_used * n_tokens);
+    const int width = chunk_width(backend);
+    std::vector<float> block;
+    for (int t0 = 0; t0 < n_tokens; t0 += width) {
+        const int nt = std::min(width, n_tokens - t0);
+        if (!run_ffn_block(shard, backend, layer, n_embd, n_ff, n_used, nt,
+                           hidden + (size_t) t0 * n_used * n_embd,
+                           ids    + (size_t) t0 * n_used, block)) return false;
+        std::memcpy(out.data() + (size_t) t0 * n_used * n_embd,
+                    block.data(), block.size() * sizeof(float));
+    }
     return true;
 }
 
 // cur [n_embd,1,n_tokens], sel [n_used,n_tokens] -> experts [n_embd,n_used,n_tokens]
-bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int layer,
-                      int n_embd, int n_used, int n_tokens,
-                      const float * cur, const int32_t * sel, std::vector<float> & out) {
+bool compute_block(const expert_shard & shard, ggml_backend_t backend, int layer,
+                   int n_embd, int n_used, int n_tokens,
+                   const float * cur, const int32_t * sel, std::vector<float> & out) {
     const std::string p = "blk." + std::to_string(layer) + ".ffn_";
     ggml_tensor * up_exps   = shard.find(p + "up_exps.weight");
     ggml_tensor * gate_exps = shard.find(p + "gate_exps.weight");
@@ -229,13 +438,93 @@ bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int la
     return ok;
 }
 
+/** The serve path's entry: same contract as compute_block, any number of
+ *  tokens, never handing one graph more than the cliff's width. */
+bool compute_dispatch(const expert_shard & shard, ggml_backend_t backend, int layer,
+                      int n_embd, int n_used, int n_tokens,
+                      const float * cur, const int32_t * sel, std::vector<float> & out) {
+    out.resize((size_t) n_embd * n_used * n_tokens);
+    const int width = chunk_width(backend);
+    std::vector<float> block;
+    for (int t0 = 0; t0 < n_tokens; t0 += width) {
+        const int nt = std::min(width, n_tokens - t0);
+        if (!compute_block(shard, backend, layer, n_embd, n_used, nt,
+                           cur + (size_t) t0 * n_embd,
+                           sel + (size_t) t0 * n_used, block)) return false;
+        std::memcpy(out.data() + (size_t) t0 * n_used * n_embd,
+                    block.data(), block.size() * sizeof(float));
+    }
+    return true;
+}
+
 // One connection's request loop. `compute_mu` serializes the actual GPU work —
 // the ggml backend is not safe for concurrent graph compute — while I/O (recv of
 // the next request, send of the last result) runs off-lock. Returning ends the
 // connection; a dead/half-open peer errors out here without wedging the worker.
-void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
+// ---- request validation ----------------------------------------------------
+//
+// Everything below this line arrives over a socket. The worker binds
+// 127.0.0.1, so the sender is on the same machine as the relay — which on a
+// desktop is the operator and nobody else, but on a headless server is *any
+// local user*. That is the deployment this exists for, so "the peer is
+// trusted" is not an assumption this code gets to make.
+//
+// Unvalidated, each field is its own failure:
+//   n_rows/n_pairs/n_used/n_tokens   negative or huge -> `(size_t) n_embd * n`
+//     wraps or asks for terabytes; std::vector aborts the process, and a
+//     negative count silently becomes an enormous size_t.
+//   ids/sel                          an expert id outside the shard indexes
+//     off the end of GPU memory: a wrong answer, or a crash inside the backend.
+//   ridx (v2/v2f16)                  used to index BOTH a read from `rows` and
+//     a write to `out` — `out[ridx[i] * n_embd] += ...` is an out-of-bounds
+//     WRITE into this process's heap, chosen by the caller. That is the one
+//     that turns a malformed request into someone else's code running.
+//
+// A bad request closes the connection rather than answering. There is no error
+// frame in this protocol, and the caller already treats a closed relay as a
+// failure to redial — so this reuses the one failure mode both ends understand.
+
+// Caps large enough for anything the market hands out (the bridge refuses more
+// than 64 experts per shard, and the memory model sizes scratch for 512 tokens
+// x 8 experts), small enough that the arithmetic below cannot overflow.
+static constexpr int MAX_REQ_EXPERTS = 64;
+static constexpr int MAX_REQ_TOKENS  = 8192;
+static constexpr int MAX_REQ_ROWS    = 8192;
+static constexpr int MAX_REQ_PAIRS   = MAX_REQ_ROWS * 8;
+
+static bool in_range(int v, int lo, int hi) { return v >= lo && v <= hi; }
+
+/** Every index lands inside [0, limit). Used for two different things: expert
+ *  ids, which are LOCAL to the shard (the router subtracts
+ *  kvasir.expert_shard.expert_begin before sending), and v2's row indices. */
+static bool all_indices_below(const int32_t * v, size_t n, int limit) {
+    for (size_t i = 0; i < n; ++i) if (v[i] < 0 || v[i] >= limit) return false;
+    return true;
+}
+
+/** No token may select the same expert twice.
+ *
+ *  This is not defensive tidiness: ggml's CUDA path asserts on it
+ *  (ids_to_sorted_host.size() == ne_get_rows) and the MMQ path reads out of
+ *  bounds, so one duplicate kills the worker and every slot it serves. A
+ *  top-k router cannot produce one, which is exactly why nothing upstream
+ *  checks — and why a single malformed request would otherwise be a way to
+ *  stop an operator earning. */
+static bool no_duplicate_experts(const int32_t * sel, int n_used, int n_tokens) {
+    if (n_used < 2) return true;
+    for (int t = 0; t < n_tokens; ++t) {
+        const int32_t * s = sel + (size_t) t * n_used;   // ids for one token
+        for (int a = 0; a < n_used; ++a)
+            for (int b = a + 1; b < n_used; ++b)
+                if (s[a] == s[b]) return false;
+    }
+    return true;
+}
+
+void handle_conn(sock_t c, const expert_shard & shard, ggml_backend_t backend,
                  int layer, int n_embd, std::mutex & compute_mu) {
-    int one2 = 1; ::setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one2, sizeof(one2));
+    int one2 = 1; ::setsockopt(c, IPPROTO_TCP, TCP_NODELAY, (const char *) &one2, sizeof(one2));
+    const int n_local = shard.expert_end - shard.expert_begin;
     for (;;) {
         int32_t hdr[2];
         if (!recv_all(c, hdr, sizeof(hdr))) break;
@@ -244,12 +533,16 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
             const int n_rows = hdr[1];
             int32_t n_pairs = 0;
             if (!recv_all(c, &n_pairs, sizeof(n_pairs))) break;
+            if (!in_range(n_rows, 1, MAX_REQ_ROWS) || !in_range(n_pairs, 1, MAX_REQ_PAIRS)) break;
             std::vector<ggml_fp16_t> rows16((size_t) n_embd * n_rows), probs16((size_t) n_pairs);
             std::vector<int32_t> ridx((size_t) n_pairs), ids((size_t) n_pairs);
             if (!recv_all(c, rows16.data(), rows16.size() * sizeof(ggml_fp16_t))) break;
             if (!recv_all(c, ridx.data(),  ridx.size()  * sizeof(int32_t)))       break;
             if (!recv_all(c, ids.data(),   ids.size()   * sizeof(int32_t)))       break;
             if (!recv_all(c, probs16.data(), probs16.size() * sizeof(ggml_fp16_t))) break;
+            // ridx indexes a read from rows and a write to out; ids index GPU memory.
+            if (!all_indices_below(ridx.data(), ridx.size(), n_rows)) break;
+            if (!all_indices_below(ids.data(),  ids.size(),  n_local)) break;
             std::vector<float> rows((size_t) n_embd * n_rows), probs((size_t) n_pairs);
             ggml_fp16_to_fp32_row(rows16.data(),  rows.data(),  (int64_t) n_embd * n_rows);
             ggml_fp16_to_fp32_row(probs16.data(), probs.data(), (int64_t) n_pairs);
@@ -281,6 +574,7 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
             const int n_rows = hdr[1];
             int32_t n_pairs = 0;
             if (!recv_all(c, &n_pairs, sizeof(n_pairs))) break;
+            if (!in_range(n_rows, 1, MAX_REQ_ROWS) || !in_range(n_pairs, 1, MAX_REQ_PAIRS)) break;
             std::vector<float>   rows((size_t) n_embd * n_rows);
             std::vector<int32_t> ridx((size_t) n_pairs);
             std::vector<int32_t> ids((size_t) n_pairs);
@@ -289,6 +583,8 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
             if (!recv_all(c, ridx.data(),  ridx.size()  * sizeof(int32_t))) break;
             if (!recv_all(c, ids.data(),   ids.size()   * sizeof(int32_t))) break;
             if (!recv_all(c, probs.data(), probs.size() * sizeof(float)))   break;
+            if (!all_indices_below(ridx.data(), ridx.size(), n_rows)) break;
+            if (!all_indices_below(ids.data(),  ids.size(),  n_local)) break;
             std::vector<float> h((size_t) n_embd * n_pairs);
             for (int i = 0; i < n_pairs; ++i)
                 std::memcpy(h.data() + (size_t) i * n_embd,
@@ -308,16 +604,19 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
             continue;
         }
         const int n_used = hdr[0], n_tokens = hdr[1];
+        if (!in_range(n_used, 1, MAX_REQ_EXPERTS) || !in_range(n_tokens, 1, MAX_REQ_TOKENS)) break;
         std::vector<float>   cur((size_t) n_embd * n_tokens);
         std::vector<int32_t> sel((size_t) n_used * n_tokens);
         if (!recv_all(c, cur.data(), cur.size() * sizeof(float)))   break;
         if (!recv_all(c, sel.data(), sel.size() * sizeof(int32_t))) break;
+        if (!all_indices_below(sel.data(), sel.size(), n_local)) break;
+        if (!no_duplicate_experts(sel.data(), n_used, n_tokens)) break;
         std::vector<float> out;
         { std::lock_guard<std::mutex> lk(compute_mu);
           if (!compute_dispatch(shard, backend, layer, n_embd, n_used, n_tokens, cur.data(), sel.data(), out)) break; }
         if (!send_all(c, out.data(), out.size() * sizeof(float))) break;
     }
-    ::close(c);
+    sock_close(c);
 }
 
 // Wire protocol per request: [int32 n_used, int32 n_tokens] + cur f32[n_embd*n_tokens]
@@ -326,8 +625,20 @@ void handle_conn(int c, const expert_shard & shard, ggml_backend_t backend,
 // each connection gets its own thread so a stalled/dead peer can never wedge the accept
 // loop and a restarted coordinator connects immediately (a real hang seen under --parallel).
 int serve_loop(const expert_shard & shard, ggml_backend_t backend, int layer, int n_embd, int port) {
-    int srv = ::socket(AF_INET, SOCK_STREAM, 0);
-    int one = 1; ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#ifdef _WIN32
+    WSADATA wsa;
+    if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { std::fprintf(stderr, "WSAStartup failed\n"); return 1; }
+#endif
+    sock_t srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (srv == BAD_SOCK) { std::perror("socket"); return 1; }
+    int one = 1;
+#ifdef _WIN32
+    // On Windows SO_REUSEADDR lets another process bind the same port; exclusive
+    // use is the equivalent of the POSIX behaviour we want (fast rebind, no sharing).
+    ::setsockopt(srv, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &one, sizeof(one));
+#else
+    ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
     sockaddr_in addr {}; addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); addr.sin_port = htons((uint16_t) port);
     if (::bind(srv, (sockaddr *) &addr, sizeof(addr)) || ::listen(srv, 8)) {
@@ -336,8 +647,8 @@ int serve_loop(const expert_shard & shard, ggml_backend_t backend, int layer, in
     std::fprintf(stderr, "expert worker serving layer %d on 127.0.0.1:%d\n", layer, port);
     static std::mutex compute_mu;
     for (;;) {
-        int c = ::accept(srv, nullptr, nullptr);
-        if (c < 0) continue;
+        sock_t c = ::accept(srv, nullptr, nullptr);
+        if (c == BAD_SOCK) continue;
         std::thread(handle_conn, c, std::cref(shard), backend, layer, n_embd,
                     std::ref(compute_mu)).detach();
     }
@@ -354,7 +665,10 @@ void bench_run(const expert_shard & shard, ggml_backend_t backend, int layer, in
         std::vector<float>   cur((size_t) n_embd * B);
         std::vector<int32_t> sel((size_t) n_used * B);
         for (size_t i = 0; i < cur.size(); ++i) cur[i] = 0.05f * (float) ((int) (i % 97) - 48);
-        for (size_t i = 0; i < sel.size(); ++i) sel[i] = (int32_t) (i % 256);
+        // Local ids, so the modulus is what this shard holds — not 256, which
+        // made --bench abort on every shard smaller than a whole layer.
+        const int n_local = shard.expert_end - shard.expert_begin;
+        for (size_t i = 0; i < sel.size(); ++i) sel[i] = (int32_t) (i % (size_t) n_local);
         std::vector<float> out;
         compute_dispatch(shard, backend, layer, n_embd, n_used, B, cur.data(), sel.data(), out); // warmup
         const int iters = B >= 256 ? 5 : 20;
@@ -376,6 +690,7 @@ void bench_run(const expert_shard & shard, ggml_backend_t backend, int layer, in
 // thread. Mirrors main's --serve branch: pick a backend, load the slice, run
 // the blocking serve loop. n_embd is supplied by the caller (per model).
 extern "C" int linkcpp_expert_run(const char * model_path, int port, int layer, int n_embd) {
+    force_fp32_accumulation();   // same contract as main: correct before any device exists
     ggml_backend_t backend = nullptr;
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
@@ -415,6 +730,7 @@ int main(int argc, char ** argv) {
     // GPU, so ggml_backend_init_by_type(GPU) misses them and silently falls back to
     // CPU. Selecting any non-CPU device is robust across discrete and integrated parts
     // (verified on GB10 sm_121a: CUDA0 backend, cosine 1.0 vs ROCm gfx90a).
+    force_fp32_accumulation();   // before any device is initialised
     ggml_backend_t backend = nullptr;
     if (!force_cpu) {
         for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
@@ -446,7 +762,11 @@ int main(int argc, char ** argv) {
     if (arg_value(argc, argv, "--bench")
         || (argc > 1 && std::string(argv[argc - 1]) == "--bench")) {
         const int layer  = std::atoi(arg_value(argc, argv, "--layer")  ? arg_value(argc, argv, "--layer")  : "0");
-        const int n_embd = std::atoi(arg_value(argc, argv, "--n-embd") ? arg_value(argc, argv, "--n-embd") : "0");
+        int n_embd = std::atoi(arg_value(argc, argv, "--n-embd") ? arg_value(argc, argv, "--n-embd") : "0");
+        // The slice is self-describing; --bench was the one path that did not
+        // use that, so omitting --n-embd built a zero-width graph and asserted
+        // inside ggml_mul_mat_id rather than saying what was missing.
+        if (n_embd <= 0) n_embd = shard.n_embd;
         const int n_used = std::atoi(arg_value(argc, argv, "--n-used") ? arg_value(argc, argv, "--n-used") : "8");
         bench_run(shard, backend, layer, n_embd, n_used);
         ggml_backend_free(backend);

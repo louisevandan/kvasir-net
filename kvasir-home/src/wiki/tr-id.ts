@@ -1,23 +1,41 @@
 /* Bahasa Indonesia — terjemahan entri wiki. Struktur (slug, kategori, urutan
    blok, kode) mencerminkan persis entries.ts (sumber bahasa Inggris); istilah
-   teknis dan pengenal (KVR, linkcpp, mesin inferensi, GGUF, MoE, ring runtime,
-   tok/s, dll.) dipertahankan apa adanya. Kerangka kepatuhan (devnet, token
-   utilitas, non-kustodial) tetap utuh. */
+   teknis dan pengenal (KVR, p4, bridge, GGUF, MoE, tok/s, dll.) dipertahankan
+   apa adanya. Kerangka kepatuhan (devnet, token utilitas, non-kustodial) tetap
+   utuh. */
 import type { WikiTranslation } from "./entries";
 
 export const idWiki: Record<string, WikiTranslation> = {
+  "node-relay": {
+    title: "Relay node",
+    summary: "Alamat publik yang dipegang atas nama mesin yang tidak memilikinya, sehingga node di balik NAT dapat dijangkau tanpa membuka satu porta pun.",
+    blocks: [
+      { t: "p", md: "**Relay node** memberi mesin seorang kontributor sebuah alamat yang dapat dihubungi jaringan. p4 mengantarkan pekerjaan dengan membuka koneksi *ke* sebuah node, dan mesin rumahan di balik penerjemahan alamat jaringan tidak punya alamat semacam itu. Relay memegangnya secara publik, node memelihara satu koneksi keluar ke relay, dan pekerjaan yang dihubungi pada alamat publik itu turun melalui koneksi yang sudah dipegang node." },
+      { t: "p", md: "Kedua ujung p4 tidak tahu bahwa relay itu ada. Penghubung melihat alamat biasa; agen node tetap terikat pada `127.0.0.1` dan tidak mendengarkan apa pun selain itu." },
+      { t: "h2", text: "Mengapa terowongan, bukan porta yang diteruskan" },
+      { t: "p", md: "p4 tidak membawa autentikasi apa pun: host mana pun yang menjangkau porta agen dapat mengirim `NODE_LOAD`, `NODE_UNLOAD`, atau `INSPECT`. Meneruskan porta router rumah ke sana akan memaparkan mesin kepada siapa pun yang menemukannya. Di balik relay, node tidak mendengarkan apa pun dan membuktikan dompet operator sebelum koneksinya membawa apa pun, dengan skema tanda tangan yang sama seperti gerbang penyelesaian: keterjangkauan dan autentikasi diselesaikan oleh mekanisme yang sama." },
+      { t: "h2", text: "Yang tidak dilakukannya" },
+      { t: "ul", items: [
+        "**Tidak membaca lalu lintas.** Muatan lewat byte demi byte dan tidak pernah diurai, sehingga relay tidak dapat membedakan satu perintah dari yang lain — dan memang tidak boleh, karena memahami lalu lintas berarti mampu mengubahnya.",
+        "**Tidak menjadwalkan.** Penempatan tetap milik rencana operator; bagi relay, node hanyalah sebuah alamat.",
+        "**Bukan bukti kerja.** Byte yang melewati relay tidak mengatakan apa pun tentang inferensi yang dilakukan, dan tidak pernah dihitung sebagai kontribusi.",
+      ] },
+      { t: "h2", text: "Terkait" },
+      { t: "p", md: "Lihat juga **agen p4**, proses yang dijalankan mesin kontributor, dan **operator node**, dompet yang diautentikasi relay sebelum memberikan alamat." },
+    ],
+  },
   "kvasir-network": {
     title: "Jaringan Kvasir",
     summary: "Jaringan inferensi AI terdesentralisasi (DePIN) tempat perangkat sehari-hari melayani model terbuka dan memperoleh KVR.",
     blocks: [
       {
         t: "p",
-        md: "**Kvasir** adalah jaringan inferensi AI terdesentralisasi: model terbuka berukuran besar dibagi ke perangkat keras bersama dengan mesin **linkcpp**, sehingga tidak ada satu node pun yang harus memegang seluruh model. Siapa pun dapat menyumbangkan GPU, CPU, NPU — bahkan ponsel — dan memperoleh **KVR** untuk lapisan atau pakar yang benar-benar dilayani perangkatnya. Pengembang mengakses jaringan lewat gateway yang kompatibel dengan OpenAI/Anthropic dan membayar per inferensi.",
+        md: "**Kvasir** adalah jaringan inferensi AI terdesentralisasi: model terbuka berukuran besar dibagi ke perangkat keras bersama dengan mesin **p4**, sehingga tidak ada satu node pun yang harus memegang seluruh model. Siapa pun dapat menyumbangkan GPU, CPU, NPU — bahkan ponsel — dan memperoleh **KVR** untuk lapisan atau pakar yang benar-benar dilayani perangkatnya. Pengembang mengakses jaringan lewat gateway yang kompatibel dengan OpenAI/Anthropic dan membayar per inferensi.",
       },
       {
         t: "ul",
         items: [
-          "**Mesin bersumber tersedia** — linkcpp berlisensi Business Source License 1.1 (penggunaan internal yang tidak dimonetisasi diizinkan; penggunaan yang di-hosting atau menghasilkan pendapatan memerlukan lisensi komersial); bidang data mesin inferensi di bawahnya tetap dekat dengan upstream dan dapat diperiksa.",
+          "**Mesin bersumber tersedia** — p4 berlisensi Business Source License 1.1 (penggunaan internal yang tidak dimonetisasi diizinkan; penggunaan yang di-hosting atau menghasilkan pendapatan memerlukan lisensi komersial); bidang data llama.cpp di bawahnya tetap dekat dengan upstream dan dapat diperiksa.",
           "**Dompet kustodi mandiri** — kunci tidak pernah meninggalkan perangkat pengguna, dan imbalan dibayarkan ke dompet Solana milik masing-masing pemilik node. Di devnet, KVR yang di-stake dan kredit prabayar disimpan oleh treasury gateway dan dicatat di buku besarnya hingga program staking on-chain dirilis.",
           "**Terbukti di perangkat nyata** — model 122B pernah berjalan ujung-ke-ujung di 3 mesin fisik pada armada uji kami, dengan kontribusi tiap node tercatat ujung-ke-ujung.",
           "**Dinamai dari mitos Nordik** — Kvasir, makhluk paling bijak, lahir dari sari gabungan semua dewa dan bukan milik siapa pun.",
@@ -28,14 +46,14 @@ export const idWiki: Record<string, WikiTranslation> = {
         t: "code",
         caption: "Setiap lompatan adalah HTTP/TCP biasa; yang terdistribusi adalah modelnya sendiri.",
         code: `client SDK ──▶ gateway (OpenAI/Anthropic API, KVR settlement)
-        ──▶ hub controller (plan · orchestrate)
+        ──▶ bridge (session · submit · gather)
         ──▶ serving topology: pipeline ring over layer windows,
             or expert-swarm dispatch at (layer, expert-range) grain
         ──▶ token streams back · each node's contribution is credited`,
       },
       {
         t: "p",
-        md: "Peran bisa **bertumpuk**: satu mesin dapat sekaligus menjadi node komputasi, host gateway, dan host hub, dan imbalannya dijumlahkan. Tugas jaringan adalah membuat keseluruhan tampak seperti satu mesin — satu endpoint di depan, ribuan perangkat tak sempurna di belakang.",
+        md: "Peran bisa **bertumpuk**: satu mesin dapat sekaligus menjadi node komputasi, host gateway, dan host bridge, dan imbalannya dijumlahkan. Tugas jaringan adalah membuat keseluruhan tampak seperti satu mesin — satu endpoint di depan, ribuan perangkat tak sempurna di belakang.",
       },
       {
         t: "p",
@@ -43,39 +61,120 @@ export const idWiki: Record<string, WikiTranslation> = {
       },
     ],
   },
-  hub: {
-    title: "Hub",
-    summary: "Bidang kendali: menemukan perangkat, merencanakan penempatan lapisan, meluncurkan worker, mengorkestrasi ring.",
+  architecture: {
+    title: "Arsitektur Kvasir",
+    summary: "Satu peta untuk seluruh sistem: dompet, gateway yang menerima pembayaran, bridge yang menjadi wajah mesin inferensi, dan jaringan p4 yang menjalankan model.",
     blocks: [
       {
         t: "p",
-        md: "**Hub** adalah bidang kendali jaringan, disediakan linkcpp sebagai satu image Docker (`controller.hub:app`, layanan FastAPI di port **19000**). Ia menemukan perangkat, memeriksa kompatibilitas runtime, merencanakan penempatan dengan planner, meluncurkan worker mesin inferensi, dan mengekspos gateway per controller. Ini infrastruktur yang sengaja membosankan: HTTP request/response, status tahan-restart, tanpa transport eksotis.",
+        md: "Kvasir adalah empat lapisan dengan satu sambungan di tiap batasnya. **Dompet** memegang kunci. **Gateway** menerima pembayaran dan menyimpan buku besar. **Bridge** memberi wajah HTTP kepada mesin inferensi. **Jaringan p4** yang benar-benar menjalankan model. Semua yang ada di bawah ini adalah konsekuensi dari di mana sambungan-sambungan itu jatuh — dan diagramnya menandai apa yang sudah berjalan hari ini terhadap apa yang masih berupa rancangan.",
       },
-      { t: "h2", kick: "Tiga pintu masuk", text: "Bagaimana mesin bergabung ke hub" },
+      { t: "h2", kick: "Dompet", text: "Kunci tak pernah meninggalkan perangkat" },
+      {
+        t: "p",
+        md: "iOS (Swift), Android (Kotlin), dan desktop (React + Electron) adalah build terpisah dari dompet yang sama, dan build desktop itu pula yang disajikan gateway di `/` sebagai dompet peramban — dompet utuh dengan penandatanganan di dalam halaman, bukan konsol baca-saja. Imbalan dibayarkan ke alamat Solana milik masing-masing pemilik; gateway tak pernah memegang kunci pengguna.",
+      },
+      { t: "h2", kick: "Gateway", text: "Satu proses, dua permukaan" },
+      {
+        t: "p",
+        md: "`solana/staking-service` sekaligus menjadi **API gateway** (`/v1/chat/completions` yang kompatibel OpenAI, plus alur bayar-per-permintaan `/api/pay/quote` → `/api/inference`) dan **gateway penyelesaian** (staking, registri node, akun kredit, kredit kontribusi). Keduanya satu proses karena berbagi satu buku besar: sebuah permintaan baru dilayani setelah transfer KVR-nya terverifikasi on-chain, dan buku besar yang sama mengkreditkan node-node yang melayaninya.",
+      },
+      {
+        t: "callout",
+        md: "**Pembayaran diselesaikan sebelum inferensi berjalan.** Jika setelah itu bridge gagal, gateway mengembalikan dana pembayar dari treasury dan mengembalikan 502 alih-alih menagih untuk nol hasil. Tak ada model tiruan dan tak ada katalog pengganti di belakangnya: model yang ditawarkan aplikasi adalah model yang memang sedang dilayani sebuah bridge, atau daftarnya kosong.",
+      },
+      { t: "h2", kick: "Bridge", text: "Wajah HTTP mesin inferensi" },
+      {
+        t: "p",
+        md: "Bridge (`p4bridge`) adalah sebuah **OUTER** dalam istilah p4: ia memasang sesi melintasi stage-stage, mengirim permintaan ke stage kepala, lalu mengumpulkan aliran token. Bagi gateway ia adalah kontrak kecil yang tetap — model apa yang termuat, siapa berkontribusi berapa, dan completion.",
+      },
+      {
+        t: "table",
+        head: ["Rute", "Apa yang dijawabnya"],
+        rows: [
+          ["`/api/controllers`", "model apa yang termuat, dan status tiap stage"],
+          ["`/api/runtime`", "dompet operator dan mesin-mesin di belakangnya"],
+          ["`/api/contributions`", "baris, unit, permintaan, dan throughput per node"],
+          ["`/c/<model>/v1/chat/completions`", "inferensi"],
+        ],
+      },
+      {
+        t: "p",
+        md: "Dua tugas yang sengaja ditinggalkan p4 untuk bridge: **template chat** (p4 menyerahkan prompt buram ke stage server dan tak menerapkan satu pun, sehingga model instruct akan melanjutkan teks Anda alih-alih menjawabnya) dan **blok penalaran** (dikembalikan sebagai `reasoning_content`, terpisah dari `content`, agar sesi berpikir tak diam-diam melahap anggaran token lalu menagih pembayar untuk jawaban kosong).",
+      },
+      {
+        t: "callout",
+        md: "**Bridge tak pernah dipublikasikan.** Satu-satunya autentikasinya adalah service token bersama, dan apa pun yang bisa menjangkaunya bisa menjalankan ring. Ia mengikat loopback; terowonganlah pintunya.",
+      },
+      { t: "h2", kick: "Jaringan p4", text: "Agen memiliki node, stage server memegang lapisan" },
+      {
+        t: "p",
+        md: "Sebuah **agen** memiliki node-node pada satu host; sebuah **stage server** adalah satu proses yang memegang irisan lapisan model. Sebuah stage menyerahkan hasilnya ke stage berikutnya dengan meminta agennya sendiri menelepon agen stage itu **di alamat yang diiklankan agen tersebut** — jadi alamat yang diiklankan harus terjangkau dari host-host lain, dan sebaiknya jaringan tercepat yang mereka bagi. Pada rak MI250 itu berarti tautan InfiniBand, bukan LAN kantor dan tak pernah loopback.",
+      },
       {
         t: "ul",
         items: [
-          "**Slot node lokal** — lima slot tetap per hub, dipetakan ke port RPC **50052–50056**. Slot selalu ada; Anda mengedit anggaran GPU + VRAM/RAM/CPU sebuah slot alih-alih membuat node sembarang, dan sumber daya hanya dapat diedit **selama slot belum terikat** — melindungi kontrak kapasitas di bawah controller yang berjalan.",
-          "**Unit jarak jauh** — daftarkan hub linkcpp lain yang berjalan dan impor node-node yang terlihat. Endpoint bidang data selalu diturunkan dari URL *unit* terdaftar plus port worker yang diekspos unit — tidak pernah dari host node yang diiklankan sistem jarak jauh.",
-          "**Agen node terkelola** — layanan khusus-worker (`nodeagent.py`) yang bergabung lewat HTTP request/response sederhana (`/control/join|status|download|load|unload`) dan melapor via `POST /api/node-reports`. Sengaja **bukan** stream persisten, agar bertahan di perutean LAN/VPN sederhana.",
+          "**`p4-agent` dan `p4_staged_server` adalah satu rilis.** Agen yang dibangun dari pohon sumber lebih baru gagal di READY karena kapabilitas HELLO yang hilang — setelah memuat seluruh model.",
+          "**Penempatan adalah artefak operator.** Lapisan mana duduk di GPU mana, pada load generation berapa, berasal dari rencana penempatan; bridge menjawab `409` kepada siapa pun yang memintanya melayani, dan watchdog gateway menyatakannya sekali lalu berhenti bertanya.",
+          "**Sebuah pipeline butuh setidaknya dua stage.** Perintah sesi menolak pipeline satu-stage.",
         ],
       },
-      { t: "h2", kick: "Tak ada yang dimuat tanpa verifikasi", text: "Gerbang kompatibilitas" },
+      { t: "h2", kick: "Relay", text: "Alamat yang bisa ditelepon untuk sebuah laptop" },
       {
         t: "p",
-        md: "Setiap unit, node, dan agen melaporkan identitas protokol / runtime-pack plus detail backend. Ketidakcocokan unit, runtime-pack, revisi mesin inferensi, dan ABI RPC **diblokir keras sebelum bind, plan, load, atau infer**; perbedaan backend (CUDA/Metal/Vulkan/CPU) dicatat sebagai kapabilitas node, bukan penolakan. Pemuatan adaptif juga diblokir bila sebuah node tak dapat menyediakan pemantauan sumber daya yang dibutuhkan rencana yang aman.",
+        md: "Node tepi — aplikasi desktop, sebuah ponsel — tak punya alamat yang bisa ditelepon siapa pun. **Relay** memberikannya: node menelepon keluar, membuktikan pasangan kunci dompetnya lewat tantangan ed25519, dan sejak itu terjangkau melalui relay. Relay adalah batas autentikasi dan tak pernah mengurai payload. Installer desktop mengirimkan agen p4 berdampingan dengan aplikasinya, jadi bergabung bukan instalasi kedua.",
       },
+      { t: "h2", kick: "Penyelesaian", text: "Kredit mengikuti partisipasi" },
       {
-        t: "code",
-        caption: "Apa yang selamat dari restart, dan apa yang tidak.",
-        code: `persisted   → /models/linkcpp/hub-state.json
-              slots · controllers · bindings · remote units · 2FA enrollment
-runtime-only → live worker/model processes, in-flight operations
-              (a container restart stops serving; models reload on demand)`,
+        t: "p",
+        md: "Setiap stage melaporkan baris token yang dijalankannya. Bridge mengakumulasinya per node, dan gateway mem-poll `/api/contributions` setiap 30 detik lalu mengkreditkan dompet yang disebut bridge, sebagai `rows / 1000` unit yang diskalakan tingkat performa node. **Dalam sebuah pipeline setiap stage melihat baris yang sama**, jadi ring empat-stage membayar keempat stage-nya sama rata tak peduli berapa lapisan yang dipegang masing-masing — kredit mengikuti partisipasi, bukan porsi bobot. Sharding pakar, tempat node memegang pecahan berbeda dari satu lapisan yang sama, adalah kasus yang nanti menuntut ini ditinjau ulang.",
+      },
+      { t: "h2", kick: "P4 Studio", text: "Apa yang ditandai diagram sebagai usulan" },
+      {
+        t: "p",
+        md: "**P4 Studio** adalah konsol operator milik p4 sendiri. Umpan observabilitas per-permintaan yang dibutuhkannya dari para agen masih berupa usulan di upstream, bukan sesuatu yang berjalan di sini — karena itulah diagram menggambarnya putus-putus, bersama shard pakar yang dilayani dari node tepi, yang sudah dirancang dan belum berjalan.",
+      },
+    ],
+  },
+  bridge: {
+    title: "Bridge",
+    summary: "Wajah HTTP mesin inferensi: apa yang termuat, siapa yang berkontribusi, dan completion — dan tidak lebih dari itu.",
+    blocks: [
+      {
+        t: "p",
+        md: "**Bridge** adalah satu-satunya hal yang diajak bicara gateway penyelesaian untuk inferensi. Ia adalah sebuah **OUTER** dalam istilah p4: ia memasang sesi melintasi stage-stage model, mengirim permintaan ke stage kepala, mengumpulkan aliran token, lalu melaporkan kontribusi tiap node. Ia tak memiliki penempatan, tak memiliki penjadwalan, dan tak menyimpan status apa pun di luar katalog apa yang termuat — sengaja dibuat kecil, karena segala yang tidak diputuskannya adalah sesuatu yang tak bisa menyimpang.",
+      },
+      { t: "h2", kick: "Kontraknya", text: "Empat rute, satu token" },
+      {
+        t: "table",
+        head: ["Rute", "Apa yang dijawabnya"],
+        rows: [
+          ["`/api/controllers`", "model apa yang termuat, dan status tiap stage"],
+          ["`/api/runtime`", "dompet operator dan mesin-mesin di belakangnya"],
+          ["`/api/contributions`", "baris, unit, permintaan, dan throughput per node"],
+          ["`/c/<model>/v1/chat/completions`", "inferensi"],
+        ],
       },
       {
         t: "p",
-        md: "Karena hub adalah peran paling kritis, host hub memperoleh **imbalan uptime per jam tertinggi**. Mengoperasikan hub publik memerlukan staking **100.000 KVR**.",
+        md: "Setiap rute kecuali `/api/health` memerlukan service token bersama, dikirim sebagai `X-Kvasir-Service-Token`. Token itu adalah **satu-satunya** yang berdiri di antara internet terbuka dan pemakaian ring secara cuma-cuma, dan itulah sebabnya bridge mengikat loopback serta dijangkau lewat terowongan alih-alih dipublikasikan.",
+      },
+      { t: "h2", kick: "Yang ditinggalkan p4 untuknya", text: "Dua tugas yang tak akan dikerjakan mesinnya" },
+      {
+        t: "ul",
+        items: [
+          "**Template chat.** p4 menyerahkan prompt buram ke stage server dan tak menerapkan format giliran apa pun. Bridge merender format milik model — dibaca dari GGUF dan disebut di katalog sebagai `prompt_format`. Lewati itu dan model instruct akan melanjutkan teks Anda alih-alih menjawabnya, tak pernah memancarkan token akhir-gilirannya, dan setiap kali berjalan sampai batas token.",
+          "**Blok penalaran.** Model penalaran membuka jawabannya dengan berpikir. Bridge mengembalikan itu sebagai `reasoning_content`, terpisah dari `content`, dan menghormati `enable_thinking: false` dengan menutup bloknya di dalam prompt — jika tidak, sesi berpikir yang panjang bisa melahap seluruh anggaran dan menyerahkan jawaban kosong kepada pemanggil yang sudah membayarnya.",
+        ],
+      },
+      { t: "h2", kick: "Penempatan bukan tugasnya", text: "Mengapa ia menjawab 409" },
+      {
+        t: "p",
+        md: "Meminta bridge melayani sebuah model menghasilkan **409**. Lapisan mana duduk di GPU mana, pada load generation berapa, berasal dari rencana penempatan yang ditulis dan dimuat seorang operator; tak ada muat-ulang jarak jauh yang bisa dilakukan. Watchdog ring gateway mempelajari ini sekali lalu berhenti bertanya alih-alih mencoba ulang sesuatu yang memang tak bisa berhasil.",
+      },
+      {
+        t: "callout",
+        md: "**Penghitung kontribusi hidup di memori.** Restart bridge menghilangkan apa pun yang belum di-poll gateway — gateway mem-poll setiap 30 detik — dan gateway mengatur ulang basis alih-alih menghitung ganda saat sebuah penghitung mundur. Node yang pemiliknya tak dikenal bridge dilewati **secara diam-diam**, sehingga dompet operator yang belum disetel terbaca sebagai \"mesin-mesin ini tak memperoleh apa pun\".",
       },
     ],
   },
@@ -85,7 +184,7 @@ runtime-only → live worker/model processes, in-flight operations
     blocks: [
       {
         t: "p",
-        md: "**Gateway** adalah tempat pengembang bertemu jaringan. Setiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), semuanya ditopang model termuat yang sama — klien yang ada berfungsi hanya dengan mengganti base URL dan kunci.",
+        md: "**Gateway** adalah tempat pengembang bertemu jaringan. Setiap controller mengekspos endpoint kompatibel OpenAI (`/v1/chat/completions`, `/v1/models`) dan kompatibel Anthropic (`/anthropic/v1/messages`, `/anthropic/v1/models`), semuanya ditopang model termuat yang sama — klien yang ada berfungsi hanya dengan mengganti base URL dan kunci.",
       },
       {
         t: "code",
@@ -99,14 +198,14 @@ runtime-only → live worker/model processes, in-flight operations
       { t: "h2", kick: "Pengukuran", text: "Bayar per inferensi dalam KVR" },
       {
         t: "p",
-        md: "Pemakaian diselesaikan dalam KVR lewat alur tiga langkah — **quote → payment → inference** — sehingga permintaan diberi harga sebelum dijalankan dan node yang melayaninya dikreditkan sesudahnya. Gateway juga mengagregasi **katalog model langsung** dari setiap hub yang terjangkau, sehingga `/v1/models` mencerminkan apa yang benar-benar bisa dilayani jaringan saat ini.",
+        md: "Pemakaian diselesaikan dalam KVR lewat alur tiga langkah — **quote → payment → inference** — sehingga permintaan diberi harga sebelum dijalankan dan node yang melayaninya dikreditkan sesudahnya. Gateway juga mengagregasi **katalog model langsung** dari setiap bridge yang terjangkau, sehingga `/v1/models` mencerminkan apa yang benar-benar bisa dilayani jaringan saat ini.",
       },
       {
         t: "ul",
         items: [
           "Host gateway memperoleh **imbalan uptime per jam** karena menjaga titik masuk tetap daring, plus **bonus ×1.5** pada setiap inferensi yang ikut mereka layani.",
-          "Mengoperasikan gateway publik memerlukan staking **100.000 KVR** (sama seperti hub).",
-          "Deployment publik melindungi akses operator dengan **SIWS + 2FA**; hub polos dirancang hanya untuk host tepercaya / LAN / VPN.",
+          "Peran gateway **ditetapkan oleh jaringan, bukan diklaim sendiri**: sebuah node tidak bisa menyetel flag gateway atau bridge-nya sendiri, dan uptime hanya dikreditkan selama gateway melihatnya menjawab.",
+          "Deployment publik melindungi akses operator dengan **SIWS + 2FA**; bridge polos dirancang hanya untuk host tepercaya / LAN / VPN.",
         ],
       },
     ],
@@ -140,109 +239,86 @@ earn      → units × layer_share × perf_tier → owner wallet`,
       },
     ],
   },
-  "relay-443": {
-    title: "Relay 443",
-    summary: "Bidang data untuk perangkat di balik NAT: kedua ujung menelepon keluar melalui jembatan WebSocket di port 443.",
-    blocks: [
-      {
-        t: "p",
-        md: "Ponsel di balik NAT operator tak bisa menerima koneksi masuk, dan edge seperti Cloudflare hanya meloloskan port 80/443. **Relay 443** menyelesaikan keduanya: jembatan WebSocket per edge dengan **preamble peran 1 byte** membuat kedua sisi menelepon **keluar**, sehingga ponsel ikut serta di bidang data sambil membuka **nol port masuk**.",
-      },
-      {
-        t: "code",
-        caption: "Dua koneksi keluar bertemu di tengah; preamble memberi tahu siapa siapa.",
-        code: `phone   ──outbound──▶ wss://edge:443  ◀──outbound── backbone
-                     [role byte: worker]   [role byte: dialer]
-        bridge splices the two streams → one ordinary TCP pipe`,
-      },
-      { t: "h2", kick: "Ditempa di produksi", text: "Tiga bug nyata, tiga perbaikan" },
-      {
-        t: "ul",
-        items: [
-          "**Kesepakatan sidik jari build** — kedua ujung harus membuktikan menjalankan runtime pack yang sama sebelum satu byte tensor pun mengalir.",
-          "**Autentikasi unduhan node-token** — unduhan shard parsial diautentikasi dengan node token turunan dompet yang sudah dimiliki aplikasi.",
-          "**Macet frame `Int.ushr`** — `ushr` Kotlin hanya memakai 5 bit terendah dari shift, sehingga `len ushr 56` menjadi `len ushr 24` dan diam-diam merusak setiap frame ≥ 64 KiB (`result_output` 593 KB adalah korban pertama). Diperbaiki dengan memindahkan pengemasan panjang ke shift `Long` — perbaikan penopang untuk dispatch pakar berkelompok yang rutin melampaui 64 KiB.",
-        ],
-      },
-      {
-        t: "p",
-        md: "Relay membawa apa pun yang dibutuhkan topologi — batas lapisan ring atau stream dispatch pakar — dan mekanisme yang sama yang terverifikasi untuk ring itulah yang dipakai worker ponsel di swarm.",
-      },
-      {
-        t: "p",
-        md: "Kedua upgrade `/api/expert-relay` dan `/api/ring-relay` **disambung mentah**: gateway meneruskan frame WebSocket byte demi byte tanpa mengurainya, sehingga relay tetap menjadi pipa tipis yang agnostik-model. Ia tetap **mengukur byte yang dijembataninya per sesi**, dan kerja terukur itu mengalir ke buku besar kontribusi hub lalu diselesaikan ke dompet worker itu sendiri dalam **KVR** — me-relay untuk ponsel di balik NAT memperoleh persis seperti node yang terhubung langsung.",
-      },
-    ],
-  },
 
-  linkcpp: {
-    title: "linkcpp",
-    summary: "Bidang kendali bersumber tersedia (BSL) yang mengubah perangkat keras sehari-hari menjadi mesin inferensi terdistribusi.",
+  p4: {
+    title: "p4",
+    summary: "Mesin di balik Kvasir: protokol beralamat-peristiwa tempat agen memiliki node, stage server memegang lapisan, dan penempatan adalah sesuatu yang dinyatakan operator alih-alih ditebak jaringan.",
     blocks: [
       {
         t: "p",
-        md: "**linkcpp** adalah mesin di balik Kvasir: bidang kendali di sekeliling bidang data RPC mesin inferensi yang menjalankan model AI besar di banyak GPU dan mesin memakai binari `ggml-rpc-server` / `llama-server` yang dibangun dekat dengan upstream. Semua yang ditambahkannya adalah orkestrasi — penemuan GPU, slot node, perencanaan penempatan lapisan, peluncuran worker, dan gateway OpenAI/Anthropic.",
+        md: "**p4** menjalankan satu model di beberapa mesin dengan memotongnya menjadi **stage** — irisan lapisan yang bersambung — dan memberi tiap stage prosesnya sendiri. Sebuah **agen** memiliki node-node pada satu host: ia memunculkan stage server, merutekan peristiwa di antara mereka, dan bertanggung jawab atas siklus hidupnya. Tak ada penjadwal yang memutuskan apa ditaruh di mana; operator menulis rencana penempatan, memuatnya, dan jaringan lalu melayani persis itu.",
       },
-      { t: "h2", kick: "Arsitektur", text: "Satu hub, worker berbasis upstream" },
       {
         t: "code",
-        caption: "Jalur permintaan melalui deployment linkcpp.",
+        caption: "Jalur permintaan melalui deployment p4.",
         code: `browser / SDK
-  → hub :19000                      # FastAPI control plane (Docker)
-  → GPU-less llama-server master    # per controller, :8080+
-  → ggml-rpc-server workers         # slots :50052-50056 · units · agents`,
+  → gateway :8791              # payment, settlement, the wallet app
+  → bridge :19000              # OUTER: session, submit, gather
+  → p4 agent                   # owns this host's nodes
+  → stage servers              # one process per layer slice`,
       },
+      { t: "h2", kick: "Pengalamatan", text: "Sebuah stage menelepon agen stage berikutnya" },
+      {
+        t: "p",
+        md: "Ketika sebuah stage menyelesaikan lapisannya, ia menyerahkan hasilnya ke stage berikutnya dengan meminta agennya sendiri membuka koneksi ke **agen stage itu, di alamat yang diiklankan agen tersebut**. Karena itu alamat yang diiklankan bukan sekadar kosmetik: ia harus terjangkau dari setiap host lain di ring, dan sebaiknya menyebut jaringan tercepat yang mereka bagi. Iklankan loopback, dan ring dua-host diam-diam menelepon dirinya sendiri.",
+      },
+      { t: "h2", kick: "Siklus hidup", text: "Satu angka mengikat satu pemuatan" },
       {
         t: "ul",
         items: [
-          "**Sumber tersedia di bawah BSL 1.1** — bebas dibaca dan dikembangkan lebih lanjut; penggunaan internal yang tidak dimonetisasi diizinkan, dan penggunaan yang di-hosting atau menghasilkan pendapatan memerlukan lisensi komersial.",
-          "Bidang data mesin inferensi tetap **dekat dengan upstream** — sekumpulan kecil patch (GPU-over-RPC seluler dan hook expert-dispatch MoE) — sehingga peningkatan performa dari upstream terus mengalir.",
-          "Dikirim sebagai **satu image Docker**: hub FastAPI plus dua binari mesin inferensi terpanggang di dalamnya; node worker native dibangun di luar Docker untuk CUDA/Metal/Vulkan/CPU.",
+          "**Load generation dipilih oleh siapa pun yang memuat** dan dibandingkan untuk kesetaraan persis pada setiap sesi, inferensi, penyelesaian, dan unload. Angka itu tak tercatat di mana pun pada mesin-mesinnya, jadi pemuat menuliskannya ke disk *sebelum* perintah pertama berangkat — tanpa itu, model yang sudah termuat bahkan tak bisa diturunkan.",
+          "**Generation sebuah node dan load generation adalah angka yang sama.** Adapter memeriksa generation sumber pada tanda terima pelepasan terhadap pemuatan yang menaunginya dan menghentikan node bila keduanya berbeda, sehingga ring yang dimuat dengan dua angka berbeda melayani satu permintaan lalu kehilangan kepalanya.",
+          "**Jurnal operasional wajib ada** sebelum sebuah model mau dimuat sama sekali: itu adalah catatan penerimaan yang membuat sebuah pemuatan aman-diulang, bukan alat bantu debug.",
         ],
       },
-      { t: "h2", kick: "Planner", text: "Metadata GGUF masuk, penempatan keluar" },
+      { t: "h2", kick: "Yang tidak dilakukannya", text: "Kelalaian yang disengaja" },
       {
         t: "p",
-        md: "Planner membaca metadata GGUF dan menghasilkan jendela lapisan bersambung per node, `--tensor-split` yang sesuai, dan perkiraan VRAM KV-cache / lapisan / pakar per node — plus offload opsional FFN pakar MoE ke RAM node, dikeluarkan sebagai aturan `-ot` mesin inferensi (mis. `blk\\.38\\.ffn_(up|down|gate)_(ch|)exps=CPU`) dan dibawa ke peluncuran via `--override-tensor`. Rencana yang tak muat dilaporkan **infeasible** sebelum apa pun dimuat, bukan ditemukan sebagai OOM saat runtime.",
+        md: "p4 tak menerapkan **template chat** apa pun — ia meneruskan prompt buram dan mengharapkan pemanggil sudah merender format giliran model. Ia tak membuat **keputusan penempatan**. Dan ia tak punya gagasan tentang siapa yang harus dibayar: stage melaporkan baris token yang dijalankannya, dan penyelesaian adalah kontrak pihak lain. Masing-masing adalah sambungan yang diisi Kvasir di [bridge](/wiki/bridge), yang menjaga mesinnya tetap cukup sempit untuk mengikuti upstream.",
       },
       {
-        t: "p",
-        md: "Kompatibilitas runtime adalah konsep kelas satu: protokol, runtime-pack, revisi mesin inferensi, dan ABI RPC diverifikasi, dan ketidakcocokan diblokir keras sebelum bind, plan, load, atau inferensi apa pun.",
+        t: "callout",
+        md: "**Agen dan stage server native adalah satu rilis.** Agen yang dibangun dari pohon sumber lebih baru gagal di READY karena kapabilitas yang hilang pada HELLO stage server — setelah memuat seluruh model. Bangun keduanya dari checkout yang sama.",
       },
     ],
   },
-  "ring-runtime": {
-    title: "Ring runtime",
-    summary: "Inferensi pipeline tanpa master: setiap perangkat menjalankan jendela lapisannya dan hanya meneruskan batas ke tetangganya.",
+  "in-flight-ring": {
+    title: "Ring in-flight",
+    summary: "Pipeline yang tak pernah dikosongkan: beberapa permintaan menempati stage yang berbeda pada saat bersamaan, jadi tak ada stage yang menunggu permintaan di depannya selesai.",
     blocks: [
       {
         t: "p",
-        md: "**Ring runtime** adalah topologi penyajian latensi-rendah Kvasir. Setiap perangkat hanya memuat **jendela lapisan** bersambungnya, lalu membuka tepat dua tautan — pendahulu dan penerus. Batas hidden-state beredar mengelilingi ring; rank terakhir menyampel token dan mengembalikannya. **Tanpa master pusat di jalur data, dan tak ada node yang memegang seluruh model.**",
+        md: "Kvasir melayani sebuah model sebagai **pipeline stage**, masing-masing memegang irisan lapisan yang bersambung. Sebuah stage menjalankan lapisannya lalu meneruskan batasnya — sebuah hidden state, bukan bobot — ke stage berikutnya. Tak ada stage yang memegang seluruh model, dan tak ada apa pun yang duduk di tengah jalur data: bridge mengirim ke kepala dan membaca dari ekor, sementara stage-stage saling menyerahkan hasil lewat agen mereka sendiri.",
       },
-      { t: "h2", kick: "Mengapa bukan bintang", text: "Masalah master RPC" },
+      { t: "h2", kick: "Bagian in-flight-nya", text: "Mengapa pipeline yang dikosongkan menyia-nyiakan sebagian besar mesin" },
       {
         t: "p",
-        md: "Pada topologi RPC klasik, satu master membuka **GGUF utuh** dan menelepon setiap worker. Itu rusak di jaringan terbuka dalam tiga hal: master harus memegang dan melayani seluruh checkpoint; setiap worker harus bisa ditelepon — ponsel di balik NAT operator tidak bisa; dan master menjadi pemilik tunggal di jaringan yang seharusnya tak punya pemilik. Ring menghapus ketiganya: tiap stage memiliki jendelanya, koneksi berjalan tetangga-ke-tetangga, dan relay membuat perangkat NAT terjangkau.",
+        md: "Jika sebuah pipeline menuntaskan satu permintaan sebelum menerima yang berikutnya, setiap stage kecuali satu menganggur pada tiap saat — ring empat-stage berjalan pada seperempat perangkat kerasnya. Desain **in-flight** menjaga beberapa permintaan tetap bergerak sekaligus: sementara stage 3 mendekode satu permintaan, stage 0 sudah melakukan prefill untuk yang lain. Stage melaporkan berapa lama mereka menahan sebuah batch dan berapa lama mereka tak punya apa pun untuk dikirim, sehingga ring yang kelaparan terlihat berbeda dari ring yang jenuh.",
       },
       {
         t: "code",
-        caption: "Satu langkah dekode mengelilingi ring 4-stage.",
-        code: `token n:  stage A (layers 0-14)  ──h──▶  stage B (15-26)
-                                             │h
-          stage D (37-48) ◀──h──  stage C (27-36)
-          └─ samples token n, sends it around → client`,
+        caption: "Empat stage, tiga permintaan, satu saat dalam waktu.",
+        code: `           stage 0        stage 1        stage 2        stage 3
+           layers 0-11    12-22          23-33          34-44
+
+request A                                              decode
+request B                 decode
+request C  prefill
+
+boundaries pass →  agent to agent, never through the caller`,
+      },
+      { t: "h2", kick: "Keanggotaan", text: "Apa persisnya sebuah batch" },
+      {
+        t: "p",
+        md: "Baris dari permintaan yang berbeda dikemas menjadi satu batch fisik, dan keanggotaan persis itu diteruskan ke setiap stage hilir alih-alih diputuskan ulang tiap lompatan. Itulah yang memungkinkan satu prefill dan beberapa dekode berbagi satu lintasan, dan itulah sebabnya ukuran sebuah batch adalah properti dari pemuatan: rencana menyatakan lebar baris dan micro-batch di muka, dan lebar-lebar itu menetapkan hasil terbesar yang pernah bisa dikembalikan sebuah stage.",
       },
       {
-        t: "ul",
-        items: [
-          "Penempatan berasal dari **rank manifest** planner — mis. 49 lapisan Qwen3.5-122B terbagi ke GPU, CPU, NPU, dan ponsel.",
-          "Batasnya kecil (satu vektor hidden-state per token), jadi lompatan tetap murah bahkan di tautan lemah.",
-          "GPU seluler menjalankan stage ring **langsung** (Adreno via OpenCL) — jalur RPC ke GPU ponsel terbukti tak layak karena tata letak buffer Adreno tak selamat dari serialisasi RPC, tetapi stage lokal memiliki backend-nya sendiri, jadi hanya batas yang menyeberangi kabel.",
-        ],
+        t: "callout",
+        md: "**Sebuah pipeline butuh setidaknya dua stage.** Pipeline satu-stage ditolak mentah-mentah — kepala dan ekor adalah peran yang berbeda, dan satu node yang meruntuhkan keduanya adalah mesin yang lain, bukan ring yang lebih kecil.",
       },
       {
         t: "p",
-        md: "Ring adalah jalur **latensi**; lantainya adalah granularitas lapisan (~1.4 GB pada 122B). Swarm pakar menghapus lantai itu dan menyambung ke jalinan penyajian yang sama.",
+        md: "Ring adalah jalur **latensi**, dan granularitasnya adalah lapisan. Sharding pakar menghapus lantai itu dengan memotong di dalam sebuah lapisan, dan menyambung ke jalinan penyajian yang sama.",
       },
     ],
   },
@@ -282,7 +358,7 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
     blocks: [
       {
         t: "p",
-        md: "Model **Mixture-of-Experts** mengganti FFN tunggal tiap lapisan dengan bank FFN pakar independen plus **router** yang memilih beberapa per token. Qwen3.5-122B-A10B adalah contoh andalan jaringan:",
+        md: "Model **Mixture-of-Experts** mengganti FFN tunggal tiap lapisan dengan bank FFN pakar independen plus **router** yang memilih beberapa per token. Step-3.7-Flash, MoE 428B yang dilayani hari ini, punya 288 pakar per lapisan dengan perutean top-8. Qwen3.5-122B-A10B adalah contoh terperinci di bawah, karena ia yang angka-angkanya terukur ujung-ke-ujung:",
       },
       {
         t: "stats",
@@ -323,6 +399,10 @@ shard: mini-GGUF with exactly those blk.39-48 tensors → download → load`,
         t: "p",
         md: "**Sharding pakar** menurunkan unit angkut swarm dari lapisan (~1.4 GB pada 122B) ke pakar (**5.3 MB**). Perangkat lemah mengunduh irisan 8–64 pakar (**42–340 MB**), memuatnya sebagai worker fungsi-murni — tanpa attention, tanpa KV, tanpa sampler — dan menghitung pakarnya kapan pun router backbone memilihnya.",
       },
+      {
+        t: "callout",
+        md: "**Status mesin.** Sharding pada butiran pakar dibangun dan didemonstrasikan di mesin Kvasir sebelumnya, dan hasil-hasil di bawah ini berasal dari kerja itu. Mesin saat ini, [p4](/wiki/p4), melayani pada butiran lapisan hari ini; memindahkan sharding pakar ke atasnya sudah dirancang dan sedang dikerjakan. Di mana sebuah detail menyebut nama perkakas atau rute, itu adalah yang berjalan di mesin sebelumnya.",
+      },
       { t: "h2", kick: "Dua peran", text: "Backbone × worker" },
       {
         t: "code",
@@ -361,6 +441,10 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
       {
         t: "callout",
         md: "**Invariannya:** satu-satunya keputusan diskret dalam jaringan adalah perutean MoE (top-8 dari 256). Kvasir menjalankan router **tepat sekali, di backbone**, dan hanya mengirim id pakar terpilih ke worker. Swarm heterogen boleh sedikit berbeda pada *besaran* keluaran tiap pakar — tetapi tak pernah berbeda pada *pakar mana yang berjalan*.",
+      },
+      {
+        t: "callout",
+        md: "**Status mesin.** Sharding pada butiran pakar dibangun dan didemonstrasikan di mesin Kvasir sebelumnya, dan hasil-hasil di bawah ini berasal dari kerja itu. Mesin saat ini, [p4](/wiki/p4), melayani pada butiran lapisan hari ini; memindahkan sharding pakar ke atasnya sudah dirancang dan sedang dikerjakan. Di mana sebuah detail menyebut nama perkakas atau rute, itu adalah yang berjalan di mesin sebelumnya.",
       },
       {
         t: "p",
@@ -431,7 +515,7 @@ x = x + combine(p, partials) + shared(cur)   # backbone — exact`,
     blocks: [
       {
         t: "p",
-        md: "**GGUF** adalah format model satu-berkas dari ekosistem mesin inferensi: metadata (arsitektur, jumlah lapisan, dimensi, kuantisasi) plus tensor sebagai byte terkuantisasi mentah (mis. Q4_K_M). Planner linkcpp membaca metadata untuk menghitung penempatan dan perkiraan ukuran; sisi penyajian mengiris byte tensor untuk menghasilkan unduhan.",
+        md: "**GGUF** adalah format model satu-berkas dari ekosistem mesin inferensi: metadata (arsitektur, jumlah lapisan, dimensi, kuantisasi) plus tensor sebagai byte terkuantisasi mentah (mis. Q4_K_M). Rencana penempatan ditulis terhadap metadata itu — rentang lapisan, penugasan perangkat, dan perkiraan ukuran; sisi penyajian mengiris byte tensor untuk menghasilkan unduhan.",
       },
       {
         t: "ul",
@@ -468,7 +552,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         t: "ul",
         items: [
           "**Sisi belanja** — bayar per inferensi lewat gateway: quote → payment → inference.",
-          "**Sisi perolehan** — unit kontribusi × porsi lapisan × tingkat performa untuk komputasi; uptime per jam untuk peran hub/gateway.",
+          "**Sisi perolehan** — unit kontribusi × porsi lapisan × tingkat performa untuk komputasi; uptime per jam untuk peran bridge/gateway.",
           "**Penyelesaian** — di Solana, ke dompet milik masing-masing pemilik node; layanan penyelesaian mengkreditkan setiap node yang menyentuh sebuah permintaan.",
           "**Dinamai dari mitos** — Madu Puisi, diseduh dari Kvasir, memberi kebijaksanaan kepada siapa pun yang meminumnya: akses terbuka, dan imbalan bagi semua yang ikut menuang.",
         ],
@@ -488,7 +572,7 @@ writer.add_tensor(name, sliced, raw_dtype=tensor.tensor_type)`,
         caption: "Bagaimana imbalan komputasi dihitung.",
         code: `units    += (tokens / 1k) × (node_layers / total_layers)
 effective = units × perf_tier × gateway_bonus
-infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
+infra      : bridge uptime/hr > gateway uptime/hr  (summed on top)`,
       },
       {
         t: "p",
@@ -509,7 +593,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "ul",
         items: [
           "Imbalan mengikuti **kerja nyata**: node yang tak melayani apa pun tak memperoleh apa pun, berapa pun uptime-nya (untuk peran komputasi).",
-          "Peran **bertumpuk** — satu mesin bisa jadi komputasi + gateway + hub, dan alirannya dijumlahkan.",
+          "Peran **bertumpuk** — satu mesin bisa jadi komputasi + gateway + bridge, dan alirannya dijumlahkan.",
           "Semuanya diselesaikan dalam KVR ke dompet pemilik node; dasbor menampilkan mentah × tingkat = efektif dan saldo yang dapat diklaim.",
         ],
       },
@@ -545,17 +629,18 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
   },
   staking: {
     title: "Staking",
-    summary: "Melakukan stake 100.000 KVR membuat dompet layak mengoperasikan node hub atau gateway.",
+    summary: "Mengunci KVR di vault. Ini tidak lagi menentukan peran operator, dan tidak ada yang mensyaratkannya.",
     blocks: [
       {
         t: "p",
-        md: "Staking mengunci KVR agar dompet memenuhi syarat untuk peran operator dan imbalan node. Mengoperasikan node **hub** atau **gateway** memerlukan stake **100.000 KVR**; node komputasi biasa bergabung tanpa stake apa pun dan memperoleh untuk lapisan yang dijalankannya.",
+        md: "Staking mengunci KVR di vault lewat panel staking dompet. Dulu inilah gerbang ke peran operator — bridge atau gateway memerlukan stake 100.000 KVR — dan **syarat itu sudah tidak ada lagi**. Tidak ada stake yang dibutuhkan untuk menjalankan node apa pun, dan dompet yang sama sekali tidak memegang KVR pun bisa mendaftarkan satu node dan memperoleh imbalan. Kedua peran infrastruktur itu kini ditetapkan oleh jaringan, kendali yang lebih kuat daripada sekadar harga: pemeriksaan lama membaca saldo dompet sekali saat pendaftaran, tak pernah menguncinya dan tak pernah menengoknya lagi, sehingga 100.000 KVR yang sama bisa mendaftarkan berapa pun node lalu dipindahkan.",
       },
       {
         t: "ul",
         items: [
-          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi tersebut dihitung untuk kelayakan operator dan imbalan node.",
-          "Syarat 100k adalah **filter komitmen nyata** bagi dua peran yang menjadi sandaran lalu lintas orang lain — titik masuk dan bidang kendali.",
+          "Staking dilakukan di panel staking dasbor dompet: masukkan jumlah, **Stake**, dan posisi itu tersimpan di vault sampai Anda menariknya kembali.",
+          "Ini bukan syarat untuk apa pun. Imbalan node berasal dari pekerjaan yang benar-benar dilakukan node, plus uptime terverifikasi untuk peran infrastruktur — bukan dari memegang saldo.",
+          "Tingkat staking devnet saat ini **0%**, jadi sebuah posisi tidak menghasilkan apa pun dengan sendirinya. Anggap panel itu sebagai mekanisme yang tersedia, bukan cara untuk memperoleh penghasilan.",
           "Di devnet, KVR yang di-stake disimpan di vault staking; jumlah yang di-stake dan imbalan node terlihat di panel staking.",
           "KVR devnet untuk staking berasal dari faucet distribusi; SOL devnet untuk biaya berasal dari faucet publik.",
         ],
@@ -591,15 +676,15 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Untuk deployment publik, akses operator ke hub dan gateway diautentikasi dengan **Sign-In With Solana**: dompet operator menandatangani nonce yang diterbitkan server, membuktikan kepemilikan tanpa kata sandi atau kredensial yang dititipkan. Di atasnya, **2FA TOTP** dan kode cadangan sekali-pakai melindungi sesi — di hub maupun gateway.",
+        md: "Untuk deployment publik, akses operator ke gateway diautentikasi dengan **Sign-In With Solana**: dompet operator menandatangani nonce yang diterbitkan server, membuktikan kepemilikan tanpa kata sandi atau kredensial yang dititipkan. Di atasnya, **2FA TOTP** dan kode cadangan sekali-pakai melindungi sesi.",
       },
       {
         t: "ul",
         items: [
           "**Tak ada kata sandi di mana pun** — kunci dompet adalah identitasnya dan nonce mencegah replay; tak ada apa pun di sisi server yang bisa di-phishing atau bocor.",
-          "**Pendaftaran TOTP per dompet** dipersistenkan di status hub, jadi 2FA bertahan melewati restart bersama slot dan binding.",
+          "**Pendaftaran TOTP per dompet** dipersistenkan di buku besar gateway, jadi 2FA bertahan melewati restart.",
           "**Kode cadangan sekali pakai** — tiap kode terpakai saat login, untuk pemulihan saat perangkat autentikator tak tersedia.",
-          "**Cakupan dinyatakan jujur** — hub polos dan port RPC dirancang untuk host tepercaya / LAN / VPN; SIWS + 2FA adalah lapisan yang membuat domain *publik* aman untuk diekspos.",
+          "**Cakupan dinyatakan jujur** — bridge dan port-port mesin inferensi mengasumsikan host tepercaya / LAN / VPN; SIWS + 2FA adalah lapisan yang membuat domain *publik* aman untuk diekspos.",
         ],
       },
     ],
@@ -643,7 +728,7 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
     blocks: [
       {
         t: "p",
-        md: "Akses ke jaringan bersifat **bayar-per-inferensi**: gateway mengutip harga KVR untuk permintaan Anda, dompet Anda membayarnya di on-chain, dan barulah hub menjalankan model. Penetapan harga adalah rumus kecil yang transparan — lantai per permintaan plus tarif per token — dikutip di muka dan diselesaikan atas pemakaian token **sebenarnya** setelah generasi.",
+        md: "Akses ke jaringan bersifat **bayar-per-inferensi**: gateway mengutip harga KVR untuk permintaan Anda, dompet Anda membayarnya di on-chain, dan barulah ring menjalankan model. Penetapan harga adalah rumus kecil yang transparan — lantai per permintaan plus tarif per token — dikutip di muka dan diselesaikan atas pemakaian token **sebenarnya** setelah generasi.",
       },
       {
         t: "code",
@@ -676,6 +761,10 @@ infra      : hub uptime/hr > gateway uptime/hr  (summed on top)`,
         t: "p",
         md: "**Worker pakar** adalah fungsi murni `(hidden, ids) → out` — tanpa attention, tanpa KV cache, tanpa sampler — yang menghitung irisan pakar sebuah model MoE kapan pun router backbone memilihnya. Anda tidak memilih apa yang dilayani; **pasar cakupan** memberi Anda rentang paling langka dan berimbalan tertinggi yang dipangkas sesuai anggaran Anda, sehingga ponsel 4 GB dan GPU pusat data sama-sama menemukan slot.",
       },
+      {
+        t: "callout",
+        md: "**Status mesin.** Sharding pada butiran pakar dibangun dan didemonstrasikan di mesin Kvasir sebelumnya, dan hasil-hasil di bawah ini berasal dari kerja itu. Mesin saat ini, [p4](/wiki/p4), melayani pada butiran lapisan hari ini; memindahkan sharding pakar ke atasnya sudah dirancang dan sedang dikerjakan. Di mana sebuah detail menyebut nama perkakas atau rute, itu adalah yang berjalan di mesin sebelumnya.",
+      },
       { t: "h2", kick: "Tujuh langkah", text: "Bangun → jadi relawan → layani → telepon → peroleh" },
       {
         t: "code",
@@ -705,7 +794,7 @@ POST /api/expert-coverage`,
           "**Irisannya mungil.** Irisan layer-0 berisi 128 pakar adalah **794 MB** melawan model penuh 72 GB — butiran yang memungkinkan perangkat lemah ikut serta. Anda hanya mengunduh rentang yang ditetapkan pasar.",
           "**Menelepon keluar, tak pernah masuk.** Langkah 5 membuka satu WebSocket keluar di 443, sehingga NAT operator dan edge CDN meloloskannya dan Anda mengekspos nol port masuk — jalur yang sama yang dipakai ponsel.",
           "**Heartbeat itu penopang.** Tanpa `POST /api/expert-coverage` Anda tak melayani apa pun yang diketahui peta permintaan, dan tak ada yang Anda lakukan yang dikreditkan.",
-          "**Imbalan per kerja.** Kerja yang dijembatani terakumulasi ke buku besar kontribusi hub; gateway meng-delta-kredit KVR ke dompet **milik Anda sendiri**. Anda perlu alamat dompet untuk dibayar.",
+          "**Imbalan per kerja.** Kerja yang dijembatani terakumulasi ke buku besar kontribusi bridge; gateway meng-delta-kredit KVR ke dompet **milik Anda sendiri**. Anda perlu alamat dompet untuk dibayar.",
         ],
       },
       {
@@ -714,57 +803,59 @@ POST /api/expert-coverage`,
       },
     ],
   },
-  "hub-operations": {
-    title: "Mengoperasikan hub",
-    summary: "Catatan operator untuk menjalankan hub dan gateway: hot-patch tanpa rebuild, selamat dari restart, jaga katalog tetap terdaftar, dan kunci permukaannya hingga tinggal 443.",
+  "bridge-operations": {
+    title: "Mengoperasikan bridge",
+    summary: "Catatan operator untuk menjalankan bridge dan ring di belakangnya: muat sebuah rencana, selamat dari restart, jaga kontribusi tetap mengalir, dan jauhkan mesinnya dari internet.",
     blocks: [
       {
         t: "p",
-        md: "Hub (bidang kendali) dan gateway (titik masuk publik) adalah dua layanan berumur panjang yang dijaga tetap sehat oleh operator. Hub dan port RPC-nya **tanpa autentikasi sejak desain** — hanya host tepercaya / LAN / VPN — dan seluruh lalu lintas publik memusat pada satu permukaan 443 gateway. Inilah catatan operasional yang menjaga pengaturan itu tetap stabil melewati perubahan kode, restart, dan reboot.",
+        md: "**Gateway** (titik masuk publik) dan **bridge** (wajah mesin) adalah dua layanan berumur panjang yang dijaga tetap sehat oleh operator, dengan agen-agen p4 dan stage server mereka di belakangnya. Mesinnya sama sekali tak berbicara autentikasi — ia mengasumsikan mesin-mesin yang bisa saling menjangkau memang dimaksudkan begitu — sehingga semua yang publik memusat pada gateway, dan bridge dijangkau lewat terowongan alih-alih dipublikasikan.",
       },
-      { t: "h2", kick: "Deploy & hot-patch", text: "Ubah kode tanpa membangun ulang" },
+      { t: "h2", kick: "Memuat", text: "Sebuah rencana, dan angka yang menaunginya" },
       {
         t: "ul",
         items: [
-          "**Jalur cepat:** perbarui kode hub/gateway dengan `docker cp <file> <container>:/app/...` + `docker restart` — tanpa rebuild image. Tetapi **menambah variabel lingkungan tak bisa dilakukan begini** (perlu recreate kontainer); lebih baik pakai API runtime-config yang mempersistenkannya ke hub-state.",
-          "**Penyimpangan compose:** kontainer yang berjalan lama bisa menyimpang dari berkas compose-nya (mode jaringan, entrypoint, env). Selalu `docker inspect` konfigurasi sebenarnya sebelum recreate `docker compose up -d` — jika sudah menyimpang, recreate akan menghapus pengaturan produksi. Pakai cp + restart.",
-          "**Diff sebelum menambal:** `docker cp` keluarkan berkas di dalam kontainer dan bandingkan (diff) dengan HEAD repo sebelum menggantinya, agar hot-patch dari sesi sebelumnya tak hilang diam-diam.",
+          "**Penempatan adalah rencana yang Anda tulis**, bukan permintaan yang Anda ajukan: bridge menjawab `409` kepada siapa pun yang memintanya melayani. Hasilkan rencananya, jalankan uji-kering, lalu muat dengan `--confirm`.",
+          "**Load generation ditulis ke disk sebelum perintah pertama berangkat.** Ia dipilih oleh pemuat, diperiksa untuk kesetaraan persis pada setiap sesi dan saat unload, dan tak tercatat di mana pun pada mesin-mesinnya — hilangkan angka itu dan model yang sudah termuat bahkan tak bisa diturunkan.",
+          "**Generation node adalah angka yang sama itu.** Muat sebuah ring dengan dua angka berbeda dan ia melayani persis satu permintaan sebelum kepalanya berhenti; sesi berikutnya menggantung setengah-termuat. Pakai nilai baru tiap pemuatan, atau registrasi yang ditinggalkan percobaan gagal akan bertabrakan dengannya.",
+          "**Agen menolak memuat tanpa jurnal operasionalnya.** Itu adalah catatan penerimaan yang dibutuhkan pemuatan aman-diulang, bukan flag debug.",
         ],
       },
-      { t: "h2", kick: "Selamat dari restart", text: "Status bertahan; model termuat tidak" },
+      { t: "h2", kick: "Selamat dari restart", text: "Apa yang kembali dan apa yang tidak" },
       {
         t: "ul",
         items: [
-          "Restart hub **menghentikan penyajian.** Slot, controller, dan binding pulih dari `hub-state.json`, tetapi model termuat hanya runtime. Setelah restart, baca `last_load` tiap controller dan picu ulang `POST /api/controllers/{cid}/serve` — bahkan model besar kembali dalam ~1 menit berkat page cache.",
-          "**Watchdog gateway:** sondir tiap model yang dilayani dengan permintaan 1-token setiap 30 s dan muat-ulang otomatis dari `last_load` saat gagal (dengan cooldown). **Sondir *semua* model, bukan `catalog[0]`** — begitu model sehat dari hub lain terurut ke depan, sondir hanya-pertama akan melewatkan model besar yang sedang tumbang (bug nyata, sudah diperbaiki).",
-          "**TTL katalog:** `POST /api/pay/hub/register` memiliki TTL 90 s, jadi jaga pendaftaran tetap hidup dengan loop heartbeat ~60 s, dibuat tahan-reboot dengan cron `@reboot` atau unit systemd.",
+          "**Restart agen menjatuhkan node-nya.** Stage server hanya ada saat runtime; modelnya harus dimuat lagi dari rencana. Itu prosedur pemulihannya, bukan kegagalan.",
+          "**Gateway tak akan memuat ulang untuk Anda.** Watchdog ring-nya menyadari sebuah model berhenti melayani, belajar dari `409` bridge bahwa penempatan bersifat eksternal, menyatakannya sekali, lalu berhenti bertanya.",
+          "**Penghitung kontribusi hidup di memori bridge.** Gateway mem-poll setiap 30 dtk dan meng-delta-kredit; sebuah restart hanya menghilangkan apa yang belum sempat di-poll, dan gateway mengatur ulang basis alih-alih membayar ganda saat sebuah penghitung mundur.",
         ],
       },
-      { t: "h2", kick: "Kunci rapat", text: "Semua yang publik lewat 443" },
+      { t: "h2", kick: "Kunci rapat", text: "Mesinnya tidak menghadap internet" },
       {
         t: "ul",
         items: [
-          "Hub (:19000) dan port RPC mengasumsikan jaringan tepercaya; satu-satunya yang boleh menghadap internet adalah gateway di 443 (termasuk passthrough relay WebSocket-nya).",
-          "Jika hub harus berada di IP publik, firewall-i ke IP tepercaya — tetapi port terbit Docker **di-DNAT sebelum rantai INPUT**, jadi aturan pada `dport` takkan cocok. Filter di rantai `DOCKER-USER` memakai port tujuan asli conntrack (`--ctorigdstport`) sebagai gantinya, dan persistenkan aturan dengan systemd oneshot yang diurutkan `After=docker.service`.",
+          "Ikat bridge ke loopback dan beri ia service token. Tanpa token itu ia tak mengautentikasi siapa pun, dan apa pun yang menjangkaunya bisa menjalankan ring secara cuma-cuma — ia menyatakannya saat start alih-alih membiarkan Anda menemukannya belakangan.",
+          "Agen mengiklankan alamat yang ditelepon agen lain. Pakai jaringan tercepat yang dibagi host-host itu, jangan pernah loopback antar-host, dan jauhkan jaringan itu dari internet publik.",
+          "Jika sesuatu harus berada di IP publik, ingat bahwa port terbit Docker **di-DNAT sebelum rantai INPUT**, jadi aturan pada `dport` takkan cocok. Filter di rantai `DOCKER-USER` memakai port tujuan asli conntrack (`--ctorigdstport`), dan persistenkan dengan systemd oneshot yang diurutkan `After=docker.service`.",
         ],
       },
-      { t: "h2", kick: "Penyelesaian & jebakan", text: "Pull, bukan push — dan satu jebakan shell" },
+      { t: "h2", kick: "Jebakan", text: "Dua yang memakan waktu sungguhan" },
       {
         t: "ul",
         items: [
-          "**Penyelesaian bersifat pull, bukan push:** hub mengakumulasi kontribusi; gateway mem-poll `GET /api/contributions` dan meng-delta-kredit KVR. Jika restart hub mereset penghitungnya, gateway mengatur ulang basis agar tak ada yang dibayar ganda. Tarif kerja pakar disetel oleh `LINKCPP_EXPERT_UNITS_PER_MB`.",
-          "**Jebakan `pkill`:** `ssh host 'pkill -f X; ...'` mencocokkan baris perintahnya *sendiri* dan membunuh dirinya sendiri. Pakai kelas karakter dalam pola (`X[x]`), dan jangan pernah menaruh spawn dan pkill dalam satu perintah jarak jauh yang sama.",
+          "**Dompet operator yang belum disetel terbaca sebagai nol perolehan.** Gateway melewati setiap baris kontribusi tanpa pemilik dan tak mencatat apa pun. Node-nya tampak menganggur padahal sedang melayani.",
+          "**`pkill` mencocokkan baris perintahnya sendiri.** `ssh host 'pkill -f server.js; ...'` membunuh shell yang menjalankannya. Taruh polanya di sebuah berkas skrip alih-alih di perintah jarak jauh, pakai kelas karakter (`server[.]js`), dan ingat bahwa proses yang dijalankan sebagai `node server.js` polos tak membawa path untuk dicocokkan — temukan lewat port dengarnya saja.",
         ],
       },
     ],
   },
-  "hub-wan-interconnect": {
-    title: "Interkoneksi WAN hub (optik 200G)",
-    summary: "Bagaimana hub saling terhubung pada 200 Gb/s melintasi ruangan, kampus, atau kota: optik mana pada jarak mana, apa yang dicolok di mana, dan apa yang dibutuhkan untuk benar-benar mencapai line rate.",
+  "wan-interconnect": {
+    title: "Interkoneksi WAN (optik 200G)",
+    summary: "Bagaimana situs komputasi saling terhubung pada 200 Gb/s melintasi ruangan, kampus, atau kota: optik mana pada jarak mana, apa yang dicolok di mana, dan apa yang dibutuhkan untuk benar-benar mencapai line rate.",
     blocks: [
       {
         t: "p",
-        md: "Ketika dua hub sama-sama punya rute publik, bidang data dispatch-pakar sebaiknya berupa **tautan langsung** — relay 443 untuk edge di balik NAT. Entri ini adalah resep konkret untuk menjadikan tautan langsung itu berkelas 200 Gb/s dengan komponen katalog. Satu aturan menata semuanya: **serat adalah kaca netral-kecepatan; kecepatan berada pada pluggable di tiap ujung.**",
+        md: "Ketika dua situs sama-sama punya rute publik, bidang data dispatch-pakar sebaiknya berupa **tautan langsung** — relay diperuntukkan bagi edge yang tak punya alamat sendiri. Entri ini adalah resep konkret untuk menjadikan tautan langsung itu berkelas 200 Gb/s dengan komponen katalog. Satu aturan menata semuanya: **serat adalah kaca netral-kecepatan; kecepatan berada pada pluggable di tiap ujung.**",
       },
       { t: "h2", kick: "Langkah 1 · pilih berdasarkan jarak", text: "Tangga jangkauan" },
       {
@@ -783,8 +874,8 @@ POST /api/expert-coverage`,
       {
         t: "ul",
         items: [
-          "**Sisi NIC** — kartu kelas ConnectX-6/7 mengekspos cage QSFP56; DAC/AOC/FR4/LR4/ER4 semuanya duduk langsung di NIC. Hub kelas GB10 sudah punya dua port QSFP 200 GbE di papan, jadi tautan dua-hub butuh tepat satu kabel dan nol perangkat keras baru.",
-          "**Sisi switch** — optik koheren ZR+ berformat QSFP-DD dan berada di switch atau router; NIC hub lalu bergabung ke switch itu pada 200G lewat DAC pendek. Pakai tingkat ini saat hub jauh berjarak puluhan kilometer.",
+          "**Sisi NIC** — kartu kelas ConnectX-6/7 mengekspos cage QSFP56; DAC/AOC/FR4/LR4/ER4 semuanya duduk langsung di NIC. Host kelas GB10 sudah punya dua port QSFP 200 GbE di papan, jadi tautan dua-situs butuh tepat satu kabel dan nol perangkat keras baru.",
+          "**Sisi switch** — optik koheren ZR+ berformat QSFP-DD dan berada di switch atau router; NIC situs itu lalu bergabung ke switch tersebut pada 200G lewat DAC pendek. Pakai tingkat ini saat situs seberang berjarak puluhan kilometer.",
           "**Serat itu sendiri** — pasangan LC dupleks single-mode standar (G.652), disewa sebagai dark fiber per untai. Kaca yang sama membawa 100G hari ini dan 400G nanti; peningkatan cukup tukar modul, tak pernah pekerjaan sipil.",
           "**Di luar ~120 km** — Anda berhenti membeli komponen dan mulai menyewa panjang gelombang dari carrier; batas demarkasinya adalah handoff Ethernet di switch Anda.",
         ],
@@ -792,33 +883,37 @@ POST /api/expert-coverage`,
       {
         t: "code",
         caption: "Tiga rakitan acuan, termurah lebih dulu.",
-        code: `two-hub bench   : hub A qsfp0 ──QSFP56 DAC 1m── hub B qsfp0
-campus pair     : hub A [LR4] ──dark fiber, ≤10km── [LR4] hub B
-metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── hub`,
+        code: `two-site bench  : site A qsfp0 ──QSFP56 DAC 1m── site B qsfp0
+campus pair     : site A [LR4] ──dark fiber, ≤10km── [LR4] site B
+metro federation: site ──DAC── switch [ZR+ @200G] ──SMF ≤120km── [ZR+] switch ──DAC── site`,
       },
       { t: "h2", kick: "Langkah 3 · benar-benar mencapai 200G", text: "Line rate adalah konfigurasi, bukan pembelian" },
       {
         t: "ul",
         items: [
           "Pakai **RDMA (RoCE)** untuk stream dispatch bila tersedia — host kelas GB10 mengumpani NIC lewat tautan PCIe terbelah, dan kecepatan penuh terukur (~185–190 Gb/s) muncul di bawah RoCE dengan topologi yang terpetakan benar; jalur yang salah-petakan terbatas mendekati separuh laju, dan TCP polos tanpa penyetelan mendarat jauh lebih rendah.",
-          "Aktifkan **jumbo frame (MTU 9000)** ujung-ke-ujung dan pertahankan `TCP_NODELAY` pada soket dispatch (hub sudah menyetelnya).",
-          "Bersiaplah untuk *memverifikasi*, bukan mengasumsikan: jalankan perftest antar-hub setelah tiap perubahan fisik — beda antara 95 dan 190 Gb/s tak terlihat sampai diukur.",
+          "Aktifkan **jumbo frame (MTU 9000)** ujung-ke-ujung dan pertahankan `TCP_NODELAY` pada soket dispatch (bridge sudah menyetelnya).",
+          "Bersiaplah untuk *memverifikasi*, bukan mengasumsikan: jalankan perftest antar-situs setelah tiap perubahan fisik — beda antara 95 dan 190 Gb/s tak terlihat sampai diukur.",
           "Jaga **relay 443 sebagai jalur cadangan** — kebijakan dial adalah langsung-dulu untuk peer publik, relay untuk NAT. Tugas relay adalah jangkauan, tugas tautan langsung adalah kecepatan.",
         ],
       },
       {
         t: "p",
-        md: "Mengapa ini penting bagi arsitektur: latensi dekode dibatasi oleh waktu bolak-balik (~5 µs/km di serat — fisika, tak terpengaruh bandwidth), jadi pipa gemuk membeli **kecepatan prefill, throughput dispatch berkelompok, dan distribusi irisan-pakar nyaris seketika**, bukan latensi per-token yang lebih rendah. Itulah persis peran tingkat-hub dalam desain dua-tingkat: kapasitas di tingkat pipa-gemuk, jangkauan di tingkat relay.",
+        md: "Mengapa ini penting bagi arsitektur: latensi dekode dibatasi oleh waktu bolak-balik (~5 µs/km di serat — fisika, tak terpengaruh bandwidth), jadi pipa gemuk membeli **kecepatan prefill, throughput dispatch berkelompok, dan distribusi irisan-pakar nyaris seketika**, bukan latensi per-token yang lebih rendah. Itulah persis peran tingkat-situs dalam desain dua-tingkat: kapasitas di tingkat pipa-gemuk, jangkauan di tingkat relay.",
       },
     ],
   },
   "load-adaptive-scaling": {
     title: "Penskalaan adaptif-beban",
-    summary: "Jalur penyajian MoE Kvasir tumbuh dan menyusut seiring lalu lintas: koordinator melibatkan kembali worker terbukti di bawah kejenuhan, dan hub merekrut node menganggur dengan menaikkan permintaan pakar — semuanya berbasis-tarik, sehingga perangkat ber-NAT pun ikut bergabung.",
+    summary: "Jalur penyajian MoE Kvasir tumbuh dan menyusut seiring lalu lintas: koordinator melibatkan kembali worker terbukti di bawah kejenuhan, dan bridge merekrut node menganggur dengan menaikkan permintaan pakar — semuanya berbasis-tarik, sehingga perangkat ber-NAT pun ikut bergabung.",
     blocks: [
       {
         t: "p",
         md: "Jalur penyajian MoE Kvasir menskala secara elastis seiring beban, dalam dua lapisan yang saling bekerja sama. Saat sepi, koordinator melayani semuanya secara lokal demi jalur tercepat per token; saat jenuh, dua lapisan di bawah menumbuhkan swarm — dan menyusutkannya lagi saat lonjakan berlalu.",
+      },
+      {
+        t: "callout",
+        md: "**Status mesin.** Sharding pada butiran pakar dibangun dan didemonstrasikan di mesin Kvasir sebelumnya, dan hasil-hasil di bawah ini berasal dari kerja itu. Mesin saat ini, [p4](/wiki/p4), melayani pada butiran lapisan hari ini; memindahkan sharding pakar ke atasnya sudah dirancang dan sedang dikerjakan. Di mana sebuah detail menyebut nama perkakas atau rute, itu adalah yang berjalan di mesin sebelumnya.",
       },
       { t: "h2", kick: "Lapisan 1", text: "Sisi koordinator: dispatch adaptif-beban" },
       {
@@ -834,17 +929,17 @@ metro federation: hub ──DAC── switch [ZR+ @200G] ──SMF ≤120km─�
           "Kueri-diri dibatasi waktu sehingga penjajakan yang macet tak pernah bisa memblokir dispatch.",
         ],
       },
-      { t: "h2", kick: "Lapisan 2", text: "Sisi hub: rekrutmen adaptif-beban" },
+      { t: "h2", kick: "Lapisan 2", text: "Sisi bidang kendali: rekrutmen adaptif-beban" },
       {
         t: "p",
-        md: "Hub kontrol mengawasi setiap koordinator MoE dan menumbuhkan kumpulan worker saat diperlukan:",
+        md: "Bidang kendali mengawasi setiap koordinator MoE dan menumbuhkan kumpulan worker saat diperlukan:",
       },
       {
         t: "ul",
         items: [
           "Sebuah loop latar menjajaki slot tiap koordinator dan mencatat kejenuhan per model.",
           "Selama sebuah model jenuh, **target replika-pakar efektifnya** dinaikkan (base + boost). Pasar cakupan lalu membaca pakar-pakar yang sudah tercakup sebagai langka kembali, dan sebuah model **tanpa** worker aktif di-seed dari metadata GGUF-nya (jumlah pakar) sehingga permintaan terlihat bahkan dari nol.",
-          "Node yang menganggur menjajaki pasar permintaan (`/api/expert-volunteer`) dan diberi sepotong `(layer, expert-range)` untuk dilayani. Mereka mengunduh potongan itu, menyambung ke relay, dan mendaftarkan cakupan; hub secara otomatis mengaitkan mereka ke peta dispatch koordinator.",
+          "Node yang menganggur menjajaki pasar permintaan (`/api/expert-volunteer`) dan diberi sepotong `(layer, expert-range)` untuk dilayani. Mereka mengunduh potongan itu, menyambung ke relay, dan mendaftarkan cakupan; bidang kendali secara otomatis mengaitkan mereka ke peta dispatch koordinator.",
           "Saat beban surut, target turun kembali dan permintaan lenyap, sehingga worker ekstra tak lagi di-dispatch dan menua keluar.",
         ],
       },

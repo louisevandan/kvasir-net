@@ -3,7 +3,7 @@ import Network
 import UIKit
 
 /// Minimal managed-node-agent control plane (the phone-side counterpart of
-/// controller/nodeagent.py). The hub polls `GET /control/status`, hands us a
+/// the deleted controller/nodeagent.py). The bridge polls `GET /control/status`, hands us a
 /// report URL + M2M token on bind via `POST /control/join`, and drives loads
 /// with `POST /control/load|unload|load/cancel`. The data plane is the in-app
 /// ggml RPC worker (KvasirRpcWorker); the master streams tensors directly to
@@ -28,7 +28,7 @@ final class AgentControlServer: ObservableObject {
     private var owner = ""
     private var deviceName = "iPhone"
 
-    // Advisory-only versions (rpc_abi is the hub's hard gate); llama.cpp rev is
+    // Advisory-only versions (rpc_abi is the bridge's hard gate); llama.cpp rev is
     // stamped by the build script into Info.plist when available.
     private var llamaRev: String {
         (Bundle.main.object(forInfoDictionaryKey: "KvasirLlamaCppRev") as? String) ?? "unknown"
@@ -37,7 +37,7 @@ final class AgentControlServer: ObservableObject {
         (Bundle.main.object(forInfoDictionaryKey: "KvasirUnitVersion") as? String) ?? "0.0.7"
     }
 
-    /// App-writable model store the hub can stage GGUFs into (ring stages read
+    /// App-writable model store the bridge can stage GGUFs into (ring stages read
     /// only their layer window, but need the file present).
     static var modelsDir: URL {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -61,7 +61,7 @@ final class AgentControlServer: ObservableObject {
     private var downloads: [[String: Any]] = []  // ops surfaced via /control/status
     private var downloadingModels: Set<String> = []  // in-flight, so re-POST is a no-op
 
-    /// GGUFs the hub has staged onto this phone — reported so the hub can poll
+    /// GGUFs the bridge has staged onto this phone — reported so the bridge can poll
     /// until an auto-staged model is present before starting the ring stage.
     private func stagedModels() -> [String] {
         (try? FileManager.default.contentsOfDirectory(atPath: Self.shardsDir.path))?
@@ -208,7 +208,7 @@ final class AgentControlServer: ObservableObject {
             return (200, ["log": logLines.suffix(200).joined(separator: "\n"),
                           "worker_running": KvasirRpcWorkerIsRunning()])
 
-        // ---- ring stage control plane (phone-side controller/proxy/node_api.py) ----
+        // ---- ring stage control plane (phone side of the retired node_api.py) ----
         case ("GET", "/control/proxy/runtime"):
             return (200, ["runtime_mode": ringCatalogEntry(),
                           "installed_packs": [], "install_enabled": false])
@@ -230,7 +230,7 @@ final class AgentControlServer: ObservableObject {
     // MARK: ring stage
 
     /// The bundled runtime identity: iOS cannot install executable packs, so the
-    /// app itself is the pack — the hub matches protocol/ABI/build_id against
+    /// app itself is the pack — the bridge matches protocol/ABI/build_id against
     /// the identity compiled into liblinkcpp-stage.
     private func ringCatalogEntry() -> [String: Any] {
         let raw = String(cString: kvasir_stage_runtime_info_json())
@@ -287,7 +287,7 @@ final class AgentControlServer: ObservableObject {
                 "desired_load": desiredLoad as Any, "log": tail]
     }
 
-    // MARK: model download (hub -> phone staging)
+    // MARK: model download (bridge -> phone staging)
 
     private func downloadModel(_ json: [String: Any]) -> (Int, [String: Any]) {
         guard let model = json["model"] as? String,
@@ -402,7 +402,7 @@ final class AgentControlServer: ObservableObject {
         ]
     }
 
-    // MARK: report push (hub /api/node-reports)
+    // MARK: report push (bridge /api/node-reports)
 
     private func pushReport(opId: String = UUID().uuidString, opType: String, phase: String,
                             status: String, progress: Double, message: String, model: String? = nil) {
@@ -419,7 +419,7 @@ final class AgentControlServer: ObservableObject {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let serviceToken { req.setValue(serviceToken, forHTTPHeaderField: "X-Linkcpp-Service-Token") }
+        if let serviceToken { req.setValue(serviceToken, forHTTPHeaderField: "X-Kvasir-Service-Token") }
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         URLSession.shared.dataTask(with: req).resume()
     }

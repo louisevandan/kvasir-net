@@ -1,4 +1,4 @@
-# Kvasir / linkcpp — Homepage Build Brief
+# Kvasir — Homepage Build Brief
 
 > **Purpose:** a complete, self-contained brief for a separate session to build the
 > marketing homepage. Everything here is grounded in the actual codebase and what was
@@ -15,11 +15,11 @@
 
 | Name | What it is | Use it for |
 | --- | --- | --- |
-| **linkcpp** | The open-source **tech / control plane**: a Dockerized control hub around llama.cpp's RPC data plane. Discovers GPUs, plans layer placement across GPUs/machines, launches workers, exposes OpenAI/Anthropic-compatible gateways. MIT-licensed. Data plane is *stock* llama.cpp. | Developer/tech audience, GitHub, "the engine" |
-| **Kvasir** | The **product / network brand**: the non-custodial wallet + settlement gateway + node-reward network built on top of linkcpp. UI surfaces are "Kvasir Hub", "Kvasir Gateway", "Kvasir Wallet". | Consumer/contributor audience, the network, rewards |
+| **p4** | The **engine**: agents own the nodes on a host, stage servers hold slices of the model's layers, and a stage hands its result to the next by dialing that stage's agent. Source-available under BSL 1.1; the llama.cpp data plane underneath stays close to upstream (MIT). | Developer/tech audience, GitHub, "the engine" |
+| **Kvasir** | The **product / network brand**: the non-custodial wallet + settlement gateway + node-reward network built on top of p4. UI surfaces are "Kvasir Bridge", "Kvasir Gateway", "Kvasir Wallet". | Consumer/contributor audience, the network, rewards |
 | **KVR** | The **token**. On-chain name "Kvasir", symbol **KVR**, 6 decimals, Solana. Used to pay for inference and to reward contributors. (`LKC` also appears in older `solana/` tooling — treat KVR as the current token.) | Token/rewards sections |
 
-**Relationship in one line:** *linkcpp is the engine; Kvasir is the network that turns it
+**Relationship in one line:** *p4 is the engine; Kvasir is the network that turns it
 into a rewarded, decentralized AI inference marketplace paid in KVR.*
 
 ---
@@ -62,7 +62,7 @@ hardware runs part of an inference earns KVR proportional to the work their node
   the operator login is a wallet signature (Sign-In With Solana) + optional 2FA.
 - **Drop-in for developers** — OpenAI- and Anthropic-compatible endpoints; pay-per-inference
   in KVR.
-- **Open engine** — the data plane is stock llama.cpp (MIT); linkcpp adds only orchestration.
+- **Open engine** — the data plane stays close to upstream llama.cpp (MIT); p4 adds the distribution.
 
 ---
 
@@ -76,11 +76,11 @@ hardware runs part of an inference earns KVR proportional to the work their node
   credited to that node's **own owner wallet**. Verified with 4 distinct owner wallets, each
   earning its share; performance tiers (S/A/B/C by tok/s) apply a multiplier.
 - **Secured operator access:** Sign-In With Solana wallet login + **Google Authenticator
-  TOTP 2FA + single-use backup codes**, on both the hub and the gateway. Live over HTTPS
+  TOTP 2FA + single-use backup codes** on the gateway's operator surface. Live over HTTPS
   (Cloudflare Tunnel) on the project's own domain: **`gate.kvasir-ai.net`** (wallet +
-  gateway) and **`hub.kvasir-ai.net`** (hub) — verified serving 2026‑07‑12.
+  gateway) — the only public entrance.
 - **Pay-per-inference gateway:** OpenAI-compatible; quote → KVR payment → inference; a live
-  model catalog aggregated from reachable hubs.
+  model catalog aggregated from reachable bridges.
 - **Wallets shipped:** non-custodial **web + desktop (Electron/React)** wallet and **iOS
   (Swift) + Android (Kotlin)** apps, with a node monitor showing contribution, tier, and
   rewards; staking (off-chain devnet MVP).
@@ -128,7 +128,7 @@ Single-page scroll, three-audience aware. Order:
    - CONSTRAINT banner: devnet, utility token, not investment advice (§ Constraints).
 
 6. **Under the hood (tech / trust)**
-   - Stock llama.cpp data plane (MIT), linkcpp control plane; distributed layer placement; SIWS + 2FA security; runtime compatibility gating.
+   - llama.cpp data plane (MIT) close to upstream, p4 engine; stage placement from an operator plan; SIWS + 2FA security; release-matched agent and stage server.
    - Link to GitHub.
 
 7. **Roadmap**
@@ -143,13 +143,13 @@ Single-page scroll, three-audience aware. Order:
 
 ## 8. Technical fact sheet (accurate details to pull from)
 
-- Data plane: **stock llama.cpp** RPC (`ggml-rpc-server` workers + GPU-less `llama-server` master). Control plane: **linkcpp** (Python FastAPI hub), single Docker image.
+- Data plane: **llama.cpp**, close to upstream, inside per-stage servers. Engine: **p4** — agents plus a staged adapter. In front of it: the **bridge**, then the settlement gateway.
 - Distribution: planner reads GGUF metadata → **contiguous per-node layer windows + `--tensor-split`**, optional MoE expert-FFN offload to CPU RAM.
 - Model demoed: **Qwen3.5-122B-A10B** (MoE, ~10B active), Q4_K_M, 49 layers, 4096 ctx.
 - Rewards math: per node, `units += (output_tokens / 1000) × (node_layers / total_layers)`;
   `effective = units × perf_multiplier × gateway_bonus`; performance tiers S(×1.5)/A(×1.25)/B(×1.0)/C(×0.7) by measured tok/s; infra roles earn hourly **uptime** rewards too.
 - Settlement: **Solana** (devnet); token **KVR** (6 decimals). Off-chain staking/settlement service today (custodial devnet MVP), on-chain program later.
-- Gateways per model: `/v1/chat/completions`, `/v1/responses`, `/v1/models`, `/anthropic/v1/messages|models`.
+- Gateways per model: `/v1/chat/completions`, `/v1/models`, `/anthropic/v1/messages|models`.
 - Security: Sign-In With Solana (ed25519 signature over a server nonce) + TOTP 2FA + backup codes; unauthenticated LAN/VPN mode for local use.
 - Nodes: fixed local GPU slots, imported remote units, and managed native agents (Linux/macOS/Windows).
 - License: **MIT**.
@@ -163,7 +163,7 @@ Single-page scroll, three-audience aware. Order:
 - **Palette:** the apps use a dark UI (deep near-black `#0b0c0f`/`#15171c`, accent blue
   `#4c8bf5`, success green `#3cbf8e`, danger `#e5675f`). Match for brand continuity; consider
   a light variant for the marketing page. Theme-aware (light/dark) recommended.
-- **Imagery:** prefer real screenshots (hub topology view, wallet node monitor with tier &
+- **Imagery:** prefer real screenshots (the architecture diagram, wallet node monitor with tier &
   rewards, the distributed-load view) over stock art. Diagrams for "how it works."
 - **Must be self-contained if built as an Artifact** (inline CSS/JS, no external CDNs,
   embed assets as data URIs), responsive, and theme-aware.
@@ -182,24 +182,24 @@ Single-page scroll, three-audience aware. Order:
 4. **No impersonation / fake metrics.** Don't invent user counts, TVL, partner logos, or
    testimonials. Use only the real proof points in §5.
 5. **Non-custodial claim must stay true** to the code (keys in the user's wallet).
-6. Keep infra endpoints (hub/gateway ports) out of any "connect" instructions that imply they
+6. Keep infra endpoints (bridge/gateway ports) out of any "connect" instructions that imply they
    are public/unauthenticated services beyond the demo domains.
 
 ---
 
 ## 11. Assets & links available
 
-- GitHub (tech): the linkcpp repo (MIT). (Two remotes exist internally; public-facing link
-  TBD — confirm which repo is the public one before linking.)
+- GitHub (tech): the Kvasir network repo (BSL 1.1). The p4 engine is a separate repository;
+  confirm which remote is public before linking.
 - **Official domain: `kvasir-ai.net`** (Cloudflare). Live production endpoints:
   - `https://gate.kvasir-ai.net` — wallet web app + settlement gateway (serves `Kvasir Wallet`).
-  - `https://hub.kvasir-ai.net` — the linkcpp hub.
-  Both are live over HTTPS via Cloudflare Tunnel and are safe to feature/link. (The former
+  The bridge and the engine behind it are **not** public hostnames and must not be linked.
+  The gateway is live over HTTPS via Cloudflare Tunnel and is safe to feature/link. (The former
   `*.prototypebench.org` hosts still resolve during migration but are being retired — do not
   feature them.) Use `kvasir-ai.net` for any brand email, canonical URLs, and social handles.
-- Screenshots to capture for the page: hub topology/distributed-load view, wallet node monitor
+- Screenshots to capture for the page: the architecture diagram, wallet node monitor
   (tier + contribution + rewards), gateway model list, 2FA enrollment (QR).
-- Brand colors + UI: see `controller/web/hub.css` and `wallet/desktop/src` for the existing look.
+- Brand colors + UI: see `kvasir-home/src` and `wallet/desktop/src` for the existing look.
 
 ---
 
@@ -209,11 +209,11 @@ Single-page scroll, three-audience aware. Order:
 2. **Public repo / demo links:** which GitHub repo and which domains are OK to expose publicly?
 3. **Primary CTA priority:** contributors (run a node) vs developers (API) vs investors — which leads?
 4. **Static marketing page vs app-integrated** — standalone landing, or a section of the existing web app?
-5. **Brand lock:** lead with "Kvasir" (network) and reference "linkcpp" (engine) — confirm.
+5. **Brand lock:** lead with "Kvasir" (network) and reference "p4" (engine) — confirm.
 6. **Logo / wordmark:** exists? (UI uses a "K" mark.) Provide or design.
 
 ---
 
-*Source of truth for the facts above: the linkcpp/Kvasir codebase and the verified state as of
+*Source of truth for the facts above: the Kvasir codebase and the verified state as of
 2026‑07‑12. See project memory: `multinode-contribution`, `gateway-db-and-vram-fixes`,
 `kvasir-2fa-auth`, `marketing-deliverables-todo`.*
