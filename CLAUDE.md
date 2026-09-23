@@ -110,3 +110,16 @@ These are not style preferences. Each one was found the expensive way.
 - **Say what is running.** The site distinguishes what serves today from what is designed —
   expert-grain sharding was demonstrated on the previous engine and is not yet on p4, and the
   wiki says so. Do not quietly upgrade a plan into a claim.
+- **Verify an artifact by running it the way a user will, in the environment it is for.**
+  Reading its contents tells you what is in it, never what it does, and a check that passes
+  on the build machine can pass on something the user cannot run. The tier badge's CSS was
+  present in `app.asar` and overridden at runtime by an inline width — found by photographing
+  the running app. A Linux worker tarball built on Windows stored 0644 on the binary — found
+  by unpacking it in a container and running it, which the build now does itself. A deploy
+  reported success against a preview branch rather than production — found by fetching the
+  production URL and comparing the bundle hash.
+- **A wait condition a stale artifact can satisfy is not a wait condition.** A wait on "the
+  DMG exists" was met by the previous build, so a failed build read as a finished one; a wait
+  on a built file's existence was met while vite produced nothing, because the entry file had
+  been overwritten by an earlier build's output. Remove the previous artifact first, and match
+  on something only the new one can produce — the commit hash in a success line, not a filename.
