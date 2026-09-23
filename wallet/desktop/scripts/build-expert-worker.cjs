@@ -354,8 +354,22 @@ function packLinux(bin) {
   ].join('\n'))
   const tar = path.join(REPO, 'build', `kvasir-expert-worker-linux-x64-cuda13-${version}.tar.gz`)
   fs.rmSync(tar, { force: true })
-  execFileSync(path.join(process.env.SystemRoot || '/usr', process.platform === 'win32' ? 'System32' : 'bin', process.platform === 'win32' ? 'tar.exe' : 'tar'),
-    ['-czf', tar, '-C', stage, '.'], { stdio: 'inherit' })
+  // Packed inside a container, and unpacked again to be run. A tar written on
+  // Windows stores 0644 for everything, so the worker arrives without its
+  // execute bit and dies with "Permission denied" on the operator's server —
+  // the same way a Linux desktop tarball once shipped with 0 of 4,158 files
+  // executable. Checking that it runs after extraction is the only test that
+  // would have caught it.
+  const name = path.basename(tar)
+  execFileSync('docker', ['run', '--rm', '-v', `${stage}:/stage:ro`, '-v', `${path.dirname(tar)}:/out`,
+    LINUX_IMAGE, 'bash', '-c',
+    `set -e; cp -r /stage /work; chmod 0644 /work/*; chmod 0755 /work/${MACH_O}; tar -czf /out/${name} -C /work .; ` +
+    // Unpack it again and run it: the binary must be executable and must get
+    // as far as its own usage text. Without a GPU in this container it stops
+    // at libcuda, which is the driver's absence, not a broken package.
+    `cd /tmp && tar -xzf /out/${name} && test -x ./${MACH_O} && ` +
+    `{ ./${MACH_O} 2>&1 | head -1 | grep -qE 'usage:|libcuda.so.1' || { echo "the packaged worker does not start"; exit 1; }; }`],
+  { stdio: 'inherit', env: { ...process.env, MSYS_NO_PATHCONV: '1' } })
   const bytes = fs.statSync(tar).size
   const sha256 = crypto.createHash('sha256').update(fs.readFileSync(tar)).digest('hex')
   console.log(`\nlinux pack: ${tar}\n  commit ${rev}\n  bytes  ${bytes}\n  sha256 ${sha256}`)
