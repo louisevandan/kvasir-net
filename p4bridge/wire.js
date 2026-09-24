@@ -223,13 +223,16 @@ function decodeHop(frame) {
  * correlated reply (`exchange`) or subscribe to the stream (`onEvent`).
  */
 class OuterClient {
-  constructor({ host, port, address, channel, connectionGeneration = 1, maxOutstanding = 256, deadlineMs = 120_000, hop = true }) {
+  constructor({ host, port, address, channel, connectionGeneration = 1, maxOutstanding = 256, deadlineMs = 120_000, connectTimeoutMs = 0, hop = true }) {
     this.host = host;
     this.port = port;
     this.address = address ?? `tcp://${host}:${port}`;
     this.channel = channel ?? crypto.randomBytes(16).toString('hex');
     this.outer = outerEndpoint(this.address, this.channel, connectionGeneration);
     this.deadlineMs = deadlineMs;
+    // Not the same clock as deadlineMs, which rides on events. This one bounds
+    // the TCP handshake, which otherwise has no bound at all.
+    this.connectTimeoutMs = connectTimeoutMs;
     // Agents built before the acknowledged-delivery frames landed accept bare
     // P4E3 events and close the socket on a P4H1 hello. `hop: false` speaks to
     // those; `connect()` falls back to it automatically.
@@ -257,7 +260,19 @@ class OuterClient {
       socket.setNoDelay(true);
       const onError = (error) => { socket.destroy(); reject(error); };
       socket.once('error', onError);
+      // net.createConnection carries no connect deadline of its own: a host
+      // that drops SYNs silently leaves this pending until the OS gives up,
+      // which is about two minutes on Linux. The bridge dials on a 15 s timer,
+      // so without a bound here the attempts stack. Cleared once connected --
+      // an established connection that sits idle between INSPECTs is normal
+      // and must not be torn down for being quiet.
+      if (this.connectTimeoutMs) {
+        socket.setTimeout(this.connectTimeoutMs, () => {
+          socket.destroy(new Error(`P4 connect timed out after ${this.connectTimeoutMs} ms`));
+        });
+      }
       socket.once('connect', () => {
+        socket.setTimeout(0);
         socket.off('error', onError);
         this.socket = socket;
         socket.on('data', (chunk) => this._onData(chunk));
@@ -345,7 +360,18 @@ class OuterClient {
         const error = new Error(`P4 refused the request: ${RECEIPT[hop.status]} ${hop.detail}`.trim());
         const waiter = this.waiters.get(pending.correlationId);
         if (waiter) { this.waiters.delete(pending.correlationId); waiter.reject(error); }
-        else throw error;
+        // A refusal for a request nobody is waiting on is not a protocol
+        // violation, and throwing here reaches _onData's catch and tears the
+        // connection down -- taking every other request on it, and an agent
+        // slot with it (transport.rs:900-902). That became a NORMAL situation
+        // the day the bridge started keeping connections through an INSPECT
+        // timeout: the waiter is gone by design, and a late refusal would then
+        // cost the slot the timeout was meant to save. Subscribed requests
+        // (pipeline.js) were always in this position -- they own no waiter at
+        // all, so a refusal for one used to kill the connection outright.
+        // Hand it to the listeners and keep the socket. Found by GB10 #1 in
+        // wire.js, 2026-09-25. Reachable only with P4_BRIDGE_HOP=1.
+        else for (const listener of this.listeners) listener({ error, correlationId: pending.correlationId });
         return;
       }
       this._sendFrame(hopReceiptAck(this.senderId, this.outer.connectionGeneration, hop.attempt, hop.digest));

@@ -37,6 +37,11 @@ const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
  */
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
+// Idle probe interval for relay sockets. A relay carries a phone's traffic, so
+// minutes of silence are normal and this must not be aggressive; it exists to
+// notice a peer that is gone, not one that is quiet.
+const RELAY_KEEPALIVE_MS = Number(process.env.P4_RELAY_KEEPALIVE_MS ?? 60_000);
+
 const OP_CONTINUATION = 0x0;
 const OP_TEXT = 0x1;
 const OP_BINARY = 0x2;
@@ -171,6 +176,11 @@ function bridge(req, socket, head, target, hooks = {}) {
 
   const upstream = net.connect({ host: target.host, port: target.port });
   upstream.setNoDelay(true);
+  // A phone that vanishes without a FIN -- app killed, radio handover, tunnel
+  // dropped -- leaves both of these established forever, because neither end
+  // has anything to say. Keepalive is the only thing that notices.
+  socket.setKeepAlive(true, RELAY_KEEPALIVE_MS);
+  upstream.setKeepAlive(true, RELAY_KEEPALIVE_MS);
 
   let closed = false;
   const teardown = (why) => {
@@ -193,6 +203,7 @@ function bridge(req, socket, head, target, hooks = {}) {
     teardown(`upstream error: ${error.message}`);
   });
   upstream.on('close', () => teardown('upstream closed'));
+  upstream.on('end', () => teardown('upstream ended'));
 
   upstream.on('data', (chunk) => {
     hooks.onBytes?.('tcp2ws', chunk.length);
@@ -213,6 +224,13 @@ function bridge(req, socket, head, target, hooks = {}) {
   socket.on('data', (chunk) => decoder.push(chunk));
   socket.on('error', (error) => teardown(`socket error: ${error.message}`));
   socket.on('close', () => teardown('socket closed'));
+  // An upgrade socket handed over by http.Server allows half-open, so a client
+  // that sends FIN without a WebSocket close frame leaves this socket readable:
+  // false, writable: true -- alive as far as Node is concerned. 'close' never
+  // fires, teardown never runs, and the upstream connection this relay opened
+  // stays open with it. Found by GB10 #1, 2026-09-25, with a decisive
+  // experiment: destroy the client and the bridge kept both sockets.
+  socket.on('end', () => teardown('client ended'));
 }
 
 /** Refuse an upgrade with a WebSocket close code, after accepting the upgrade

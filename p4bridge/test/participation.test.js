@@ -137,6 +137,30 @@ test('a phone earns a node token from a wallet signature alone', async (t) => {
   assert.ok(token.body.expires_in > 0);
 });
 
+test('the wrong method on an open path says so, instead of demanding a token', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+
+  // /api/auth/challenge is how a stranger with no token at all starts. Answering
+  // a GET with 401 "service token required" — which is what falling through to
+  // the blanket gate did — tells that stranger the endpoint is not for them.
+  const wrong = await call(port, 'GET', '/api/auth/challenge');
+  assert.equal(wrong.status, 405);
+  assert.equal(wrong.headers.allow, 'POST');
+  assert.match(wrong.body.error, /takes POST/);
+
+  // The market is the other direction: a GET route asked for with POST.
+  const market = await call(port, 'POST', '/api/expert-demand', { body: {} });
+  assert.equal(market.status, 405);
+  assert.equal(market.headers.allow, 'GET');
+
+  // A path this module does not own must fall through untouched — the new
+  // branch answers for the participation surface, and claims nothing else.
+  const foreign = await call(port, 'GET', '/api/controllers');
+  assert.notEqual(foreign.status, 405);
+});
+
 test('a challenge is single use and a foreign signature is refused', async (t) => {
   const { server, participation } = startBridge();
   const port = await listen(server);
@@ -468,7 +492,12 @@ test('the relay carries bytes both ways and credits the dialing wallet', async (
     socket.on('data', (chunk) => socket.write(Buffer.concat([Buffer.from('echo:'), chunk])));
   });
   const upstreamPort = await listen(upstream);
-  t.after(() => { upstream.close(); server.close(); participation.stop(); });
+  // The client socket too. server.close() stops accepting; it does not hang up
+  // on a connection that is already established, so without this the relay
+  // socket keeps the event loop alive and the whole FILE never exits -- while
+  // every test in it passes. Found by GB10 #1, 2026-09-25.
+  let client;
+  t.after(() => { client?.destroy(); upstream.close(); server.close(); participation.stop(); });
 
   await call(port, 'POST', '/api/expert-coverage', {
     token,
@@ -482,7 +511,7 @@ test('the relay carries bytes both ways and credits the dialing wallet', async (
 
   const reply = await new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString('base64');
-    const socket = net.connect(port, '127.0.0.1', () => {
+    const socket = client = net.connect(port, '127.0.0.1', () => {
       socket.write(
         `GET /api/expert-relay?session=expert-phone-2&token=${encodeURIComponent(token)} HTTP/1.1\r\n`
         + 'Host: test.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
