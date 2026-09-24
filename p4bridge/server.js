@@ -46,11 +46,20 @@ const DIAL_HOURLY_CAP = Number(process.env.P4_BRIDGE_DIAL_HOURLY_CAP ?? 6);
 const DIAL_LIFETIME_CAP = Number(process.env.P4_BRIDGE_DIAL_LIFETIME_CAP ?? 64);
 const DIAL_BACKOFF_MS = [60_000, 120_000, 240_000, 480_000, 900_000, 1_800_000];
 const DIAL_STEADY_MS = 300_000;
-// How long to leave a failing agent alone before probing it again. An INSPECT
-// that our side gave up on is still an unresolved event on the agent's, and a
-// stalled agent answers none of them: at the 15 s refresh cadence that is 240
-// an hour against a 256-deep receipt store. See refresh().
-const INSPECT_BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
+// How long to leave a failing agent alone before probing it again.
+//
+// Capped low on purpose. The first version of this went to 300 s, on the theory
+// that it would save journal writes and spare a wedged agent's inbox. Both
+// reasons turned out to be weak: GB10 #1 read the agent source and the inbox
+// bound is 65,536, about eleven days at this cadence, and the journal's ~100 MB
+// a day comes from the HEALTHY path -- four INSPECTs a minute to agents that
+// answer -- not from the rare failing one. What the long backoff did buy was
+// real: an agent that recovered quietly waited up to five minutes to be noticed,
+// because its snapshot stays deleted until a probe succeeds, and the model
+// spanning it reads serving:false the whole time. One minute is the trade that
+// still keeps a wedged agent from being hammered without holding the ring out
+// of service to save writes nobody was short of.
+const INSPECT_BACKOFF_MS = [30_000, 60_000];
 
 /** The expert-shard reader: see shard-server.py. Loopback by default. */
 const SHARD_ORIGIN = (process.env.P4_SHARD_URL ?? 'http://127.0.0.1:42300').replace(/\/+$/, '');
@@ -550,6 +559,11 @@ function createServer(bridge) {
           serving_models: serving,
           inspect_error: bridge.lastInspectError,
           dials_stopped: bridge.dialLedger().filter((row) => row.stopped).map((row) => row.agent),
+          // Why an agent is quiet right now. Without this an operator watching a
+          // model sit at serving:false has no way to tell a dead agent from one
+          // the bridge is deliberately not probing for another few seconds.
+          awaiting_probe: bridge.dialLedger().filter((row) => row.next_probe_in_s)
+            .map((row) => ({ agent: row.agent, in_s: row.next_probe_in_s, failed: row.failed_probes })),
           uptime_ms: Date.now() - bridge.startedAt,
         });
       }

@@ -119,6 +119,19 @@ test('two overlapping refreshes do not double-probe one agent', async () => {
   assert.equal(probes, 2, `sent ${probes} INSPECTs for 2 agents`);
 });
 
+test('the probe backoff never holds a recovered agent out for more than a minute', async () => {
+  const b = makeBridge();
+  await b.refresh();
+  b.clients.get(B).inspect = async () => { throw new Error('P4 request timed out after 10000 ms'); };
+  for (let i = 0; i < 12; i += 1) {
+    const seen = b.probe.get(B);
+    if (seen) seen.nextAt = 0;                 // let every cycle through
+    await b.refresh();
+  }
+  const wait = b.probe.get(B).nextAt - Date.now();
+  assert.ok(wait <= 60_000, `a recovered agent would wait ${Math.round(wait / 1000)} s to be noticed`);
+});
+
 test('regression guard: a closed connection is replaced, not reused', async () => {
   const b = makeBridge();
   await b.refresh();
