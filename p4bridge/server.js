@@ -46,6 +46,13 @@ const DIAL_HOURLY_CAP = Number(process.env.P4_BRIDGE_DIAL_HOURLY_CAP ?? 6);
 const DIAL_LIFETIME_CAP = Number(process.env.P4_BRIDGE_DIAL_LIFETIME_CAP ?? 64);
 const DIAL_BACKOFF_MS = [60_000, 120_000, 240_000, 480_000, 900_000, 1_800_000];
 const DIAL_STEADY_MS = 300_000;
+
+// Shutdown. The unit gives SIGTERM 90 s before SIGKILL, but a FINISH to a live
+// agent is answered in milliseconds -- the only thing that can make it slow is
+// output still queued on that connection, and a request in flight when the
+// bridge is stopping dies with the bridge either way. So the budget is small.
+const FINISH_MS = Number(process.env.P4_BRIDGE_FINISH_MS ?? 3_000);
+const SHUTDOWN_MS = Number(process.env.P4_BRIDGE_SHUTDOWN_MS ?? 5_000);
 // How long to leave a failing agent alone before probing it again.
 //
 // Capped low on purpose. The first version of this went to 300 s, on the theory
@@ -96,6 +103,7 @@ class Bridge {
     this.probe = new Map();           // agent address -> {failures, nextAt}
     this.guards = new Map();          // agent address -> see guardFor()
     this.lastInspectError = null;
+    this.stopping = false;
     this.startedAt = Date.now();
   }
 
@@ -196,6 +204,7 @@ class Bridge {
    *               the agent restarted and the slots came back.
    */
   admitDial(agent) {
+    if (this.stopping) throw new Error(`${agent}: the bridge is shutting down`);
     const guard = this.guardFor(agent);
     const now = Date.now();
     guard.recent = guard.recent.filter((at) => now - at < 3_600_000);
@@ -237,6 +246,43 @@ class Bridge {
       guard.unproductive = 0;
       guard.nextDialAt = 0;
     }
+  }
+
+  /**
+   * Hand the connections back instead of dropping them on the floor.
+   *
+   * An agent releases a connection's slot when the owner sends FINISH -- a
+   * zero-length frame -- because that is what removes the return route and lets
+   * the writer task, which holds the semaphore permit, finish
+   * (transport.rs:997-1006 -> :480-487). A socket that simply dies is a
+   * different thing: the agent sees EOF, keeps the route on purpose in case it
+   * is a TCP half-close (:1076-1078), and the permit is held for good.
+   *
+   * The bridge had no signal handler at all, so every restart abandoned one
+   * live connection per agent that way. That is the +1 the gauge recorded after
+   * each of the last two restarts. wire.js has had finish() since the start;
+   * nothing ever called it.
+   *
+   * An agent that cannot answer still costs its slot -- there is no way to
+   * return a permit to a process that is not listening -- but that agent is
+   * already in trouble. The point is to stop paying on the healthy path.
+   */
+  async releaseClients(finishMs = FINISH_MS) {
+    this.stopping = true;
+    const entries = [...this.clients.entries()];
+    const outcome = await Promise.all(entries.map(async ([agent, client]) => {
+      if (!client || client.closed) return `${agent}: already gone`;
+      try {
+        await client.finish(finishMs);
+        return `${agent}: finished`;
+      } catch (error) {
+        client.close?.();                 // costs this agent a slot; nothing else to try
+        return `${agent}: destroyed (${error.message})`;
+      }
+    }));
+    this.clients.clear();
+    this.pipelines.clear();
+    return outcome;
   }
 
   async dial(agent) {
@@ -558,6 +604,10 @@ function createServer(bridge) {
           engine: 'p4',
           serving_models: serving,
           inspect_error: bridge.lastInspectError,
+          // Slots held by failures the host gauge cannot see. Upper bound.
+          transport_failures: [...bridge.snapshots.entries()]
+            .map(([agent, snap]) => [agent, snap?.transport?.failures?.count ?? null])
+            .filter(([, count]) => count),
           dials_stopped: bridge.dialLedger().filter((row) => row.stopped).map((row) => row.agent),
           // Why an agent is quiet right now. Without this an operator watching a
           // model sit at serving:false has no way to tell a dead agent from one
@@ -575,6 +625,21 @@ function createServer(bridge) {
       if (req.method === 'GET' && path === '/api/runtime') {
         const machines = [...bridge.snapshots.entries()].map(([agent, snapshot]) => ({
           agent,
+          // The gauge on each host reads CLOSE-WAIT, which sees only the slots
+          // held by a kept return route. A write or ingress failure holds its
+          // slot too and closes the socket, so it is invisible there and shows
+          // up only here. failures.count is an upper bound: Undelivered
+          // failures carry no slot and cannot be told apart by state
+          // (transport.rs:326-345, :818-835). Free to report -- the bridge
+          // already has this snapshot and reads it over the connection it
+          // keeps, so no new connection is opened to collect it.
+          transport: {
+            failures: snapshot?.transport?.failures?.count ?? null,
+            failures_oldest_unix_ms: snapshot?.transport?.failures?.oldest_unix_ms ?? null,
+            receipts_pending: snapshot?.transport?.receipts?.pending ?? null,
+            receipts_records: snapshot?.transport?.receipts?.records ?? null,
+            outstanding_events: snapshot?.transport?.outstanding?.events ?? null,
+          },
           gpus: snapshot?.machine?.capability?.gpus?.map((gpu) => ({
             name: gpu.name, backend: gpu.backend, memory_total_bytes: gpu.memory_total_bytes,
           })) ?? [],
@@ -801,9 +866,37 @@ async function main() {
     });
   }
 
-  setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs).unref?.();
+  const refreshTimer = setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs);
+  refreshTimer.unref?.();
   const server = createServer(bridge);
   attachRelays(server, bridge);
+
+  // Stop in an order that does not open anything new on the way out: the
+  // refresh timer first (it dials), then the listener (requests dial through
+  // pipelineFor), and only then hand the connections back. Without this the
+  // process died where it stood and every live connection became a slot the
+  // agent never gets back -- see releaseClients().
+  let stopping = null;
+  const stop = (signal) => {
+    if (stopping) return stopping;
+    stopping = (async () => {
+      clearInterval(refreshTimer);
+      bridge.stopping = true;
+      server.close();
+      const guard = setTimeout(() => {
+        console.log(`p4-bridge: ${signal} — shutdown budget spent, leaving now`);
+        process.exit(0);
+      }, SHUTDOWN_MS);
+      guard.unref?.();
+      const outcome = await bridge.releaseClients();
+      clearTimeout(guard);
+      console.log(`p4-bridge: ${signal} — ${outcome.join(' · ') || 'no connections to hand back'}`);
+      process.exit(0);
+    })();
+    return stopping;
+  };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
   server.listen(port, host, () => {
     const serving = bridge.controllers().filter((controller) => controller.serving).map((controller) => controller.id);
     const auth = SERVICE_TOKEN ? 'token required' : 'NO TOKEN — anyone who can reach this can use the ring';

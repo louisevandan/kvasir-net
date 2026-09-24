@@ -213,6 +213,64 @@ test('the connect deadline reaches the socket layer', () => {
   assert.equal(client.connectTimeoutMs, 1234);
 });
 
+// ── handing connections back ───────────────────────────────────────────────
+//
+// What these can prove: the bridge asks for FINISH instead of dropping the
+// socket, falls back when FINISH cannot be had, and opens nothing new on the
+// way out. What they CANNOT prove: that the agent releases the semaphore permit
+// when it receives FINISH. That is a claim about the agent, read out of
+// transport.rs:997-1006 -> :480-487 by GB10 #1, and the only honest test of it
+// is production -- the next restart must cost 0 slots where the last two cost
+// +1 each.
+
+test('a live connection is handed back, not dropped', async () => {
+  const b = makeBridge();
+  await b.refresh();
+  const finished = [];
+  for (const [agent, client] of b.clients) {
+    client.finish = async () => { finished.push(agent); client.closed = true; };
+  }
+  const outcome = await b.releaseClients();
+  assert.equal(finished.length, 2, `finished ${finished.length} of 2 connections`);
+  assert.deepEqual(b.closedAddrs, [], 'destroyed a connection that could have been handed back');
+  assert.ok(outcome.every((line) => line.endsWith('finished')), outcome.join(' · '));
+  assert.equal(b.clients.size, 0);
+});
+
+test('a connection that will not finish is dropped anyway', async () => {
+  const b = makeBridge();
+  await b.refresh();
+  b.clients.get(A).finish = async () => { b.clients.get(A).closed = true; };
+  b.clients.get(B).finish = async () => { throw new Error('P4 finish timed out'); };
+  const outcome = await b.releaseClients();
+  assert.deepEqual(b.closedAddrs, [B], 'the stuck connection must still be torn down');
+  assert.ok(outcome.find((line) => line.startsWith(B)).includes('destroyed'), outcome.join(' · '));
+});
+
+test('nothing new is dialled once the bridge is stopping', async () => {
+  const b = makeBridge();
+  await b.releaseClients();
+  await assert.rejects(() => b.ensureClient(A), /shutting down/);
+  assert.equal(b.dialled.length, 0);
+});
+
+test('FINISH is a zero-length frame, and the ack closes the socket', async () => {
+  const { connect } = require(path.join(__dirname, '..', 'wire.js'));
+  let seen = null;
+  const agent = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
+      seen = Buffer.from(chunk);
+      socket.write(Buffer.alloc(4));      // the agent's FINISH acknowledgement
+    });
+  });
+  const port = await listen(agent);
+  const client = await connect({ host: '127.0.0.1', port, hop: false, connectTimeoutMs: 2_000 });
+  await client.finish(2_000);
+  agent.close();
+  assert.deepEqual(seen, Buffer.alloc(4), `sent ${seen?.length} bytes instead of a zero-length frame`);
+  assert.equal(client.closed, true, 'the socket must be closed once the ack lands');
+});
+
 const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
