@@ -274,6 +274,29 @@ test('FINISH is a zero-length frame, and the ack closes the socket', async () =>
 const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+test('a hop connect gives up instead of hanging when the hello is never answered', async (t) => {
+  const { connect } = require(path.join(__dirname, '..', 'wire.js'));
+  // Accepts the socket, reads the hello, and says nothing. This is what left
+  // inspect.mjs sitting for 60 s with no output and no error: a hop connection
+  // is not open until hello_ack, and nothing bounded that wait.
+  const silent = net.createServer((socket) => socket.resume());
+  const port = await listen(silent);
+  t.after(() => silent.close());
+
+  const started = Date.now();
+  await assert.rejects(
+    () => connect({ host: '127.0.0.1', port, hop: true, connectTimeoutMs: 1_000 }),
+    /connect timed out/,
+    'a hello that is never answered must end the attempt');
+  const waited = Date.now() - started;
+
+  // And end it once. The fallback to bare events is for agents that answer
+  // P4H1 by closing; retrying after a timeout would abandon two connections
+  // instead of one, and an abandoned connection can cost the agent a slot.
+  assert.ok(waited < 5_000, `waited ${waited} ms`);
+  assert.ok(waited < 2_500, `retried instead of giving up (${waited} ms)`);
+});
+
 test('a client that sends FIN without a close frame takes the upstream with it', async (t) => {
   let upstreamSocket = null;
   let upstreamClosed = false;

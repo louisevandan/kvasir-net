@@ -150,26 +150,35 @@ INSPECT snapshot as `transport.connections.{limit, available}`.
 A bounded resource with no reading is why a fixed leak would go unnoticed the
 next time it regresses. Please add this even if Request 1 is fixed.
 
-### 3. A question: what is the journal census condition for?
+### 3. A question: what makes a retained journal record safe to discard?
 
 Recovering from this means restarting the agent, which means dealing with its
-journal. The agent refuses to start while its journal holds request incarnations
-or provisional submissions (`transport.rs:84-95`, test at `tests.rs:920`):
-*"recovery census: {requests} request incarnation(s), {submissions} provisional
-submission(s)…; request fence and native/KV proof required before restart;
-durable intent alone is not a stage ACK"*. **On a ring that has served traffic,
-finished requests stay counted, so that condition never clears** (measured
-2026-09-23). Taken at face value, a ring that has served even one request can
-never restart its agent — which is the only recovery from this defect.
+journal. The agent refuses to start while its journal holds any retained
+attempt, admission, inbound original, binding, route, native issue or fence
+intent (`transport.rs:84-95`, test at `tests.rs:920`), and prints a recovery
+census with the refusal: *"recovery census: {requests} request incarnation(s),
+{submissions} provisional submission(s)…; request fence and native/KV proof
+required before restart; durable intent alone is not a stage ACK"*.
 
-So we moved the journal aside instead, with the owner's explicit approval rather
-than a clean census, and said so in our runbook. Afterwards the restarted agent issued its
-stage normally and refused nothing — **one data point, not a clearance.**
+**Loading a stage alone leaves native issues** — 65 of them on our head agent —
+so after the first load the journal is never empty and the agent never restarts
+on its own, even if it has served no requests at all. Our own operating rule was
+narrower than the code: move the journal only when the census shows no request
+incarnations or provisional submissions. **On a ring that has served traffic,
+finished requests stay counted, so even that never clears** (measured
+2026-09-23).
 
-So: what was the census condition protecting against, and what is the right
-check on a ring that has served traffic? A precondition that can never be
-satisfied gets quietly dropped, and then whatever it was guarding is unguarded
-without anyone deciding to stop guarding it.
+So we set the journal aside instead, with the owner's explicit approval rather
+than a clean journal, and said so in our runbook. Afterwards the restarted agent
+issued its stage normally and refused nothing — **one data point, not a
+clearance.**
+
+So the question is: **what makes a retained record safe to discard, and how is
+an operator meant to establish that?** As it stands, the only recovery from the
+leak above requires setting aside a journal the agent will never declare ready
+to be set aside. A precondition that can never be satisfied gets quietly
+dropped, and then whatever it was guarding is unguarded without anyone deciding
+to stop guarding it.
 
 ## Current workaround (client side)
 

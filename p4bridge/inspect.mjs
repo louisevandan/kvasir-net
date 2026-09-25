@@ -23,8 +23,12 @@ for (const agent of new Set(plan.stages.map((s) => s.agent))) {
   const client = await connect({
     host, port: Number(port), address: agent,
     channel: `kvr-inspect-${Date.now().toString(16)}`, deadlineMs: 30_000,
+    connectTimeoutMs: 10_000,
   });
-  const snapshot = await client.inspect(agent, { deadlineMs: 20_000 });
+  // timeoutMs, not deadlineMs: exchange() reads timeoutMs and falls back to the
+  // connection's deadlineMs. Passing deadlineMs here did nothing -- the request
+  // ran on the 30 s connection deadline while the code said 20.
+  const snapshot = await client.inspect(agent, { timeoutMs: 20_000 });
   console.log(`${agent}`);
   console.log(JSON.stringify(snapshot, null, 2).split('\n').map((l) => '  ' + l).join('\n'));
   await release(client);

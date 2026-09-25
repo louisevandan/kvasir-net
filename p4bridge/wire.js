@@ -268,11 +268,20 @@ class OuterClient {
       // and must not be torn down for being quiet.
       if (this.connectTimeoutMs) {
         socket.setTimeout(this.connectTimeoutMs, () => {
-          socket.destroy(new Error(`P4 connect timed out after ${this.connectTimeoutMs} ms`));
+          const error = new Error(`P4 connect timed out after ${this.connectTimeoutMs} ms`);
+          error.p4ConnectTimeout = true;    // connect() must not retry on this
+          socket.destroy(error);
         });
       }
       socket.once('connect', () => {
-        socket.setTimeout(0);
+        // Disarm here only for a direct connection, which is open the moment
+        // the socket is. A hop connection is not open until the agent
+        // acknowledges the hello, and nothing else bounds that wait -- so
+        // disarming here left `connect()` able to hang for good against an
+        // agent that accepted the socket and then said nothing. Found when
+        // inspect.mjs sat for 60 s with no output and no error, 2026-09-25.
+        // The hop path disarms in _onFrame instead, on hello_ack.
+        if (!this.hop) socket.setTimeout(0);
         socket.off('error', onError);
         this.socket = socket;
         socket.on('data', (chunk) => this._onData(chunk));
@@ -347,6 +356,7 @@ class OuterClient {
       this.peerSenderId = hop.senderId;
       this.peerGeneration = hop.generation;
       this.maxOutstanding = Math.min(this.maxOutstanding, hop.maxOutstanding);
+      this.socket?.setTimeout(0);       // open now; an idle connection is normal
       const resolve = this._helloResolve;
       this._helloResolve = null; this._helloReject = null;
       resolve?.(this);
@@ -515,7 +525,13 @@ async function connect(options) {
     await client.connect();
     return client;
   } catch (error) {
-    if (!wanted || options.hop === false) throw error;
+    // The fallback is for agents that answer P4H1 by closing the socket. A
+    // TIMEOUT is a different signal -- a healthy agent that is slow, or one
+    // that has stopped accepting -- and dialling a second time there would
+    // trade one abandoned connection for two. Each abandoned connection may
+    // cost the agent a slot it never reclaims, which is exactly what filled
+    // GB10 #2's 256 on 2026-09-25, so the cheap answer is not to try again.
+    if (!wanted || options.hop === false || error.p4ConnectTimeout) throw error;
     const client = new OuterClient({ ...options, hop: false });
     await client.connect();
     return client;
