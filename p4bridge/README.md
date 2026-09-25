@@ -127,8 +127,14 @@ reported as 0 rather than estimated — the gateway must never bill a guess.
 ## Tests
 
 ```sh
-node --test test/
+node --test test/*.test.js
 ```
+
+Name the files. `node --test test/` works on some Node builds and on others
+treats the directory as a single file and reports one failure — which reads
+exactly like a deployment having broken something, at the moment you are least
+inclined to doubt the harness. Measured 2026-09-25: the same tree passes 37/37
+by file and reports 1 fail by directory.
 
 The wire tests pin the byte layout against the engine's own encoder: a field in
 the wrong order still encodes, and the agent answers by closing the socket.
