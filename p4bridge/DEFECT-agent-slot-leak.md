@@ -1,8 +1,8 @@
 # p4-agent: a direct-mode connection keeps its slot forever after input EOF, even once the peer is gone
 
 **Component:** `entrypoints/agent/src/event_runtime/transport.rs` (p4-kvasir-src)
-**Observed:** GB10 #2, agent pid 565476, 2026-09-25 (UTC)
-**Reported by:** the Kvasir APAC fleet
+**Observed:** GB10 #2, agent pid 565476, 2026-09-25 (UTC), on a two-node
+Step-3.7-Flash ring driven by p4bridge
 
 **Severity: a leak that accumulates with time, not a one-off incident.**
 
@@ -152,15 +152,18 @@ next time it regresses. Please add this even if Request 1 is fixed.
 
 ### 3. A question: what is the journal census condition for?
 
-Recovering from this means restarting the agent, which means moving its journal.
-The agent unit's header says not to move a journal whose census shows request
-incarnations or provisional submissions. **On a ring that has served traffic,
-finished requests stay counted, so that condition never holds** (measured
-2026-09-23). Read literally, the guidance forbids every recovery from this
-defect.
+Recovering from this means restarting the agent, which means dealing with its
+journal. The agent refuses to start while its journal holds request incarnations
+or provisional submissions (`transport.rs:84-95`, test at `tests.rs:920`):
+*"recovery census: {requests} request incarnation(s), {submissions} provisional
+submission(s)…; request fence and native/KV proof required before restart;
+durable intent alone is not a stage ACK"*. **On a ring that has served traffic,
+finished requests stay counted, so that condition never clears** (measured
+2026-09-23). Taken at face value, a ring that has served even one request can
+never restart its agent — which is the only recovery from this defect.
 
-We moved it anyway, with the owner's explicit approval rather than a clean
-census, and said so in our runbook. Afterwards the restarted agent issued its
+So we moved the journal aside instead, with the owner's explicit approval rather
+than a clean census, and said so in our runbook. Afterwards the restarted agent issued its
 stage normally and refused nothing — **one data point, not a clearance.**
 
 So: what was the census condition protecting against, and what is the right
