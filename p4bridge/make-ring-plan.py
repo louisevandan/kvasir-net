@@ -53,11 +53,21 @@ def load_generation(record, catalog):
         if not isinstance(data, dict):
             print(f'warning: {path} is not an object; skipped', file=sys.stderr)
             continue
-        if 'load_generation' in data:
-            seen.append((path, int(data['load_generation'])))
-        for model in data.get('models', []):
-            if 'load_generation' in model:
-                seen.append((path, int(model['load_generation'])))
+        for holder in [data, *data.get('models', [])]:
+            if not isinstance(holder, dict):
+                continue
+            previous = holder.get('load_generation')
+            # null means "not loaded" -- UNLOAD writes it that way. Reading it
+            # as a number crashed the generator every time a plan was made
+            # right after an unload, which is precisely the recovery sequence.
+            # Found by GB10 #1 mid-recovery, 2026-09-25.
+            if previous is None:
+                continue
+            try:
+                seen.append((path, int(previous)))
+            except (TypeError, ValueError):
+                print(f'warning: {path} has a load_generation that is not a number '
+                      f'({previous!r}); skipped', file=sys.stderr)
     for path, previous in seen:
         if generation <= previous:
             raise SystemExit(
