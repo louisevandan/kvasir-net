@@ -1,0 +1,21 @@
+{
+  "_comment": "The GB10 pair as loaded on 2026-09-25. Layers 0-34 on the head, 35-44 on the tail. Nothing secret: addresses are a private /24 and the paths are host layout.",
+  "split": 35,
+  "common_flags": "--memory-topology host-shared:0 --n-seq-max 8 --spec-type none --kv-unified --batch-size 128 --ubatch-size 32 --ctx-size 32768 --n-gpu-layers 45 --device CUDA0 --flash-attn off --direct-io --cache-type-k q8_0 --cache-type-v f16",
+  "head": {
+    "node": "step37-s0",
+    "agent": "tcp://192.168.100.1:42011",
+    "binary": "/home/cascadecodes/p4-kvasir-src/.cache/staged-server-build/p4_staged_server",
+    "lib": "/home/cascadecodes/p4-kvasir-src/.cache/staged-server-build/bin",
+    "model": "/home/cascadecodes/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf",
+    "endpoint": "127.0.0.1:42100"
+  },
+  "tail": {
+    "node": "step37-s1",
+    "agent": "tcp://192.168.100.2:42011",
+    "binary": "/home/tony/p4-kvasir/p4_staged_server",
+    "lib": "/home/tony/p4-kvasir/bin",
+    "model": "/home/tony/models/step37-merged/Step-3.7-Flash-Q4_K_XL.gguf",
+    "endpoint": "127.0.0.1:42100"
+  }
+}
