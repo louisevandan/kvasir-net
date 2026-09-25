@@ -15,7 +15,8 @@ answered afterwards, and no socket left behind on either agent.
 ## When you need this
 
 An agent has to be restarted when it stops accepting connections. The known
-cause is a slot leak in the agent, reported separately: a direct-mode
+cause is the slot leak reported in
+[DEFECT-agent-slot-leak.md](./DEFECT-agent-slot-leak.md): a direct-mode
 connection keeps its semaphore permit after input EOF, even once the peer is
 gone, and the agent stops accepting once 256 have leaked. The signs:
 
@@ -75,11 +76,12 @@ kill -TERM <agent pid>      # after checking the pid AND its cmdline
 Check the cmdline, not just the pid. A path pattern can match a process in a
 mirror directory instead of the one you mean.
 
-- **Measured:** under `TERM` the stage went down with the agent — no orphan, GPU
-  memory dropped by 28.4 GiB, port 42100 freed, one second from signal to exit.
-  The mechanism is the agent's own shutdown, not the cgroup: on #2 both
-  processes sit in `system.slice/ssh.service`, so a cgroup kill was never what
-  happened.
+- **Measured on #2:** under `TERM` the stage went down with the agent — no
+  orphan, GPU memory dropped by 28.4 GiB, port 42100 freed, one second from
+  signal to exit (06:22:58Z → 06:22:59Z).
+- The mechanism is the agent's own shutdown, not the cgroup. #2 reported both
+  processes sitting in `system.slice/ssh.service`, so killing one pid was never
+  going to take the other by cgroup membership. **Not independently checked.**
 - **Not measured:** a forced kill (`-KILL`) skips that shutdown and may leave
   the stage orphaned, holding GPU memory and port 42100 — which would then make
   the new agent's stage load fail on a port conflict.
@@ -105,9 +107,9 @@ mkdir -m 775 ~/p4-journal
 ```
 
 Then check the moved file count (26,510 on 2026-09-25) and that owner and mode
-match the old directory. A new journal the agent cannot write leaves it starting
-normally and dying on its first event, which is harder to diagnose than a
-refusal. Keep `agent.log` too, renamed by the old pid.
+match the old directory (`drwxrwxr-x tony:tony 775` on #2). **Not measured:**
+what the agent does with a journal directory it cannot write. Keep `agent.log`
+too, renamed by the old pid.
 
 > **A precondition that can never be satisfied.** The agent unit's header says
 > not to move a journal whose census shows request incarnations or provisional
@@ -158,15 +160,25 @@ what actually exists.
 
 ```sh
 cd ~/kvasir-s5/p4bridge
-mv state/last-load.json state/last-load.json.pre-recovery-$(date -u +%Y%m%dT%H%M%SZ)
-# write a record naming only the stage that is still loaded, at the old generation
+PRE=state/last-load.json.pre-recovery-$(date -u +%Y%m%dT%H%M%SZ)
+mv state/last-load.json "$PRE"
+# keep only the stage that is still loaded, at the old generation
+python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+d['stages']=[s for s in d['stages'] if s['node']=='step37-s0']
+json.dump(d,open('state/last-load.json','w'),indent=2)
+" "$PRE"
 P4_BRIDGE_CATALOG=~/.local/share/kvasir-bridge/catalog.json node load.mjs --unload --dry-run
 P4_BRIDGE_CATALOG=~/.local/share/kvasir-bridge/catalog.json node load.mjs --unload --confirm
 ```
 
-Move the record, never delete it. Even if it were lost, the generation can be
-read back from the agent's snapshot (`catalog.js` reads `node.load_generation`)
-and passed as `--generation`; it is inconvenient, not fatal.
+Move the record, never delete it. Losing it can strand the model: the load
+generation is chosen by whoever loads and is not in any snapshot, and without
+it the stages refuse every session and cannot even be unloaded (see the header
+of `load.mjs`). **Not measured:** whether it can be recovered from the node
+`generation` in a snapshot, which `load.mjs` forces to equal the load
+generation (`load.mjs:207-216`).
 
 **Measured:** `unloaded: step37-s0` · `catalog: load generation cleared`, in 2 s.
 
@@ -226,6 +238,9 @@ P4_BRIDGE_CATALOG=~/.local/share/kvasir-bridge/catalog.json node load.mjs --plan
 ## Step 6: restart the bridge. This is part of the recovery.
 
 ```sh
+# on #1 the user bus is not inherited; export these first or the command fails
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
 systemctl --user restart kvasir-bridge
 ```
 
