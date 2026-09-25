@@ -33,6 +33,14 @@ node server.js
 
 The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
 
+## When an agent stops accepting
+
+An agent that has leaked all 256 connection slots keeps serving on the
+connections it already has and accepts no new ones, silently. Restarting it
+kills its stage, so recovery is a full ring reload — the procedure, with the
+measurements from the one time it has been run, is in
+[RECOVERY.md](./RECOVERY.md).
+
 ## The load generation, and a mistake worth not repeating
 
 `load_generation` is set by whoever loaded the model and is compared for **exact
