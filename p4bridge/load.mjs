@@ -115,6 +115,23 @@ async function clientsFor(agents) {
 }
 
 /**
+ * Hand the connections back instead of dropping them.
+ *
+ * An agent releases a connection's slot only when the owner sends FINISH -- a
+ * zero-length frame. That is what removes the return route and lets the writer
+ * task, which holds the semaphore permit, finish. A socket that simply dies
+ * looks like a TCP half-close to the agent, which keeps the route on purpose
+ * (transport.rs:1076-1078) and the permit with it. Every LOAD and UNLOAD sends
+ * events, so every run of this tool used to cost each agent a slot for good.
+ * Named release, not finish: awaitAll already has a local finish().
+ */
+async function release(client, ms = 3_000) {
+  try { await client.finish(ms); } catch { client.close?.(); }
+}
+
+const releaseAll = (clients) => Promise.all([...clients.values()].map((client) => release(client)));
+
+/**
  * Wait for every stage's lifecycle result.
  *
  * Every stage is heard out rather than aborting on the first refusal. One
@@ -265,7 +282,7 @@ async function doLoad() {
     process.exitCode = 1;
     return;
   } finally {
-    for (const client of clients.values()) client.close?.();
+    await releaseAll(clients);
   }
 
   // Only now does the catalog claim this model serves.
@@ -343,7 +360,7 @@ async function doUnload() {
     const done = await waiting;
     console.log(`unloaded: ${done.join(', ')}`);
   } finally {
-    for (const client of clients.values()) client.close?.();
+    await releaseAll(clients);
   }
 
   // The catalog must stop claiming a model that is no longer loaded.
