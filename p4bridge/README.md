@@ -130,11 +130,13 @@ reported as 0 rather than estimated — the gateway must never bill a guess.
 node --test test/*.test.js
 ```
 
-Name the files. `node --test test/` works on some Node builds and on others
-treats the directory as a single file and reports one failure — which reads
-exactly like a deployment having broken something, at the moment you are least
-inclined to doubt the harness. Measured 2026-09-25: the same tree passes 37/37
-by file and reports 1 fail by directory.
+Name the files. Newer Node treats a directory argument to `--test` as a single
+file and reports one failure — which reads exactly like the deployment you just
+made having broken something, at the moment you are least inclined to doubt the
+harness instead. Measured 2026-09-25 on one tree: v20.19.4 runs `node --test
+test/` and passes; v24.14.0 reports 1 fail for the same tree, and passes by
+file. If you see a single unexplained failure, check your Node version before
+you check your change.
 
 The wire tests pin the byte layout against the engine's own encoder: a field in
 the wrong order still encodes, and the agent answers by closing the socket.
