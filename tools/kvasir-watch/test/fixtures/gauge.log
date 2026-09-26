@@ -1,0 +1,2 @@
+2026-09-24T09:00:00Z close_wait=3 established=2 listen_recvq=0 agent_pid=181361 agent_sockfd=13 ss_visible=11 hidden=2 sockfd_level=ok
+2026-09-26T00:09:40Z close_wait=3 established=2 listen_recvq=0 agent_pid=181361 agent_since="Thu 2026-09-24 01:37:50 KST" agent_sockfd=13 unique=11 hidden=0 sockfd_level=ok opened=13 bridge=ok dials_stopped=0 awaiting_probe=0 tf1=1,oldest:1790181581408 tf2=0,oldest:None dl1=spent:1,unprod:0,hr:0,next_dial:0,fprobe:0,conn:1,stop:- dl2=spent:1,unprod:0,hr:0,next_dial:0,fprobe:0,conn:1,stop:-

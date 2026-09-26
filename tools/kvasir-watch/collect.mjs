@@ -9,13 +9,15 @@
  * than quietly dropping it: a report that omits a failed probe reads like good
  * news.
  *
- * Nothing here writes anywhere. It prints one JSON document.
+ * Nothing here writes anywhere. It prints one JSON document. Ring facts come
+ * from the p4 bridge's HTTP endpoints, never from an agent socket (ring.mjs).
  */
 import { execFile } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import './net.mjs';
+import { ringProbes } from './ring.mjs';
 
 const run = promisify(execFile);
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -51,98 +53,12 @@ async function fileCount(paths, days = 1) {
   return new Set(out.split('\n').filter(Boolean)).size;
 }
 
-/* ---- ring: the engine itself, on the machines that run it ---------------- */
+/* ---- ring: the engine itself, read through the bridge ------------------- */
 
-/** A machine reached over ssh, or this one. Running the job on a host it also
- *  watches is the normal case once the watch lives beside the fleet. */
-const isLocal = (host) => host === 'localhost' || host === 'local' || host === '127.0.0.1';
-
-const ssh = (host, script) => (isLocal(host)
-  ? run('/bin/sh', ['-c', script], { timeout: 45_000, maxBuffer: 4e6 })
-  : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, script],
-      { timeout: 45_000, maxBuffer: 4e6 })
-).then((r) => r.stdout);
-
-async function agentHost(agent) {
-  // One round trip: liveness, uptime, recent complaints, GPU rows.
-  const script = [
-    'echo ---proc---',
-    'ps -eo pid,etime,cmd | grep "[p]4-agent" | head -3',
-    'echo ---listen---',
-    'ss -ltn 2>/dev/null | grep -E "4201[0-9]" | head -3',
-    'echo ---err---',
-    'tail -n 5 ~/p4-envelope-*/studio-*/agent.err 2>/dev/null | tail -n 5',
-    'echo ---gpu---',
-    // ROCm installs outside a login shell's PATH on one of these hosts, which
-    // reported zero GPUs next to a snapshot listing eight — a contradiction in
-    // the report that was ours, not the fleet's.
-    'PATH=/opt/rocm/bin:$PATH; rocm-smi --showuse --csv 2>/dev/null | head -12 || nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -8',
-  ].join('; ');
-  const out = await ssh(agent.host, script);
-  const section = (name) => {
-    const body = out.split(`---${name}---`)[1] ?? '';
-    return body.split(/---[a-z]+---/)[0].trim();
-  };
-  const proc = section('proc');
-  // An agent's identity is the address it advertises, not the one we dial it
-  // on. Address it by any other spelling and it does not recognise itself: the
-  // request is routed outbound to that address, the agent dials itself, and the
-  // call times out with nothing in the log to say why. Read the advertisement
-  // off its own command line so this cannot drift.
-  const advertised = (proc.match(/\btcp:\/\/\S+/) ?? [])[0] ?? null;
-  return {
-    label: agent.label,
-    running: Boolean(proc),
-    advertised,
-    uptime: proc.trim().split(/\s+/)[1] ?? null,
-    listening: section('listen').length > 0,
-    recentErrors: section('err').split('\n').filter(Boolean).slice(-3),
-    gpuRows: section('gpu').split('\n').filter((line) => line.includes(',')).length,
-  };
-}
-
-/**
- * What the agent says it is holding. Runs over a short-lived tunnel, because
- * the agents bind loopback — the engine is not exposed, and this must not
- * change that.
- */
-async function agentStages(agent, advertised) {
-  // On this machine the agent is already on loopback; a tunnel would only be a
-  // second way to reach the same socket.
-  const local = isLocal(agent.host) ? agent.port : 42900 + (agent.port % 100);
-  const control = `/tmp/kvasir-watch-${agent.label}.sock`;
-  if (!isLocal(agent.host)) {
-    await run('ssh', ['-o', 'BatchMode=yes', '-f', '-N', '-M', '-S', control,
-      '-L', `${local}:127.0.0.1:${agent.port}`, agent.host], { timeout: 30_000 });
-  }
-  try {
-    const { connect } = await import('kvasir-p4-bridge/wire');
-    // The tunnel decides where the bytes go; the advertised address decides
-    // whether the agent believes the request is for it.
-    const address = advertised ?? `tcp://127.0.0.1:${agent.port}`;
-    const client = await connect({
-      host: '127.0.0.1', port: local, address,
-      channel: `watch-${Date.now().toString(16)}`,
-    });
-    try {
-      const snapshot = await client.inspect(address, { timeoutMs: 10_000 });
-      return {
-        label: agent.label,
-        nodes: (snapshot.nodes ?? []).map((node) => ({
-          node: node.node_id, state: node.state,
-          generation: node.generation, adapter: node.adapter_kind,
-        })),
-        gpus: (snapshot.machine?.capability?.gpus ?? []).length,
-        vramBytes: snapshot.machine?.capability?.gpus?.[0]?.memory_total_bytes ?? null,
-      };
-    } finally { client.close?.(); }
-  } finally {
-    if (!isLocal(agent.host)) {
-      await run('ssh', ['-S', control, '-O', 'exit', agent.host]).catch(() => {});
-    }
-  }
-}
-
+// The bot does not dial agents any more. It did until 2026-09-26, over an ssh
+// tunnel with one INSPECT and a close — and a close without FINISH costs a p4
+// agent one of its 256 connection slots for good. The bridge already holds a
+// live connection to every agent; ring.mjs reads the bridge. See that file.
 /* ---- gateway and client -------------------------------------------------- */
 
 async function httpProbe(url, { timeoutMs = 8000 } = {}) {
@@ -165,12 +81,7 @@ async function main() {
     Promise.all([
       probe('commits', () => commits(config.tracks.ring, since)),
       probe('files', () => fileCount(config.tracks.ring, since)),
-      ...config.agents.map((agent) => probe(`host:${agent.label}`, () => agentHost(agent))),
-      ...config.agents.map((agent) => probe(`stages:${agent.label}`, async () => {
-        const host = await agentHost(agent).catch(() => null);
-        return agentStages(agent, host?.advertised);
-      })),
-    ]),
+    ]).then(async (fixed) => [...fixed, ...await ringProbes(config)]),
     Promise.all([
       probe('commits', () => commits(config.tracks.gateway, since)),
       probe('files', () => fileCount(config.tracks.gateway, since)),

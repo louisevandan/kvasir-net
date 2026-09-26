@@ -1,0 +1,2 @@
+{ "status":"ok","service":"p4-bridge","engine":"p4","serving_models":1,"inspect_error":null,
+  "transport_failures":[["tcp://192.168.100.1:42011",1]],"dials_stopped":[],"awaiting_probe":[],"uptime_ms":86400000 }

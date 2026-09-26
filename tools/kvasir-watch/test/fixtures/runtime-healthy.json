@@ -1,0 +1,14 @@
+{ "engine":"p4", "operator_wallet":"<masked>", "ingress_agent":"tcp://192.168.100.1:42011",
+  "machines":[
+   { "agent":"tcp://192.168.100.1:42011",
+     "transport":{"failures":1,"failures_oldest_unix_ms":1790181581408,"receipts_pending":0,"receipts_records":0,"outstanding_events":0},
+     "gpus":[{"name":"NVIDIA GB10","backend":"cuda","memory_total_bytes":130596823040}],
+     "nodes":[{"node_id":"step37-s0","state":"loaded","adapter_kind":"llamacpp"}] },
+   { "agent":"tcp://192.168.100.2:42011",
+     "transport":{"failures":0,"failures_oldest_unix_ms":null,"receipts_pending":0,"receipts_records":0,"outstanding_events":0},
+     "gpus":[{"name":"NVIDIA GB10","backend":"cuda","memory_total_bytes":130596823040}],
+     "nodes":[{"node_id":"step37-s1","state":"loaded","adapter_kind":"llamacpp"}] } ],
+  "inspect_error":null,
+  "dial_ledger":[
+   {"agent":"tcp://192.168.100.1:42011","slots_spent":1,"unproductive_dials":0,"dials_last_hour":0,"next_dial_in_s":0,"failed_probes":0,"next_probe_in_s":0,"connected":true,"stopped":null},
+   {"agent":"tcp://192.168.100.2:42011","slots_spent":1,"unproductive_dials":0,"dials_last_hour":0,"next_dial_in_s":0,"failed_probes":0,"next_probe_in_s":0,"connected":true,"stopped":null} ] }

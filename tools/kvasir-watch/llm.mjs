@@ -73,9 +73,50 @@ async function withTunnel(fn) {
  * @param {object} schema JSON Schema the reply must satisfy
  * @param {{maxTokens?: number, temperature?: number, name?: string}} [options]
  */
+/**
+ * Pull one JSON object out of a reply that may wrap it in prose or a fence.
+ * The ring's bridge forwards only the prompt and max_tokens to the engine —
+ * `response_format` never reaches it (p4bridge/server.js chatCompletions) —
+ * so the shape has to be asked for in the prompt and recovered from the text.
+ */
+export function extractJson(text) {
+  if (typeof text !== 'string') return null;
+  const unfenced = text.replace(/```(?:json)?\s*([\s\S]*?)```/g, '$1');
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try { return JSON.parse(unfenced.slice(start, end + 1)); } catch { return null; }
+}
+
+/** The keys the schema says must be there, checked one level deep. */
+function fitsSchema(value, schema) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return (schema?.required ?? []).every((key) => key in value);
+}
+
+const shapeInstruction = (schema) => [
+  'Answer with exactly one JSON object and nothing else: no prose before or after, no code fence.',
+  'It must match this JSON Schema:',
+  JSON.stringify(schema),
+].join('\n');
+
 export async function ask(prompt, schema, options = {}) {
   if (!process.env.KVASIR_LLM_URL) throw new Error('KVASIR_LLM_URL is not set');
   return withTunnel(async (url) => {
+    let lastText = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reminder = attempt === 0 ? '' : `\n\nYour previous reply was not a JSON object matching the schema. ${shapeInstruction(schema)}`;
+      const text = await complete(url, `${prompt}\n\n${shapeInstruction(schema)}${reminder}`, schema, options);
+      lastText = text;
+      const value = extractJson(text);
+      if (fitsSchema(value, schema)) return value;
+    }
+    throw new Error(`the model's reply was not the shape asked for: ${lastText.slice(0, 200)}`);
+  });
+}
+
+async function complete(url, prompt, schema, options) {
+  {
     const response = await fetch(`${url}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -98,9 +139,8 @@ export async function ask(prompt, schema, options = {}) {
     const body = await response.json();
     const text = body?.choices?.[0]?.message?.content;
     if (!text) throw new Error(`the model returned no content (${body?.error?.message ?? response.status})`);
-    try { return JSON.parse(text); }
-    catch { throw new Error(`the model's reply was not the shape asked for: ${text.slice(0, 200)}`); }
-  });
+    return text;
+  }
 }
 
 export const available = () => Boolean(process.env.KVASIR_LLM_URL);

@@ -38,8 +38,28 @@ const gib = (bytes) => (bytes ? `${Math.round(bytes / 1024 ** 3)} GiB` : '—');
 
 function ringFacts(probes) {
   const rows = [];
+  const bridge = byName(probes, 'bridge');
+  if (bridge && !bridge.ok) rows.push({ state: 'bad', text: `bridge unreachable — ${bridge.error}` });
+  else if (bridge) {
+    rows.push({
+      state: bridge.value.serving ? 'good' : 'bad',
+      text: bridge.value.serving
+        ? `bridge serving ${bridge.value.serving_models} model${bridge.value.serving_models === 1 ? '' : 's'}`
+        : `bridge up but not serving (${bridge.value.status})`,
+      note: bridge.value.inspect_error ? `inspect: ${String(bridge.value.inspect_error).slice(0, 120)}` : null,
+    });
+  }
+  // When the bridge itself is down, every agent row would repeat "bridge
+  // unreachable"; the bridge row above already says it once.
+  const bridgeDown = bridge && !bridge.ok;
+  // Likewise when every agent probe failed for one shared reason (no service
+  // token, say): one row naming the reason, not the same line four times.
+  const agentProbes = [...named(probes, 'host:'), ...named(probes, 'stages:')];
+  const sharedError = agentProbes.length && agentProbes.every((p) => !p.ok && p.error === agentProbes[0].error) ? agentProbes[0].error : null;
+  if (sharedError && !bridgeDown) rows.push({ state: 'unknown', text: `agents not read: ${sharedError}` });
+  const skipFailed = bridgeDown || Boolean(sharedError);
   for (const probe of named(probes, 'stages:')) {
-    if (!probe.ok) { rows.push({ state: 'unknown', text: `${probe.name.slice(7)}: ${probe.error}` }); continue; }
+    if (!probe.ok) { if (!skipFailed) rows.push({ state: 'unknown', text: `${probe.name.slice(7)}: ${probe.error}` }); continue; }
     const { label, nodes, gpus, vramBytes } = probe.value;
     const loaded = nodes.filter((node) => node.state === 'loaded').length;
     rows.push({
@@ -49,12 +69,25 @@ function ringFacts(probes) {
     });
   }
   for (const probe of named(probes, 'host:')) {
-    if (!probe.ok) { rows.push({ state: 'unknown', text: `${probe.name.slice(5)}: ${probe.error}` }); continue; }
+    if (!probe.ok) { if (!skipFailed) rows.push({ state: 'unknown', text: `${probe.name.slice(5)}: ${probe.error}` }); continue; }
     const { label, running, uptime, recentErrors } = probe.value;
     rows.push({
       state: running ? 'good' : 'bad',
-      text: `${label} agent ${running ? `up ${uptime}` : 'not running'}`,
-      note: recentErrors.length ? `last log: ${recentErrors[recentErrors.length - 1].slice(0, 120)}` : null,
+      text: `${label} agent ${running ? (uptime ? `up ${uptime}` : 'connected') : 'not reachable from the bridge'}`,
+      note: recentErrors.length ? recentErrors[recentErrors.length - 1].slice(0, 120) : null,
+    });
+  }
+  // Connection slots on the host, from the gauge that runs there. A p4 agent
+  // never gives a leaked slot back, so this is the one number that predicts
+  // the next outage rather than reporting the last one.
+  const GAUGE_STATE = { good: 'good', warn: 'warn', critical: 'bad', bad: 'bad', stale: 'unknown', unknown: 'unknown' };
+  for (const probe of named(probes, 'gauge:')) {
+    if (!probe.ok) { rows.push({ state: 'unknown', text: `${probe.name.slice(6)} slots: ${probe.error}` }); continue; }
+    const { label, level, why, agent_sockfd, hidden } = probe.value;
+    rows.push({
+      state: GAUGE_STATE[level] ?? 'unknown',
+      text: `${label} slots ${level}${agent_sockfd === null || agent_sockfd === undefined ? '' : ` · ${agent_sockfd} fds, hidden ${hidden}`}`,
+      note: level === 'good' ? null : why,
     });
   }
   return rows;
@@ -116,7 +149,7 @@ const summary = [
   '',
   ...views.flatMap((view) => [
     `${view.title} — ${view.commits.length} commit${view.commits.length === 1 ? '' : 's'}${view.files ? `, ${view.files} files` : ''}`,
-    ...view.facts.slice(0, 4).map((fact) => `  ${MARK[fact.state] ?? '·'} ${fact.text}`),
+    ...view.facts.slice(0, 7).map((fact) => `  ${MARK[fact.state] ?? '·'} ${fact.text}`),
     ...(view.note ? [`  note: ${view.note}`] : []),
     // Commit subjects are deliberately not sent — see the note at the top of
     // this file. The count above is the activity signal; the log is on GitHub.

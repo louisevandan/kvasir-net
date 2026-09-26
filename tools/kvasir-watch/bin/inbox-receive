@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Forced command for the push key from GB10 #1 (authorized_keys: restrict,command="…").
+# Accepts exactly one file name on the original command line, reads its content
+# from stdin, and writes it atomically into ~/kvasir-watch/inbox. Nothing else:
+# no shell, no other path, no other name. The bot reads the inbox as files.
+set -eu
+INBOX="$HOME/kvasir-watch/inbox"
+name="${SSH_ORIGINAL_COMMAND:-}"
+case "$name" in
+  gauge-GB10-1.log|gauge-GB10-2.log|seed-dump.json) ;;
+  *) echo "inbox-receive: refused '$name'" >&2; exit 64 ;;
+esac
+mkdir -p "$INBOX"
+tmp="$(mktemp "$INBOX/.$name.XXXXXX")"
+# Cap the size: the gauge line is < 1 KB, the seed dump < 1 MB.
+head -c 2097152 > "$tmp"
+if [ ! -s "$tmp" ]; then rm -f "$tmp"; echo "inbox-receive: empty payload for $name" >&2; exit 65; fi
+mv -f "$tmp" "$INBOX/$name"
+echo "ok $name $(wc -c < "$INBOX/$name")"

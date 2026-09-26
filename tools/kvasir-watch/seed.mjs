@@ -26,7 +26,7 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const run = promisify(execFile);
@@ -38,10 +38,27 @@ const config = JSON.parse(readFileSync(
 ));
 const seedConfig = config.seed ?? {};
 
-/** Ask the pipeline host what the table holds. Read-only by construction. */
+/**
+ * What the table holds. Read-only by construction.
+ *
+ * Two sources. `config.seed.file`: a dump the pipeline host pushes to us (the
+ * bot on GCP has no way into GB10 #1, and should not be given one for this);
+ * a dump older than `staleHours` is refused, so a push that stopped reads as
+ * stale rather than as an unchanging table. Otherwise `config.seed.host`: ask
+ * the host over ssh, the way it worked beside the fleet.
+ */
 async function fetchRows() {
+  if (seedConfig.file) {
+    const file = seedConfig.file.replace(/^~(?=\/|$)/, process.env.HOME);
+    if (!existsSync(file)) throw new Error(`seed dump ${file} not found (not pushed yet?)`);
+    const ageH = (Date.now() - statSync(file).mtimeMs) / 3_600_000;
+    if (ageH > Number(seedConfig.staleHours ?? 6) * 4) throw new Error(`seed dump is ${ageH.toFixed(1)} h old — the push has stopped`);
+    const rows = JSON.parse(readFileSync(file, 'utf8'));
+    if (!Array.isArray(rows) || !rows.length) throw new Error('the pushed dump holds no rows');
+    return rows;
+  }
   const host = seedConfig.host;
-  if (!host) throw new Error('config.seed.host is not set');
+  if (!host) throw new Error('neither config.seed.file nor config.seed.host is set');
   const key = `${process.env.HOME}/.ssh/id_ed25519_kvasir_watch`;
   const command = seedConfig.command ?? 'cd ~/kvasir-seed && python3 sync.py dump';
   const { stdout } = await run('ssh', [

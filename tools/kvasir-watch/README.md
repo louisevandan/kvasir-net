@@ -5,7 +5,9 @@ and what the machines actually say. It also keeps what the group said back, and
 answers when asked.
 
 ```
-collect.mjs  → facts as JSON     (git, the MI250 agents, the public endpoints)
+collect.mjs  → facts as JSON     (git, the p4 bridge, the public endpoints)
+ring.mjs     → the Ring as the bridge sees it — never an agent socket
+ring-alert.mjs → one message when the Ring changed, silence otherwise
 report.mjs   → report.html + a short summary
 send.mjs     → summary as a message, the page as an attachment
 daily.sh     → the whole morning in order, logged and kept
@@ -38,7 +40,7 @@ them misreports the project:
 
 | track | what the report reads |
 | --- | --- |
-| **Ring hardening** | the p4 agents on both MI250 machines: are they up, what stages do they hold, at what generation |
+| **Ring hardening** | the GB10 ring, read through the p4 bridge: is it serving, which agents the bridge holds, what stages they hold, and the connection-slot gauge on the host |
 | **Settlement gateway** | commits under `solana/staking-service` and `p4bridge`, and whether the public endpoint answers |
 | **Client app** | commits under `wallet/` and `apps/`, the desktop version, and whether the site is up |
 
@@ -104,7 +106,7 @@ invalidates it.
 
 ## Release notes
 
-`release-check.mjs` reads the engine version off the running agents, the desktop
+`release-check.mjs` reads the engine version off the agent process on this host, the desktop
 app's version from its manifest, and what the bridge catalog says is being
 served. When one of them changes it appends an entry to the site's
 `src/releases.json` — never inventing a release, only recording a value it read,
@@ -114,7 +116,9 @@ writing one.
 
 ## Where it runs
 
-On **MI250-02**, beside the fleet, under systemd user timers (`kvasir-watch-daily`
+Until 2026-09-26 on **MI250-02** (the MI250 ring is retired; the GB10 ring
+is read through its bridge, so the bot moves beside that bridge — placement
+is being decided). There it ran beside the fleet, under systemd user timers (`kvasir-watch-daily`
 at 09:00 Asia/Seoul, `kvasir-chat` every five minutes) with lingering enabled so
 they run without a login session. `kvasir-watch-commits.timer` existed too and is
 now stopped and disabled — see below.
@@ -196,10 +200,14 @@ launchctl load ~/Library/LaunchAgents/com.kvasir.watch.plist
 
 ## Access it needs
 
-- `ssh` to the MI250 hosts by the aliases in `config.json` (key-based, no
-  password prompt — the job runs unattended).
-- A read-only INSPECT of each agent, over a tunnel it opens and closes itself.
-  The agents bind loopback and this does not change that.
+- HTTP to the p4 bridge (`config.bridge.url`): `/health` open, `/api/runtime`
+  with the service token from `KVASIR_BRIDGE_TOKEN`. Read-only.
+- **No connection to any agent.** Until 2026-09-26 the bot INSPECTed each agent
+  over a tunnel and closed without FINISH; a p4 agent keeps that slot forever
+  (256 per agent, `p4bridge/DEFECT-agent-slot-leak.md`). The bridge already
+  holds one live connection per agent; the bot reads the bridge. `test/ring.test.js`
+  fails if `ring.mjs` grows a socket to an agent.
+- Read access to the host's slot-gauge log and the bridge catalog, both files.
 - `ssh` to the model host and to the seed pipeline host, both on the same
   dedicated key, both for reading only.
 - Nothing writes to the engine. No model is loaded, no request is submitted.

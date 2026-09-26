@@ -34,8 +34,13 @@ const today = new Date().toISOString().slice(0, 10);
 const state = existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {};
 const saveState = () => { mkdirSync(STATE_DIR, { recursive: true }); writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); };
 
-const ssh = (host, script) => run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, script],
-  { timeout: 30_000 }).then((r) => r.stdout.trim());
+// Beside the fleet the agent is on this host; a host named local runs the
+// script here instead of over ssh (same convention collect.mjs used).
+const isLocal = (host) => host === 'localhost' || host === 'local' || host === '127.0.0.1';
+const ssh = (host, script) => (isLocal(host)
+  ? run('/bin/sh', ['-c', script], { timeout: 30_000 })
+  : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, script], { timeout: 30_000 })
+).then((r) => r.stdout.trim());
 
 /* ---- what version is where ---------------------------------------------- */
 

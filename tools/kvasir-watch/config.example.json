@@ -5,16 +5,23 @@
   "publicRepo": "louisevandan/kvasir-net",
   "agents": [
     {
-      "host": "Nuri-AMD-MI250-01",
-      "label": "MI250-01",
+      "host": "localhost",
+      "label": "GB10-1",
       "port": 42011
-    },
-    {
-      "host": "Nuri-AMD-MI250-02",
-      "label": "MI250-02",
-      "port": 42012
     }
   ],
+  "bridge": {
+    "url": "http://127.0.0.1:19000",
+    "tokenEnv": "KVASIR_BRIDGE_TOKEN",
+    "catalog": "~/.local/share/kvasir-bridge/catalog.json",
+    "agents": {
+      "tcp://192.168.100.1:42011": "GB10-1",
+      "tcp://192.168.100.2:42011": "GB10-2"
+    },
+    "gauges": {
+      "GB10-1": "~/kvasir-slot-gauge.log"
+    }
+  },
   "tracks": {
     "ring": [
       "src",

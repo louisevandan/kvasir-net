@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Daily report on the three Kvasir tracks: Ring hardening, settlement gateway, client app.",
+  "description": "Daily report on the three Kvasir tracks: Ring hardening (read through the p4 bridge, never an agent socket), settlement gateway, client app.",
   "scripts": {
     "collect": "node collect.mjs",
     "report": "node report.mjs",
-    "daily": "./daily.sh"
+    "daily": "./daily.sh",
+    "test": "node --test test/*.test.js",
+    "ring-alert": "node ring-alert.mjs"
   },
-  "dependencies": {
-    "kvasir-p4-bridge": "file:../../p4bridge"
-  },
-  "engines": { "node": ">=20" }
+  "dependencies": {},
+  "engines": {
+    "node": ">=20"
+  }
 }

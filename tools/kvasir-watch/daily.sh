@@ -89,6 +89,18 @@ if [ -f "$HERE/seed.mjs" ]; then
   fi
 fi
 
+# The Ring is announced only when it changed. The daily line above already
+# says what is up; this is the line that says what moved, and it stays silent
+# on a quiet day so that the day it speaks, it is read.
+RING_OUT="$LOG_DIR/ring-$DAY.txt"
+if [ -f "$HERE/ring-alert.mjs" ]; then
+  node "$HERE/ring-alert.mjs" "$JSON" >"$RING_OUT" 2>>"$LOG_DIR/ring.log"
+  if [ $? -eq 10 ]; then
+    printf '\n' >>"$SUMMARY"
+    cat "$RING_OUT" >>"$SUMMARY"
+  fi
+fi
+
 # The judgement at the end of the review is written fresh from the same facts;
 # if that run fails the previous one stays, clearly dated, rather than a gap.
 node "$HERE/assess.mjs" "$JSON" >>"$LOG_DIR/readiness.log" 2>&1 \
