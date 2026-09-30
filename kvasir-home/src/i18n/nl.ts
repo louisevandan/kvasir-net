@@ -44,7 +44,7 @@ export const nl: Dict = {
     eyebrow: "DePIN · Frontier-modellen zonder datacenter",
     headline1: "Jij hebt geen hardware",
     headline2: "voor een 428B-model. Wij ook niet.",
-    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 428 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 28–31 tokens per seconde, eerste token in 270 ms.",
+    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 428 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 6.7–6.8 tokens per seconde, eerste token in 70 ms.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",
@@ -107,7 +107,7 @@ export const nl: Dict = {
       {
         title: "Splitsen",
         body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat bewaart een kopie van het modelbestand, maar laadt alleen zijn eigen venster in het geheugen, zodat geen enkele node het geheel hoeft te draaien.",
-        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
+        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
       },
       {
         title: "Bedienen",
@@ -242,7 +242,7 @@ export const nl: Dict = {
       },
       {
         title: "Gedistribueerde layer-plaatsing",
-        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 428B MoE, staat momenteel als 16 stages verdeeld over twee machines.",
+        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 428B MoE, staat momenteel als 2 stages verdeeld over twee machines.",
       },
       {
         title: "SIWS + 2FA-beveiliging",
@@ -261,12 +261,12 @@ export const nl: Dict = {
       {
         phase: "Nu",
         title: "Serving op frontier-schaal, live",
-        body: "Step-3.7-Flash — een 428B MoE — is als 16 stages over twee AMD MI250-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
+        body: "Step-3.7-Flash — een 428B MoE — is als 2 stages over twee NVIDIA GB10-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
       },
       {
         phase: "In uitvoering",
         title: "Ring, gateway, client",
-        body: "De settlement-gateway is geport naar p4 en beantwoordt verkeer: een betaald verzoek gaat via de gateway, de bridge en de MI250-ring en wordt afgerekend op de tokens die het heeft gebruikt. Op de bedienende ring geeft Step-3.7-Flash 28–31 tokens per seconde bij één stream, met het eerste token in 270–285 ms. Nog in uitvoering: de ring gaat door herstelgates na een onderbroken run van 64 verzoeken, de desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren, en sharding op expert-korrel wordt naar p4 overgebracht — een apparaat kan al een venster claimen en een relay openen, maar de shard-download en de dispatch aan de engine-kant zijn nog niet geschreven.",
+        body: "De settlement-gateway is geport naar p4 en beantwoordt verkeer: een betaald verzoek gaat via de gateway, de bridge en de GB10-ring en wordt afgerekend op de tokens die het heeft gebruikt. Op de bedienende ring geeft Step-3.7-Flash 6.7–6.8 tokens per seconde bij één stream, met het eerste token in 67–71 ms. Nog in uitvoering: de ring gaat door herstelgates na een onderbroken run van 64 verzoeken, de desktopclient wordt een echte node die een p4-agent aanstuurt in plaats van er alleen een te registreren, en sharding op expert-korrel wordt naar p4 overgebracht — een apparaat kan al een venster claimen en een relay openen, maar de shard-download en de dispatch aan de engine-kant zijn nog niet geschreven.",
       },
       {
         phase: "Binnenkort",
@@ -285,13 +285,13 @@ export const nl: Dict = {
     pill: "Gemeten op onze eigen machines",
     title: "Wat er draait, en wat het heeft gemeten",
     items: [
-      "MoE die vandaag bediend wordt — Step-3.7-Flash, over twee AMD MI250-machines",
+      "MoE die vandaag bediend wordt — Step-3.7-Flash, over twee NVIDIA GB10-machines",
       "stages waarin het model is opgesplitst, geplaatst over twee agents",
       "cosinusgelijkenis tussen ROCm, CUDA en een telefoon-CPU — gemengde hardware komt overeen",
       "wallet-platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B op twee MI250-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
+      "Step-3.7-Flash 428B op twee GB10-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
   },
 
   footer: {

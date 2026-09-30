@@ -19,7 +19,7 @@ One line: p4 is the engine; Kvasir is the network that turns it into a rewarded,
 ## Hero
 
 Headline: You don't have the hardware for a 428B model. Neither do we.
-Nothing in this fleet can hold Step-3.7-Flash — 428 billion parameters, far past any single device we own. Kvasir cuts it into layer windows with p4 so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring on 2026-09-21: 28-31 tokens a second, first token in 270 ms. Contribute a GPU, CPU or phone (NPU support in progress) and earn devnet KVR for the layers you run.
+Nothing in this fleet can hold Step-3.7-Flash — 428 billion parameters, far past any single device we own. Kvasir cuts it into layer windows with p4 so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring on 2026-09-21: 6.7–6.8 tokens a second, first token in 270 ms. Contribute a GPU, CPU or phone (NPU support in progress) and earn devnet KVR for the layers you run.
 Badges: Runs on GPU · CPU · NPU · phone · OpenAI + Anthropic compatible · BSL engine · Solana devnet.
 
 ## Why decentralized AI (thesis)
@@ -36,7 +36,7 @@ Why the name: pooled from every god and owned by none → intelligence assembled
 
 ## How it works
 
-1. Split — the model is divided into contiguous layer windows. Every device stores the same model but loads only its window; no node holds the whole thing. (Step-3.7-Flash 428B, 45 layers, placed as 16 stages.)
+1. Split — the model is divided into contiguous layer windows. Every device stores the same model but loads only its window; no node holds the whole thing. (Step-3.7-Flash 428B, 45 layers, placed as 2 stages.)
 2. Serve — the request enters the ring. Each node runs its layers and passes only the hidden-state boundary to its neighbor; the last node samples the token and sends it back around — no central master. (ring runtime, OpenAI/Anthropic compatible.)
 3. Reward — each node earns KVR weighted by the layers it ran (its share of the tokens produced), settled on Solana to that node's own wallet. (units += (out_tokens / 1000) × layer_share.)
 
@@ -96,8 +96,8 @@ The engine is source-available under the Business Source License (BSL) 1.1 — n
 
 ## Roadmap
 
-- Now — Frontier-scale serving, live: Step-3.7-Flash, a 428B MoE, is placed as 16 stages across two AMD MI250 machines and is serving. A 122B model ran end to end across three physical machines — a GB10 and two Mac M4 Pros — one of them a phone holding part of it. Wallets on web/desktop/iOS/Android keep keys on the user's device.
-- Live as of 2026-09-21 — the settlement gateway is ported to p4 and answering at gate.kvasir-ai.net. A paid request crosses the gateway, the bridge and the MI250 ring and is billed on the tokens it actually used; /v1/models answers 401 without a key, which is the gateway working rather than an outage. Measured on the serving ring the same day: Step-3.7-Flash (428B MoE) across two stages at 28-31 tok/s single stream, 270-285 ms to first token.
+- Now — Frontier-scale serving, live: Step-3.7-Flash, a 428B MoE, is placed as 2 stages across two NVIDIA GB10 machines and is serving. A 122B model ran end to end across three physical machines — a GB10 and two Mac M4 Pros — one of them a phone holding part of it. Wallets on web/desktop/iOS/Android keep keys on the user's device.
+- Live as of 2026-09-21 — the settlement gateway is ported to p4 and answering at gate.kvasir-ai.net. A paid request crosses the gateway, the bridge and the GB10 ring and is billed on the tokens it actually used; /v1/models answers 401 without a key, which is the gateway working rather than an outage. Measured on the serving ring on 2026-10-01: Step-3.7-Flash (428B MoE) across two stages at 6.7–6.8 tok/s single stream, 67–71 ms to first token.
 - In flight — the ring is going through recovery gates after an interrupted 64-request run; the desktop client is becoming a node that supervises a p4 agent rather than only registering one; and expert-grain sharding is being carried onto p4 — the market and the relays that let a phone join are live and credited, the shard download and the engine-side dispatch are not written yet.
 - Coming — Kimi K3 (2.8T MoE) verification on p4, and the GLM-5.2 (744B) report from linkcpp published.
 - Coming — Mainnet & on-chain settlement: everything today runs on Solana devnet with an off-chain settlement service; an on-chain rewards program and mainnet are planned.
@@ -105,12 +105,12 @@ The engine is source-available under the Business Source License (BSL) 1.1 — n
 
 ## Verified on our test fleet
 
-- 428B MoE serving today: Step-3.7-Flash across two AMD MI250 machines, placed as 16 stages.
+- 428B MoE serving today: Step-3.7-Flash across two NVIDIA GB10 machines, placed as 2 stages.
 - 122B params served end to end across 3 physical machines, with cosine similarity ≥ 0.9999 across ROCm, CUDA and a phone CPU.
 - 4 separate node wallets, each credited for its layer share (test fleet).
 - 2 API surfaces — OpenAI + Anthropic compatible.
 - 4 wallet platforms — web · desktop · iOS · Android.
-Summary: Step-3.7-Flash 428B on two MI250 machines · 122B end to end across three machines · OpenAI + Anthropic compatible · wallets on web/desktop/iOS/Android · Solana devnet.
+Summary: Step-3.7-Flash 428B on two NVIDIA GB10 machines · 122B end to end across three machines · OpenAI + Anthropic compatible · wallets on web/desktop/iOS/Android · Solana devnet.
 
 ## Joining as a contributor (the wire protocol)
 

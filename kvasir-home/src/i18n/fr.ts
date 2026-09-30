@@ -44,7 +44,7 @@ export const fr: Dict = {
     eyebrow: "DePIN · Modèles frontier sans centre de données",
     headline1: "Vous n’avez pas le matériel",
     headline2: "pour un modèle de 428B. Nous non plus.",
-    sub: "Rien dans cette flotte ne peut contenir Step-3.7-Flash — 428 milliards de paramètres, bien au-delà de n’importe quel appareil que nous possédons. Kvasir le découpe en fenêtres de layers pour que chaque machine ne détienne que la sienne et tende un état caché à la suivante. Mesuré aujourd’hui sur l’anneau en service : 28–31 tokens par seconde, premier token en 270 ms.",
+    sub: "Rien dans cette flotte ne peut contenir Step-3.7-Flash — 428 milliards de paramètres, bien au-delà de n’importe quel appareil que nous possédons. Kvasir le découpe en fenêtres de layers pour que chaque machine ne détienne que la sienne et tende un état caché à la suivante. Mesuré aujourd’hui sur l’anneau en service : 6.7–6.8 tokens par seconde, premier token en 70 ms.",
     badges: [
       "Fonctionne sur GPU · CPU · NPU · téléphone",
       "Compatible OpenAI + Anthropic",
@@ -107,7 +107,7 @@ export const fr: Dict = {
       {
         title: "Répartir",
         body: "Le modèle est divisé en fenêtres de layers contiguës. Chaque appareil conserve une copie du fichier du modèle mais ne charge en mémoire que sa propre fenêtre, de sorte qu’aucun nœud n’a besoin d’exécuter le modèle entier.",
-        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
+        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
       },
       {
         title: "Servir",
@@ -242,7 +242,7 @@ export const fr: Dict = {
       },
       {
         title: "Placement distribué des layers",
-        body: "p4 lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud à partir d’un plan de placement, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud. Step-3.7-Flash, un MoE de 428B, est actuellement réparti en 16 stages sur deux machines.",
+        body: "p4 lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud à partir d’un plan de placement, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud. Step-3.7-Flash, un MoE de 428B, est actuellement réparti en 2 stages sur deux machines.",
       },
       {
         title: "Sécurité SIWS + 2FA",
@@ -261,12 +261,12 @@ export const fr: Dict = {
       {
         phase: "Maintenant",
         title: "Service à l’échelle frontier, en direct",
-        body: "Step-3.7-Flash — un MoE de 428B — est réparti en 16 stages sur deux machines AMD MI250 et sert déjà. Un modèle de 122B a tourné de bout en bout sur trois machines physiques, dont un téléphone qui en détenait une partie. Les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur.",
+        body: "Step-3.7-Flash — un MoE de 428B — est réparti en 2 stages sur deux machines NVIDIA GB10 et sert déjà. Un modèle de 122B a tourné de bout en bout sur trois machines physiques, dont un téléphone qui en détenait une partie. Les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur.",
       },
       {
         phase: "En cours",
         title: "Anneau, passerelle, client",
-        body: "La passerelle de règlement est portée sur p4 et répond : une requête payée traverse la passerelle, le bridge et l’anneau MI250, et est facturée sur les tokens qu’elle a consommés. Sur l’anneau en service, Step-3.7-Flash renvoie 28–31 tokens par seconde en flux unique, avec le premier token en 270–285 ms. Toujours en cours : l’anneau passe des tests de reprise après une exécution de 64 requêtes interrompue, le client desktop devient un véritable nœud qui supervise un agent p4 au lieu de simplement en enregistrer un, et le sharding à granularité d’expert est en cours de portage vers p4 — un appareil peut déjà réclamer une fenêtre et ouvrir un relais, mais le téléchargement du shard et la répartition côté moteur ne sont pas encore écrits.",
+        body: "La passerelle de règlement est portée sur p4 et répond : une requête payée traverse la passerelle, le bridge et l’anneau GB10, et est facturée sur les tokens qu’elle a consommés. Sur l’anneau en service, Step-3.7-Flash renvoie 6.7–6.8 tokens par seconde en flux unique, avec le premier token en 67–71 ms. Toujours en cours : l’anneau passe des tests de reprise après une exécution de 64 requêtes interrompue, le client desktop devient un véritable nœud qui supervise un agent p4 au lieu de simplement en enregistrer un, et le sharding à granularité d’expert est en cours de portage vers p4 — un appareil peut déjà réclamer une fenêtre et ouvrir un relais, mais le téléchargement du shard et la répartition côté moteur ne sont pas encore écrits.",
       },
       {
         phase: "À venir",
@@ -285,13 +285,13 @@ export const fr: Dict = {
     pill: "Mesuré sur nos propres machines",
     title: "Ce qui tourne, et ce que cela a mesuré",
     items: [
-      "MoE servi aujourd’hui — Step-3.7-Flash, sur deux machines AMD MI250",
+      "MoE servi aujourd’hui — Step-3.7-Flash, sur deux machines NVIDIA GB10",
       "stages sur lesquels le modèle est réparti, placés sur deux agents",
       "de similarité cosinus entre ROCm, CUDA et le CPU d’un téléphone — le matériel hétérogène concorde",
       "plateformes de portefeuille — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B sur deux machines MI250 · 122B de bout en bout sur trois machines · compatible OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 428B sur deux machines GB10 · 122B de bout en bout sur trois machines · compatible OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

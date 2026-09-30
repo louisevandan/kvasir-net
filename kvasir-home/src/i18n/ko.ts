@@ -37,7 +37,7 @@ export const ko: Dict = {
     eyebrow: "DePIN · 데이터센터 없이 돌리는 프런티어 모델",
     headline1: "428B 모델을 돌릴 하드웨어, 당신에겐 없습니다.",
     headline2: "사실 저희도 없습니다.",
-    sub: "이 플릿의 어떤 기기도 Step-3.7-Flash를 혼자 담아내지 못합니다 — 4,280억 파라미터, 저희가 가진 어떤 기기 한 대도 한참 넘어서는 크기입니다. Kvasir는 이 모델을 레이어 구간으로 잘라 각 기기가 자기 구간만 들고 있게 하고, 각 기기는 hidden state를 다음 기기에 넘깁니다. 오늘 서빙 링에서 측정한 값: 초당 28–31 토큰, 첫 토큰까지 270 ms.",
+    sub: "이 플릿의 어떤 기기도 Step-3.7-Flash를 혼자 담아내지 못합니다 — 4,280억 파라미터, 저희가 가진 어떤 기기 한 대도 한참 넘어서는 크기입니다. Kvasir는 이 모델을 레이어 구간으로 잘라 각 기기가 자기 구간만 들고 있게 하고, 각 기기는 hidden state를 다음 기기에 넘깁니다. 오늘 서빙 링에서 측정한 값: 초당 6.7–6.8 토큰, 첫 토큰까지 70 ms.",
     badges: [
       "GPU · CPU · NPU · 휴대폰에서 실행",
       "OpenAI + Anthropic 호환",
@@ -99,7 +99,7 @@ export const ko: Dict = {
       {
         title: "분할",
         body: "모델은 연속된 레이어 구간으로 나뉩니다. 모든 기기는 모델 파일 사본을 두되 자기 구간만 메모리에 로드하므로, 어떤 노드도 전체를 실행할 필요가 없습니다.",
-        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
+        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
       },
       {
         title: "제공",
@@ -234,7 +234,7 @@ export const ko: Dict = {
       },
       {
         title: "분산 레이어 배치",
-        body: "p4는 GGUF 메타데이터를 읽고 배치 계획으로부터 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다. 428B MoE인 Step-3.7-Flash는 현재 머신 2대에 16 stages로 올라가 있습니다.",
+        body: "p4는 GGUF 메타데이터를 읽고 배치 계획으로부터 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다. 428B MoE인 Step-3.7-Flash는 현재 머신 2대에 2 stages로 올라가 있습니다.",
       },
       {
         title: "SIWS + 2FA 보안",
@@ -253,12 +253,12 @@ export const ko: Dict = {
       {
         phase: "현재",
         title: "최전선 규모 서빙, 가동 중",
-        body: "428B MoE인 Step-3.7-Flash가 AMD MI250 머신 2대에 16 stages로 배치되어 서빙 중입니다. 122B 모델은 물리 머신 3대에 걸쳐 끝에서 끝까지 실행됐고, 그중 한 대는 모델 일부를 보유한 휴대폰이었습니다. web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관합니다.",
+        body: "428B MoE인 Step-3.7-Flash가 NVIDIA GB10 머신 2대에 2 stages로 배치되어 서빙 중입니다. 122B 모델은 물리 머신 3대에 걸쳐 끝에서 끝까지 실행됐고, 그중 한 대는 모델 일부를 보유한 휴대폰이었습니다. web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관합니다.",
       },
       {
         phase: "진행 중",
         title: "링, 게이트웨이, 클라이언트",
-        body: "정산 게이트웨이는 p4로 이식이 끝나 응답하고 있습니다. 유료 요청은 게이트웨이와 브릿지, MI250 링을 차례로 지나며 실제로 쓴 토큰만큼 과금됩니다. 서빙 중인 링에서 Step-3.7-Flash는 단일 스트림 기준 초당 28–31 토큰을 내고, 첫 토큰까지 270–285 ms가 걸립니다. 아직 진행 중인 것: 링은 64건 요청 실행이 중단된 뒤 복구 게이트를 통과하는 중이고, 데스크톱 클라이언트는 p4 에이전트를 등록만 하던 데서 직접 감독하는 진짜 노드로 바뀌고 있으며, expert 단위 샤딩을 p4로 옮기는 작업이 남아 있습니다 — 기기가 window를 점유하고 릴레이를 여는 것까지는 되지만, 샤드 다운로드와 엔진 쪽 디스패치는 아직 구현되지 않았습니다.",
+        body: "정산 게이트웨이는 p4로 이식이 끝나 응답하고 있습니다. 유료 요청은 게이트웨이와 브릿지, GB10 링을 차례로 지나며 실제로 쓴 토큰만큼 과금됩니다. 서빙 중인 링에서 Step-3.7-Flash는 단일 스트림 기준 초당 6.7–6.8 토큰을 내고, 첫 토큰까지 67–71 ms가 걸립니다. 아직 진행 중인 것: 링은 64건 요청 실행이 중단된 뒤 복구 게이트를 통과하는 중이고, 데스크톱 클라이언트는 p4 에이전트를 등록만 하던 데서 직접 감독하는 진짜 노드로 바뀌고 있으며, expert 단위 샤딩을 p4로 옮기는 작업이 남아 있습니다 — 기기가 window를 점유하고 릴레이를 여는 것까지는 되지만, 샤드 다운로드와 엔진 쪽 디스패치는 아직 구현되지 않았습니다.",
       },
       {
         phase: "예정",
@@ -277,13 +277,13 @@ export const ko: Dict = {
     pill: "우리 머신에서 직접 측정",
     title: "무엇이 돌아가고 있고, 무엇이 측정됐는가",
     items: [
-      "MoE를 오늘 서빙 중 — Step-3.7-Flash, AMD MI250 머신 2대에 걸쳐",
+      "MoE를 오늘 서빙 중 — Step-3.7-Flash, NVIDIA GB10 머신 2대에 걸쳐",
       "stages로 모델이 분할되어 두 agent에 배치됨",
       "코사인 유사도 — ROCm, CUDA, 휴대폰 CPU가 서로 일치",
       "지갑 플랫폼 — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B를 MI250 머신 2대에서 · 122B를 머신 3대에 걸쳐 끝에서 끝까지 · OpenAI + Anthropic 호환 · Solana devnet",
+      "Step-3.7-Flash 428B를 GB10 머신 2대에서 · 122B를 머신 3대에 걸쳐 끝에서 끝까지 · OpenAI + Anthropic 호환 · Solana devnet",
   },
 
   footer: {
@@ -536,7 +536,7 @@ export const ko: Dict = {
     liveLede: "백서만 있는 프로젝트가 아닙니다. 현재 검증되어 돌아가는 것들:",
     liveProof: [
       "네트워크에서 테스트한 모델: Qwen3.5 122B, Qwen3.5 35B, Gemma4 12B — 각 모델을 여러 머신에 레이어 단위로 분산, 어떤 노드도 모델 전체를 들고 있을 필요가 없습니다.",
-      "이기종 라이브 플릿 총 21개 노드: AMD MI250 4장(ARM 호스트), NVIDIA GB10 4장, NVIDIA RTX Pro 6000 4장, MacBook Pro 1대, x86 Windows CPU 머신 6대, 모바일 노드 2개(iOS + Android).",
+      "이기종 라이브 플릿 총 21개 노드: NVIDIA GB10 4장(ARM 호스트), NVIDIA GB10 4장, NVIDIA RTX Pro 6000 4장, MacBook Pro 1대, x86 Windows CPU 머신 6대, 모바일 노드 2개(iOS + Android).",
       "노드별 기여 정산: 각 노드는 서빙한 추론의 레이어 비중만큼 가중된 KVR을 자기 지갑으로 정산받습니다.",
       "OpenAI·Anthropic 호환 추론 과금 게이트웨이를 자체 도메인에 배포.",
       "웹·데스크톱·iOS·Android 논커스터디얼 지갑 출시, 지갑 서명 로그인(Sign-In With Solana) + 2FA.",

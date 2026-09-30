@@ -37,7 +37,7 @@ export const id: Dict = {
     eyebrow: "DePIN · Model frontier tanpa pusat data",
     headline1: "Anda tidak punya perangkat keras",
     headline2: "untuk model 428B. Kami juga tidak.",
-    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 428 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
+    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 428 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 6.7–6.8 token per detik, token pertama dalam 70 ms.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",
       "Kompatibel dengan OpenAI + Anthropic",
@@ -254,12 +254,12 @@ export const id: Dict = {
       {
         phase: "Sekarang",
         title: "Penyajian berskala frontier, aktif",
-        body: "Step-3.7-Flash — MoE 428B — ditempatkan sebagai 16 stage di dua mesin AMD MI250 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
+        body: "Step-3.7-Flash — MoE 428B — ditempatkan sebagai 16 stage di dua mesin NVIDIA GB10 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
       },
       {
         phase: "Sedang berjalan",
         title: "Ring, gateway, klien",
-        body: "Gateway penyelesaian sudah diporting ke p4 dan sudah melayani: satu permintaan berbayar melewati gateway, bridge, dan ring MI250, lalu ditagih berdasarkan token yang dipakainya. Di ring yang menyajikan, Step-3.7-Flash mengembalikan 28–31 token per detik pada satu stream, dengan token pertama dalam 270–285 ms. Masih berjalan: ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti, klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4 bukan sekadar mendaftarkannya, dan sharding bergranularitas expert sedang dibawa ke p4 — perangkat sudah bisa mengklaim window dan membuka relay, tetapi unduhan shard dan dispatch di sisi engine belum ditulis.",
+        body: "Gateway penyelesaian sudah diporting ke p4 dan sudah melayani: satu permintaan berbayar melewati gateway, bridge, dan ring GB10, lalu ditagih berdasarkan token yang dipakainya. Di ring yang menyajikan, Step-3.7-Flash mengembalikan 6.7–6.8 token per detik pada satu stream, dengan token pertama dalam 67–71 ms. Masih berjalan: ring sedang melewati gate pemulihan setelah sebuah run 64 permintaan terhenti, klien desktop sedang dijadikan node sungguhan yang mengawasi agen p4 bukan sekadar mendaftarkannya, dan sharding bergranularitas expert sedang dibawa ke p4 — perangkat sudah bisa mengklaim window dan membuka relay, tetapi unduhan shard dan dispatch di sisi engine belum ditulis.",
       },
       {
         phase: "Segera",
@@ -278,13 +278,13 @@ export const id: Dict = {
     pill: "Diukur di mesin kami sendiri",
     title: "Apa yang berjalan, dan apa yang terukur",
     items: [
-      "MoE yang disajikan hari ini — Step-3.7-Flash, di dua mesin AMD MI250",
+      "MoE yang disajikan hari ini — Step-3.7-Flash, di dua mesin NVIDIA GB10",
       "stage tempat model dipecah, ditempatkan di dua agen",
       "kemiripan kosinus antara ROCm, CUDA, dan CPU ponsel — perangkat keras campuran sepakat",
       "platform dompet — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B di dua mesin MI250 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 428B di dua mesin GB10 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

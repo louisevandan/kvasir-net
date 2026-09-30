@@ -37,7 +37,7 @@ export const es: Dict = {
     eyebrow: "DePIN · Modelos frontera sin centro de datos",
     headline1: "No tienes hardware",
     headline2: "para un modelo de 428B. Nosotros tampoco.",
-    sub: "Nada en esta flota puede contener Step-3.7-Flash — 428 mil millones de parámetros, muy por encima de cualquier dispositivo que tengamos. Kvasir lo divide en ventanas de capas para que cada máquina contenga solo la suya y entregue un estado oculto a la siguiente. Medido hoy en el anillo en servicio: 28–31 tokens por segundo, primer token en 270 ms.",
+    sub: "Nada en esta flota puede contener Step-3.7-Flash — 428 mil millones de parámetros, muy por encima de cualquier dispositivo que tengamos. Kvasir lo divide en ventanas de capas para que cada máquina contenga solo la suya y entregue un estado oculto a la siguiente. Medido hoy en el anillo en servicio: 6.7–6.8 tokens por segundo, primer token en 70 ms.",
     badges: [
       "Funciona en GPU · CPU · NPU · teléfono",
       "Compatible con OpenAI + Anthropic",
@@ -254,12 +254,12 @@ export const es: Dict = {
       {
         phase: "Ahora",
         title: "Servicio a escala frontera, en vivo",
-        body: "Step-3.7-Flash — un MoE de 428B — está colocado en 16 etapas entre dos máquinas AMD MI250 y está sirviendo. Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas, una de ellas un teléfono que contenía una parte. Las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario.",
+        body: "Step-3.7-Flash — un MoE de 428B — está colocado en 16 etapas entre dos máquinas NVIDIA GB10 y está sirviendo. Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas, una de ellas un teléfono que contenía una parte. Las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario.",
       },
       {
         phase: "En curso",
         title: "Anillo, gateway, cliente",
-        body: "El gateway de liquidación ya está portado a p4 y responde: una solicitud pagada atraviesa el gateway, el bridge y el anillo MI250, y se factura por los tokens que consumió. En el anillo en servicio, Step-3.7-Flash devuelve 28–31 tokens por segundo en flujo único, con el primer token en 270–285 ms. Sigue en curso: el anillo está pasando por pruebas de recuperación tras una ejecución interrumpida de 64 solicitudes, el cliente de escritorio se está convirtiendo en un nodo real que supervisa un agente p4 en lugar de solo registrarlo, y el sharding con granularidad de experto se está llevando a p4 — un dispositivo ya puede reclamar una ventana y abrir un relay, pero la descarga del shard y el despacho del lado del motor todavía no están escritos.",
+        body: "El gateway de liquidación ya está portado a p4 y responde: una solicitud pagada atraviesa el gateway, el bridge y el anillo GB10, y se factura por los tokens que consumió. En el anillo en servicio, Step-3.7-Flash devuelve 6.7–6.8 tokens por segundo en flujo único, con el primer token en 67–71 ms. Sigue en curso: el anillo está pasando por pruebas de recuperación tras una ejecución interrumpida de 64 solicitudes, el cliente de escritorio se está convirtiendo en un nodo real que supervisa un agente p4 en lugar de solo registrarlo, y el sharding con granularidad de experto se está llevando a p4 — un dispositivo ya puede reclamar una ventana y abrir un relay, pero la descarga del shard y el despacho del lado del motor todavía no están escritos.",
       },
       {
         phase: "Próximamente",
@@ -278,13 +278,13 @@ export const es: Dict = {
     pill: "Medido en nuestras propias máquinas",
     title: "Qué está en marcha y qué midió",
     items: [
-      "MoE sirviendo hoy — Step-3.7-Flash, en dos máquinas AMD MI250",
+      "MoE sirviendo hoy — Step-3.7-Flash, en dos máquinas NVIDIA GB10",
       "etapas en las que se divide el modelo, repartidas entre dos agentes",
       "de similitud coseno entre ROCm, CUDA y la CPU de un teléfono — el hardware heterogéneo coincide",
       "plataformas de billetera — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B en dos máquinas MI250 · 122B de extremo a extremo en tres máquinas · compatible con OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 428B en dos máquinas GB10 · 122B de extremo a extremo en tres máquinas · compatible con OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

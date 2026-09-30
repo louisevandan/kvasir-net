@@ -43,7 +43,7 @@ export const de: Dict = {
     eyebrow: "DePIN · Frontier-Modelle ohne Rechenzentrum",
     headline1: "Du hast nicht die Hardware",
     headline2: "für ein 428B-Modell. Und wir? Auch nicht.",
-    sub: "Nichts in dieser Flotte kann Step-3.7-Flash halten — 428 Milliarden Parameter, weit jenseits jedes einzelnen Geräts, das uns gehört. Kvasir zerschneidet es in Layer-Fenster, sodass jede Maschine nur ihr eigenes hält und einen Hidden State an die nächste weitergibt. Heute auf dem Serving-Ring gemessen: 28–31 Tokens pro Sekunde, das erste Token nach 270 ms.",
+    sub: "Nichts in dieser Flotte kann Step-3.7-Flash halten — 428 Milliarden Parameter, weit jenseits jedes einzelnen Geräts, das uns gehört. Kvasir zerschneidet es in Layer-Fenster, sodass jede Maschine nur ihr eigenes hält und einen Hidden State an die nächste weitergibt. Heute auf dem Serving-Ring gemessen: 6.7–6.8 Tokens pro Sekunde, das erste Token nach 70 ms.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",
       "OpenAI- + Anthropic-kompatibel",
@@ -106,7 +106,7 @@ export const de: Dict = {
       {
         title: "Aufteilen",
         body: "Das Modell wird in zusammenhängende Layer-Fenster unterteilt. Jedes Gerät hat eine Kopie der Modelldatei, lädt aber nur sein eigenes Fenster in den Speicher, sodass kein Node das ganze Modell ausführen muss.",
-        note: "Step-3.7-Flash 428B · 45 Layer · 16 stages",
+        note: "Step-3.7-Flash 428B · 45 Layer · 2 stages",
       },
       {
         title: "Bereitstellen",
@@ -241,7 +241,7 @@ export const de: Dict = {
       },
       {
         title: "Verteilte Layer-Platzierung",
-        body: "p4 liest GGUF-Metadaten und berechnet aus einem Platzierungsplan zusammenhängende Layer-Fenster pro Node, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM. Step-3.7-Flash, ein 428B-MoE, liegt derzeit als 16 stages auf zwei Maschinen.",
+        body: "p4 liest GGUF-Metadaten und berechnet aus einem Platzierungsplan zusammenhängende Layer-Fenster pro Node, plus optionales MoE-Expert-FFN-Offloading in den Node-RAM. Step-3.7-Flash, ein 428B-MoE, liegt derzeit als 2 stages auf zwei Maschinen.",
       },
       {
         title: "SIWS- + 2FA-Sicherheit",
@@ -260,12 +260,12 @@ export const de: Dict = {
       {
         phase: "Jetzt",
         title: "Serving in Frontier-Größe, live",
-        body: "Step-3.7-Flash — ein 428B-MoE — liegt als 16 stages auf zwei AMD-MI250-Maschinen und ist im Serving-Betrieb. Ein 122B-Modell lief durchgängig über drei physische Maschinen, eine davon ein Smartphone, das einen Teil davon hielt. Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers.",
+        body: "Step-3.7-Flash — ein 428B-MoE — liegt als 2 stages auf zwei NVIDIA-GB10-Maschinen und ist im Serving-Betrieb. Ein 122B-Modell lief durchgängig über drei physische Maschinen, eine davon ein Smartphone, das einen Teil davon hielt. Wallets für Web, Desktop, iOS und Android halten die Schlüssel auf dem Gerät des Nutzers.",
       },
       {
         phase: "In Arbeit",
         title: "Ring, Gateway, Client",
-        body: "Das Abrechnungs-Gateway ist auf p4 portiert und antwortet: Eine bezahlte Anfrage läuft über das Gateway, die Bridge und den MI250-Ring und wird nach den tatsächlich verbrauchten Tokens abgerechnet. Auf dem Serving-Ring liefert Step-3.7-Flash im Einzelstream 28–31 Tokens pro Sekunde, das erste Token nach 270–285 ms. Weiterhin in Arbeit: Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates, der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren, und das Sharding auf Expert-Granularität wird auf p4 übertragen — ein Gerät kann bereits ein Window beanspruchen und ein Relay öffnen, aber der Shard-Download und das Dispatch auf Engine-Seite sind noch nicht geschrieben.",
+        body: "Das Abrechnungs-Gateway ist auf p4 portiert und antwortet: Eine bezahlte Anfrage läuft über das Gateway, die Bridge und den GB10-Ring und wird nach den tatsächlich verbrauchten Tokens abgerechnet. Auf dem Serving-Ring liefert Step-3.7-Flash im Einzelstream 6.7–6.8 Tokens pro Sekunde, das erste Token nach 67–71 ms. Weiterhin in Arbeit: Der Ring durchläuft nach einem abgebrochenen Lauf über 64 Requests die Recovery-Gates, der Desktop-Client wird zu einem echten Node, der einen p4-Agenten beaufsichtigt, statt ihn nur zu registrieren, und das Sharding auf Expert-Granularität wird auf p4 übertragen — ein Gerät kann bereits ein Window beanspruchen und ein Relay öffnen, aber der Shard-Download und das Dispatch auf Engine-Seite sind noch nicht geschrieben.",
       },
       {
         phase: "Demnächst",
@@ -284,13 +284,13 @@ export const de: Dict = {
     pill: "Auf unseren eigenen Maschinen gemessen",
     title: "Was läuft — und was gemessen wurde",
     items: [
-      "MoE heute im Serving — Step-3.7-Flash, auf zwei AMD-MI250-Maschinen",
+      "MoE heute im Serving — Step-3.7-Flash, auf zwei NVIDIA-GB10-Maschinen",
       "Stages, in die das Modell aufgeteilt ist, verteilt auf zwei Agents",
       "Kosinus-Ähnlichkeit über ROCm, CUDA und eine Smartphone-CPU — gemischte Hardware stimmt überein",
       "Wallet-Plattformen — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B auf zwei MI250-Maschinen · 122B durchgängig über drei Maschinen · OpenAI- + Anthropic-kompatibel · Solana devnet",
+      "Step-3.7-Flash 428B auf zwei GB10-Maschinen · 122B durchgängig über drei Maschinen · OpenAI- + Anthropic-kompatibel · Solana devnet",
   },
 
   footer: {

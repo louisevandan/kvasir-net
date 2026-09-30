@@ -37,7 +37,7 @@ export const zh: Dict = {
     eyebrow: "DePIN · 不靠数据中心的前沿模型",
     headline1: "你没有能跑 428B 模型的硬件。",
     headline2: "其实，我们也没有。",
-    sub: "这支机群里没有任何一台机器装得下 Step-3.7-Flash — 4280 亿参数，远远超出我们拥有的任何单台设备。Kvasir 把它切成层窗口，每台机器只持有自己的那一个，并把一份隐藏状态交给下一台。今天在服务环上实测：每秒 28–31 tokens，首个 token 用时 270 ms。",
+    sub: "这支机群里没有任何一台机器装得下 Step-3.7-Flash — 4280 亿参数，远远超出我们拥有的任何单台设备。Kvasir 把它切成层窗口，每台机器只持有自己的那一个，并把一份隐藏状态交给下一台。今天在服务环上实测：每秒 6.7–6.8 tokens，首个 token 用时 70 ms。",
     badges: [
       "可在 GPU · CPU · NPU · 手机上运行",
       "兼容 OpenAI + Anthropic",
@@ -100,7 +100,7 @@ export const zh: Dict = {
       {
         title: "拆分",
         body: "模型被划分为连续的层窗口。每台设备都保留一份模型文件副本，但只把自己的窗口加载到内存中，因此没有节点需要运行完整模型。",
-        note: "Step-3.7-Flash 428B · 45 层 · 16 stages",
+        note: "Step-3.7-Flash 428B · 45 层 · 2 stages",
       },
       {
         title: "服务",
@@ -235,7 +235,7 @@ export const zh: Dict = {
       },
       {
         title: "分布式层放置",
-        body: "p4 读取 GGUF 元数据，依据放置方案计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。428B 的 MoE 模型 Step-3.7-Flash 目前以 16 stages 分布在两台机器上。",
+        body: "p4 读取 GGUF 元数据，依据放置方案计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。428B 的 MoE 模型 Step-3.7-Flash 目前以 2 stages 分布在两台机器上。",
       },
       {
         title: "SIWS + 2FA 安全",
@@ -254,12 +254,12 @@ export const zh: Dict = {
       {
         phase: "现在",
         title: "前沿规模的服务，已上线",
-        body: "428B 的 MoE 模型 Step-3.7-Flash 以 16 stages 部署在两台 AMD MI250 机器上，正在提供服务。一个 122B 模型已跨 3 台物理机器端到端运行，其中一台是持有部分模型的手机。web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上。",
+        body: "428B 的 MoE 模型 Step-3.7-Flash 以 2 stages 部署在两台 NVIDIA GB10 机器上，正在提供服务。一个 122B 模型已跨 3 台物理机器端到端运行，其中一台是持有部分模型的手机。web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上。",
       },
       {
         phase: "进行中",
         title: "环、网关、客户端",
-        body: "结算网关已移植到 p4 并在应答：一次付费请求会穿过网关、桥接和 MI250 环，并按其实际使用的 token 计费。在服务中的环上，Step-3.7-Flash 单流返回每秒 28–31 tokens，首个 token 用时 270–285 ms。仍在推进中的是：环在一次 64 请求的运行被中断后，正在通过恢复门禁；桌面客户端正从只是注册一个 p4 agent，变成真正监管它的节点；以及把专家粒度的分片搬到 p4 上 — 设备已经可以认领一个 window 并打开中继，但分片下载和引擎侧的调度还没有写。",
+        body: "结算网关已移植到 p4 并在应答：一次付费请求会穿过网关、桥接和 GB10 环，并按其实际使用的 token 计费。在服务中的环上，Step-3.7-Flash 单流返回每秒 6.7–6.8 tokens，首个 token 用时 67–71 ms。仍在推进中的是：环在一次 64 请求的运行被中断后，正在通过恢复门禁；桌面客户端正从只是注册一个 p4 agent，变成真正监管它的节点；以及把专家粒度的分片搬到 p4 上 — 设备已经可以认领一个 window 并打开中继，但分片下载和引擎侧的调度还没有写。",
       },
       {
         phase: "即将推出",
@@ -278,13 +278,13 @@ export const zh: Dict = {
     pill: "在我们自己的机器上实测",
     title: "正在运行的是什么，测出来的又是什么",
     items: [
-      "MoE 正在提供服务 — Step-3.7-Flash，跨两台 AMD MI250 机器",
+      "MoE 正在提供服务 — Step-3.7-Flash，跨两台 NVIDIA GB10 机器",
       "stages — 模型被拆分的段数，分布在两个 agent 上",
       "余弦相似度 — 横跨 ROCm、CUDA 与手机 CPU，异构硬件结果一致",
       "钱包平台 — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B 跑在两台 MI250 机器上 · 122B 跨 3 台机器端到端 · 兼容 OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 428B 跑在两台 GB10 机器上 · 122B 跨 3 台机器端到端 · 兼容 OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
