@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -175,4 +176,84 @@ test('an expired request stops occupying the queue', async (t) => {
   assert.equal(second.status, 200);
   assert.equal(mails.length, 2);
   assert.notEqual(JSON.parse(second.text).id, JSON.parse(first.text).id);
+});
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const base58 = (buf) => {
+  let big = BigInt(`0x${buf.toString('hex') || '0'}`);
+  let out = '';
+  while (big > 0n) { out = BASE58[Number(big % 58n)] + out; big /= 58n; }
+  for (const b of buf) { if (b !== 0) break; out = `1${out}`; }
+  return out;
+};
+
+/** A wallet, from node's own crypto — the service has no dependencies and its
+ *  tests should not be the thing that introduces one. */
+function makeWallet() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const raw = publicKey.export({ format: 'der', type: 'spki' }).subarray(-32);
+  return {
+    address: base58(raw),
+    sign: (message) => crypto.sign(null, Buffer.from(message, 'utf8'), privateKey).toString('base64'),
+  };
+}
+
+/** An app proving the wallet it holds, the way the bridge already asks it to. */
+async function signedRequest(port, w, profile = {}) {
+  const ch = await call(port, 'POST', '/requests/challenge', { body: { wallet: w.address } });
+  if (ch.status !== 200) return ch;
+  const { nonce, message } = JSON.parse(ch.text);
+  return call(port, 'POST', '/requests', {
+    body: { wallet: w.address, nonce, signature: w.sign(message), profile } });
+}
+
+test('an app with no secret asks by proving the wallet it holds', async (t) => {
+  const { port, mails } = await boot(t);
+  const w = makeWallet();
+
+  const made = await signedRequest(port, w, { gpus: 'RTX 4090', lending: '16 GiB' });
+  assert.equal(made.status, 200);
+  assert.equal(mails.length, 1);
+  assert.match(mails[0].html, /RTX 4090/);
+  assert.match(mails[0].html, new RegExp(w.address));
+  assert.equal(mails[0].reply_to, 'tony@kvasir-ai.net');
+});
+
+test('a signature from another key speaks for nobody', async (t) => {
+  const { port, mails } = await boot(t);
+  const w = makeWallet();
+  const impostor = makeWallet();
+  const wallet = w.address;
+
+  const ch = await call(port, 'POST', '/requests/challenge', { body: { wallet } });
+  const { nonce, message } = JSON.parse(ch.text);
+  // Someone else signing the same message must not speak for this wallet.
+  const signature = impostor.sign(message);
+
+  const refused = await call(port, 'POST', '/requests', { body: { wallet, nonce, signature } });
+  assert.equal(refused.status, 401);
+  assert.equal(mails.length, 0);
+
+  // And no signature at all is not a way in either.
+  const bare = await call(port, 'POST', '/requests', { body: { wallet } });
+  assert.equal(bare.status, 401);
+  assert.equal(mails.length, 0);
+});
+
+test('a challenge is spent whether or not the signature was right', async (t) => {
+  const { port } = await boot(t);
+  const w = makeWallet();
+  const wallet = w.address;
+  const ch = await call(port, 'POST', '/requests/challenge', { body: { wallet } });
+  const { nonce, message } = JSON.parse(ch.text);
+
+  const wrong = await call(port, 'POST', '/requests', {
+    body: { wallet, nonce, signature: Buffer.alloc(64).toString('base64') } });
+  assert.equal(wrong.status, 401);
+
+  // The real signature over the same nonce is now too late: a nonce that
+  // survived a wrong answer would let one challenge be guessed against.
+  const right = w.sign(message);
+  const late = await call(port, 'POST', '/requests', { body: { wallet, nonce, signature: right } });
+  assert.equal(late.status, 401);
 });

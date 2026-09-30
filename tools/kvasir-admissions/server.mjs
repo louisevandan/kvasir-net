@@ -31,6 +31,9 @@ const STATE = process.env.ADMISSIONS_STATE ?? path.join(HERE, 'state', 'requests
 
 const PORT = Number(process.env.PORT ?? 8795);
 const FROM = process.env.ADMISSIONS_FROM ?? 'Kvasir admissions <admissions@reg.kvasir-ai.net>';
+// reg.kvasir-ai.net is what is verified to send; the apex is not, and is a
+// place to receive a reply rather than a place to send one from.
+const REPLY_TO = (process.env.ADMISSIONS_REPLY_TO ?? 'tony@kvasir-ai.net').trim();
 const APPROVER = (process.env.ADMISSIONS_APPROVER ?? '').trim();
 const PUBLIC_URL = (process.env.ADMISSIONS_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
 const GATE = (process.env.KVASIR_GATE_URL ?? 'https://gate.kvasir-ai.net').replace(/\/+$/, '');
@@ -40,6 +43,8 @@ const INTAKE_TOKEN = (process.env.ADMISSIONS_INTAKE_TOKEN ?? '').trim();
 
 /** How long an approval link is worth anything. */
 const TTL_MS = Number(process.env.ADMISSIONS_TTL_MINUTES ?? 30) * 60_000;
+/** A base58 Solana address, which is what both askers name. */
+const WALLET_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 /** How many requests may be waiting for an answer at once. The mail is the
  *  thing that grants access, so the number that matters is how many of them can
  *  be in front of the approver — not how many the disk could hold. */
@@ -102,6 +107,75 @@ const equal = (a, b) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 
+// ---- proving a wallet ----------------------------------------------------
+//
+// The same challenge-and-sign the bridge uses, because a client that already
+// knows how to prove itself to the ring should not have to learn a second way
+// to prove itself to this. Deliberately not a shared secret: a secret that has
+// to ship inside a desktop app is not a secret.
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const SPKI_ED25519_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+function base58Decode(value) {
+  if (typeof value !== 'string' || !value || value.length > 64) return null;
+  let big = 0n;
+  for (const ch of value) {
+    const digit = BASE58.indexOf(ch);
+    if (digit < 0) return null;
+    big = big * 58n + BigInt(digit);
+  }
+  const bytes = [];
+  while (big > 0n) { bytes.unshift(Number(big & 0xffn)); big >>= 8n; }
+  // Leading '1's are leading zero bytes, and a 32-byte key may legitimately
+  // start with one — dropping them would silently shorten the key.
+  for (const ch of value) { if (ch !== '1') break; bytes.unshift(0); }
+  return Buffer.from(bytes);
+}
+
+function verifyWalletSignature(wallet, message, signatureBase64) {
+  const raw = base58Decode(wallet);
+  if (!raw || raw.length !== 32) return false;
+  let signature;
+  try { signature = Buffer.from(signatureBase64, 'base64'); } catch { return false; }
+  if (signature.length !== 64) return false;
+  try {
+    const key = crypto.createPublicKey({
+      key: Buffer.concat([SPKI_ED25519_PREFIX, raw]), format: 'der', type: 'spki',
+    });
+    return crypto.verify(null, Buffer.from(message, 'utf8'), key, signature);
+  } catch { return false; }
+}
+
+const CHALLENGE_TTL_MS = 5 * 60_000;
+/** `/requests/challenge` has to be open — it is how a client with nothing gets
+ *  something to sign — so anyone may make this map grow. The cap turns that
+ *  into a refusal rather than into this process's memory. */
+const MAX_CHALLENGES = 10_000;
+const challenges = new Map();
+
+const messageFor = (wallet, nonce) =>
+  `Kvasir admissions — ask to join the ring.\nwallet: ${wallet}\nnonce: ${nonce}`;
+
+function newChallenge(wallet) {
+  const t = now();
+  for (const [key, entry] of challenges) if (entry.expires < t) challenges.delete(key);
+  if (challenges.size >= MAX_CHALLENGES) return null;
+  const nonce = crypto.randomBytes(16).toString('hex');
+  challenges.set(nonce, { wallet, expires: t + CHALLENGE_TTL_MS });
+  return { nonce, message: messageFor(wallet, nonce) };
+}
+
+/** Single use: taken whether or not the signature turns out to match, so a
+ *  wrong signature cannot be retried against the same nonce. */
+function consumeChallenge(wallet, nonce) {
+  const entry = challenges.get(nonce);
+  if (!entry) return null;
+  challenges.delete(nonce);
+  if (entry.expires < now() || entry.wallet !== wallet) return null;
+  return messageFor(wallet, nonce);
+}
+
 // ---- helpers -------------------------------------------------------------
 
 const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -157,7 +231,7 @@ ${rows}</table>
     method: 'POST',
     headers: { authorization: `Bearer ${RESEND_KEY}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      from: FROM, to: [APPROVER],
+      from: FROM, to: [APPROVER], ...(REPLY_TO ? { reply_to: REPLY_TO } : {}),
       subject: `Kvasir: admit ${request.wallet.slice(0, 8)}…?`,
       html,
     }),
@@ -200,18 +274,48 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, service: 'kvasir-admissions' });
     }
 
-    // Intake, from the bot. Not a public path: the bot presents a shared secret.
-    if (req.method === 'POST' && route === '/requests') {
-      const presented = (req.headers['x-admissions-token'] ?? '').toString();
-      if (!equal(presented, INTAKE_TOKEN)) return send(res, 401, { error: 'intake token required' });
+    // How a client with no secret gets something to sign. Open by necessity.
+    if (req.method === 'POST' && route === '/requests/challenge') {
+      let body;
+      try { body = JSON.parse((await readBody(req)) || '{}'); }
+      catch { return send(res, 400, { error: 'request body is not JSON' }); }
+      const wallet = String(body.wallet ?? '').trim();
+      if (!WALLET_RE.test(wallet)) {
+        return send(res, 400, { error: 'wallet must be a base58 Solana address' });
+      }
+      const challenge = newChallenge(wallet);
+      if (!challenge) return send(res, 503, { error: 'too many challenges outstanding; try again shortly' });
+      return send(res, 200, challenge);
+    }
 
+    // Intake. Two ways to be allowed to ask, for two kinds of asker.
+    //
+    // The bot speaks for whoever messaged it and has no wallet of its own, so
+    // it presents a shared secret. An app has the wallet in its hands and no
+    // safe place to keep a secret — one shipped inside a desktop build is not a
+    // secret — so it signs a challenge instead. Neither grants admission;
+    // both only put a request in front of a person.
+    if (req.method === 'POST' && route === '/requests') {
       let body;
       try { body = JSON.parse((await readBody(req)) || '{}'); }
       catch { return send(res, 400, { error: 'request body is not JSON' }); }
 
       const wallet = String(body.wallet ?? '').trim();
-      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+      if (!WALLET_RE.test(wallet)) {
         return send(res, 400, { error: 'wallet must be a base58 Solana address' });
+      }
+
+      const presented = (req.headers['x-admissions-token'] ?? '').toString();
+      if (!equal(presented, INTAKE_TOKEN)) {
+        const nonce = String(body.nonce ?? '').trim();
+        const signature = String(body.signature ?? '');
+        const message = nonce && signature ? consumeChallenge(wallet, nonce) : null;
+        if (!message || !verifyWalletSignature(wallet, message, signature)) {
+          return send(res, 401, {
+            error: 'prove the wallet: POST /requests/challenge, sign the message, '
+              + 'and send {wallet, nonce, signature} — or present the intake token',
+          });
+        }
       }
 
       const db = load();
