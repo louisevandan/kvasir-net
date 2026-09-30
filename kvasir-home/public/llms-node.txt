@@ -100,28 +100,45 @@ Send two things to **@kvasir_watch_bot** on Telegram: the machine's profile and
 the owner's wallet address. One without the other cannot be acted on. The
 address is what gets listed; the profile is what the decision is made on.
 
-Build the block — it contains nothing secret, and the wallet address in it is
-public:
+The profile is the machine's resource inventory in the shape the network
+already uses for it — what the desktop app shows on its node screen, and what a
+node reports about itself once it is in:
+
+| field | what it is |
+| --- | --- |
+| `os` · `arch` | linux / macos / windows, and the CPU architecture |
+| `cpu` | brand and core count |
+| `ramBytes` | total system memory |
+| `backend` | what the hardware says it is: cuda, rocm, metal, vulkan or cpu |
+| `gpus[]` | each accelerator, its name and its memory |
+| budget | how much of that memory this machine will lend — the number from step 5 |
+
+On the desktop app, read it off the node screen. On a headless server the same
+facts come from the machine directly:
 
     NODE=~/.local/share/kvasir-node/kvasir-node
     KEY=~/.config/kvasir/node-key.json
     . /etc/os-release 2>/dev/null
-    printf 'kvasir join request\n  wallet  %s\n  host    %s\n  arch    %s\n  os      %s\n  glibc   %s\n  cpu     %s cores\n  ram     %s\n  gpu     %s\n' \
+    printf 'kvasir join request\n  wallet   %s\n  host     %s\n  os       %s / %s\n  cpu      %s (%s cores)\n  ram      %s\n  backend  %s\n  gpus     %s\n  lending  %s\n' \
       "$("$NODE" address --key "$KEY")" \
       "$(hostname)" \
-      "$(uname -m)" \
-      "${PRETTY_NAME:-$(uname -sr)}" \
-      "$(ldd --version 2>/dev/null | head -1 | awk '{print $NF}')" \
+      "${PRETTY_NAME:-$(uname -sr)}" "$(uname -m)" \
+      "$(awk -F: '/model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null | sed 's/^ *//')" \
       "$(nproc)" \
       "$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')" \
-      "$(nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv,noheader 2>/dev/null | paste -sd'; ' -)"
+      "$(command -v nvidia-smi >/dev/null && echo cuda || echo cpu)" \
+      "$(nvidia-smi --query-gpu=name,memory.total,compute_cap,driver_version --format=csv,noheader 2>/dev/null | paste -sd'; ' -)" \
+      "<GiB you will set in step 5>"
 
-You cannot send this yourself — the bot takes a message from a person, not an
-API call from a server with no credentials. Print the block and ask the user to
-send it to @kvasir_watch_bot. That is the second and last thing they do.
+Nothing in that block is secret. The wallet address is public and is the point
+of sending it.
+
+You cannot send it yourself — the bot takes a message from a person, and a
+headless server holds no Telegram credentials. Print the block and ask the user
+to send it to @kvasir_watch_bot. That is the second and last thing they do.
 
 Then wait. Step 7 will not succeed before the wallet is on the list, and the
-failure at that point is not a bug to debug — it is this step, unfinished.
+failure there is not a bug to debug — it is this step, unfinished.
 
 ## 5. The budget — the user's decision
 
