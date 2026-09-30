@@ -24,4 +24,8 @@ module.exports = {
   // no address to dial. The relay holds one on its behalf; the app keeps a
   // single outbound connection to it and listens on nothing.
   relay: { host: '34.50.62.159', port: 43000 },
+  // Where a machine asks to be admitted to the ring. Separate from the gateway
+  // on purpose: it has to answer when the compute fleet does not, since being
+  // told "you are not admitted" is exactly the moment you need it.
+  admissionsUrl: 'https://reg.kvasir-ai.net',
 }

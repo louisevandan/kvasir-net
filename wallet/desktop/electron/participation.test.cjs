@@ -539,6 +539,51 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
+  await test('a refused machine asks to be admitted, once, not every tick', async () => {
+    const asked = []
+    const admissions = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => { body += c })
+      req.on('end', () => {
+        const parsed = body ? JSON.parse(body) : {}
+        asked.push({ url: req.url, body: parsed })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(req.url === '/requests/challenge'
+          ? JSON.stringify({ nonce: 'n1', message: 'sign me' })
+          : JSON.stringify({ ok: true, id: 'r1' }))
+      })
+    })
+    await new Promise((r) => admissions.listen(0, '127.0.0.1', r))
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({
+        status: 403,
+        body: { error: 'this wallet has not been admitted to the ring yet', code: 'not_admitted' },
+      }),
+    })
+    try {
+      const p = client(br.base)
+      p.admissionsBase = `http://127.0.0.1:${admissions.address().port}`
+      p.profileFn = () => ({ gpus: 'RTX 4090', lending: '16 GiB' })
+      p.running = true; p.maxExpertsFn = () => 64; p.pollMs = 45_000
+
+      const realTimeout = global.setTimeout
+      global.setTimeout = (fn, ms) => realTimeout(() => {}, 0)
+      try {
+        await p.tick()
+        await p.tick()          // the backoff has not elapsed; this must not ask again
+      } finally { global.setTimeout = realTimeout }
+      p.stop()
+
+      const requests = asked.filter((a) => a.url === '/requests')
+      assert.strictEqual(requests.length, 1, `asked ${requests.length} times`)
+      assert.strictEqual(requests[0].body.signature.length > 0, true, 'the wallet signed')
+      assert.deepStrictEqual(requests[0].body.profile, { gpus: 'RTX 4090', lending: '16 GiB' })
+    } finally {
+      await br.close()
+      await new Promise((r) => admissions.close(r))
+    }
+  })
+
   console.log('\nbridge participation')
   console.log(results.join('\n'))
   console.log(`\n${passed}/${results.length} passed`)

@@ -684,7 +684,30 @@ participation = new Participation({
     accelerator: 'gpu',
     backend: process.platform === 'darwin' ? 'metal' : 'cuda',
   }),
+  admissionsUrl: readConfig().admissionsUrl || C.admissionsUrl,
+  // What an operator reads before deciding. The same facts the node screen
+  // shows, because a decision made on something the owner cannot see is a
+  // decision they cannot argue with.
+  profile: () => {
+    const cap = lastCapability
+    if (!cap) return { os: process.platform, arch: process.arch }
+    return {
+      os: cap.os,
+      arch: cap.arch,
+      cpu: cap.cpu ? `${cap.cpu.brand} (${cap.cpu.cores} cores)` : '',
+      ram: cap.ramBytes ? `${Math.round(cap.ramBytes / 1024 ** 3)} GiB` : '',
+      backend: cap.backend,
+      gpus: (cap.gpus || []).map((g) => (g.memoryBytes
+        ? `${g.name} ${Math.round(g.memoryBytes / 1024 ** 3)} GiB`
+        : g.name)).join('; '),
+      lending: vramBudgetBytes()
+        ? `${Math.round(vramBudgetBytes() / 1024 ** 3)} GiB of GPU memory` : 'not set yet',
+    }
+  },
 })
+// The last capability read, so an admission request can describe this machine
+// without probing the GPU from inside a failure path.
+let lastCapability = null
 const relay = new RelayTunnel()
 let measured = null   // { tps, tokens, elapsedMs, model, at }
 
@@ -708,7 +731,7 @@ async function nodeStatus({ inspect = false } = {}) {
   // from "the bridge has actually given this machine work" — the two looked
   // identical before, which is why an earning-nothing node read as healthy.
   return {
-    ...p4node.status(), capability: await capability(), measured,
+    ...p4node.status(), capability: (lastCapability = await capability()), measured,
     relay: relay.status(), participation: participation.status(),
     // Surfaced so a test identity can never be mistaken for the real wallet.
     debugWallet: DEBUG_WALLET ? activeAddress() : null,
