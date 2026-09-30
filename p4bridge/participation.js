@@ -89,6 +89,24 @@ const json = (res, status, body) => {
 };
 const fail = (res, status, message) => json(res, status, { error: message });
 
+/**
+ * The one method each participation path answers.
+ *
+ * `handle` used to return false when the path matched but the method did not,
+ * which dropped the request into the blanket service-token gate below it. A
+ * `GET /api/auth/challenge` — the first thing anyone types when they are
+ * working out how to join — came back 401 "service token required" on the one
+ * endpoint that has to look open to a stranger with no token at all. It reads
+ * as "not for you", and the reader stops there.
+ */
+const ALLOWED_METHOD = [
+  [/^\/api\/auth\/(challenge|node-token)$/, 'POST'],
+  [/^\/api\/expert-(volunteer|coverage)$/, 'POST'],
+  [/^\/api\/expert-demand$/, 'GET'],
+  [/^\/api\/expert-relay\/sessions$/, 'GET'],
+  [/^\/api\/proxy\/models\/[^/]+\/expert-shard$/, 'GET'],
+];
+
 class Participation {
   /**
    * @param {object} options
@@ -599,6 +617,14 @@ class Participation {
         upstream.end();
       });
       return true;
+    }
+
+    // The path is ours; only the method was wrong. Say so, rather than letting
+    // the service-token gate answer 401 for an endpoint that is open.
+    for (const [pattern, method] of ALLOWED_METHOD) {
+      if (!pattern.test(path)) continue;
+      res.setHeader('Allow', method);
+      return fail(res, 405, `${path} takes ${method}, not ${req.method}`), true;
     }
 
     return false;

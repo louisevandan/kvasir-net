@@ -2446,7 +2446,8 @@ app.all(['/api/auth/challenge', '/api/auth/node-token',
     // inside the GGUF, so dropping it loses nothing that cannot be recovered —
     // but a worker that holds several shards wants to compare them before
     // parsing megabytes, and this is how it does that cheaply.
-    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest']) {
+    // `allow` rides along so the bridge's 405 keeps saying which method it wanted.
+    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest', 'allow']) {
       const v = r.headers.get(h);
       if (v) res.setHeader(h, v);
     }
