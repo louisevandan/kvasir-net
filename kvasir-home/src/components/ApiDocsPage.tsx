@@ -471,6 +471,21 @@ export default function ApiDocsPage() {
           <p className="mt-5 rounded-lg bg-caution/8 px-3 py-2 text-xs leading-relaxed text-caution ring-1 ring-caution/20">
             {a.devnetNote}
           </p>
+          {/* Written for an agent doing this on someone's behalf, and left in
+              English like llms.txt: the files themselves are English, and their
+              names are the addresses machines fetch. Not routed through i18n —
+              Dict is `typeof en`, so one key here would be nine edits. */}
+          <p className="mt-5 text-sm leading-relaxed text-ink-muted">
+            Driving an agent?{" "}
+            <a href="/llms-api.txt" className="text-brand-300 underline underline-offset-2 hover:text-brand-200">
+              llms-api.txt
+            </a>{" "}
+            is this page written for one — wallet, key, first call, and what each error means.{" "}
+            <a href="/llms-node.txt" className="text-brand-300 underline underline-offset-2 hover:text-brand-200">
+              llms-node.txt
+            </a>{" "}
+            does the same for running a node.
+          </p>
         </div>
 
         {/* docs body — left sidebar + sections */}
