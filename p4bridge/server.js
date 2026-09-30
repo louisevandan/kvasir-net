@@ -24,6 +24,8 @@
  */
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { connect } = require('./wire');
 const { Pipeline } = require('./pipeline');
 const catalogModule = require('./catalog');
@@ -697,6 +699,26 @@ function createServer(bridge) {
         return send(res, 404, { error: { message: `unsupported controller path ${rest}` } });
       }
 
+      // Admit a wallet to the ring. Behind the service-token gate above on
+      // purpose: the caller is the admissions service, not a contributor, and
+      // what it presents is the machine-to-machine secret rather than a wallet
+      // signature. Adding is all it can do — removing one is an operator's job
+      // at the file, where the record of who admitted whom is also kept.
+      if (req.method === 'POST' && path === '/api/admissions') {
+        let body = {};
+        try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+        catch { return send(res, 400, { error: 'request body is not JSON' }); }
+        const wallet = String(body.wallet ?? '').trim();
+        if (!wallet) return send(res, 400, { error: 'wallet required' });
+        try {
+          const added = admitWallet(wallet, String(body.by ?? '').trim() || 'admissions');
+          console.log(`participation: ${added ? 'admitted' : 'already admitted'} ${wallet}`);
+          return send(res, 200, { ok: true, wallet, added });
+        } catch (e) {
+          return send(res, 500, { error: `could not record the admission: ${e.message}` });
+        }
+      }
+
       if (req.method === 'POST' && /^\/api\/controllers\/[^/]+\/(serve|unload)$/.test(path)) {
         return send(res, 409, {
           error: {
@@ -831,39 +853,94 @@ async function main() {
   await bridge.refresh();
 
 /**
- * Who may take a node token, as the environment describes it.
+ * The wallets an operator has admitted, kept where they survive a restart.
+ *
+ * A whitelist that lives only in the environment can be read but not written,
+ * so admitting one machine means editing a unit file and restarting the bridge
+ * — which drops the ring to let a single phone in. The file is the part that
+ * grows at runtime; the environment stays as the bootstrap list.
+ */
+const ADMITTED_FILE = process.env.KVR_PARTICIPATION_LIST_FILE
+  ?? path.join(__dirname, 'state', 'participation-admitted.json');
+
+let admittedCache = { at: 0, wallets: new Set() };
+
+/** Re-read when the file changed. Called on every token request, so it must not
+ *  parse the file each time, and must not serve a stale list after an admission. */
+function admittedWallets() {
+  let stamp = 0;
+  try { stamp = fs.statSync(ADMITTED_FILE).mtimeMs; } catch { return admittedCache.wallets; }
+  if (stamp === admittedCache.at) return admittedCache.wallets;
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMITTED_FILE, 'utf8'));
+    const list = Array.isArray(raw) ? raw : (raw.wallets ?? []);
+    admittedCache = { at: stamp, wallets: new Set(list.map((w) => String(w.wallet ?? w).trim()).filter(Boolean)) };
+  } catch (e) {
+    // A file we cannot read is not an empty list. Keeping the last good set
+    // fails closed for anyone new and leaves everyone already admitted working,
+    // which is the gentler of the two wrong answers.
+    console.error(`participation: ${ADMITTED_FILE} unreadable (${e.message}); keeping the last list`);
+  }
+  return admittedCache.wallets;
+}
+
+/** Admit a wallet. Returns false when it was already on the list. */
+function admitWallet(wallet, by) {
+  const w = String(wallet ?? '').trim();
+  if (!w) throw new Error('wallet required');
+  let entries = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMITTED_FILE, 'utf8'));
+    entries = Array.isArray(raw) ? raw : (raw.wallets ?? []);
+  } catch { /* first admission writes the file */ }
+  if (entries.some((e) => String(e.wallet ?? e).trim() === w)) return false;
+  entries.push({ wallet: w, by: by || 'unknown', at: new Date().toISOString() });
+  fs.mkdirSync(path.dirname(ADMITTED_FILE), { recursive: true });
+  const tmp = `${ADMITTED_FILE}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, ADMITTED_FILE);
+  admittedCache = { at: 0, wallets: new Set() };   // force a re-read
+  return true;
+}
+
+/**
+ * Who may take a node token, as the environment and the admitted list describe.
  *
  * Returns null for "anyone", which is what NodeAuth reads as no policy at all.
  *
+ * Restriction is switched on deliberately — by KVR_PARTICIPATION_RESTRICTED, or
+ * by naming a bootstrap list — and never by the act of admitting someone. An
+ * approval that silently closed the network to everyone else would be a strange
+ * thing for an approval to do.
+ *
  * KVR_PARTICIPATION_MIN_KVR was written as a balance floor and never became
  * one: nothing here can see a wallet's balance — the bridge holds no RPC client
- * and no view of the ledger — so the old expression turned any value above zero
- * into `async () => false` and refused every node on the network. An operator
- * setting what looks like a modest floor closed participation completely, and
- * the refusal arrived at the phone as an ordinary "not eligible". It still
- * refuses, because failing closed is the right direction for a gate nobody can
- * evaluate, but it now says why at startup instead of looking like a policy
- * that is working.
+ * and no view of the ledger — so any value above zero turned into
+ * `async () => false` and refused every node on the network. It still refuses,
+ * because failing closed is right for a gate nobody can evaluate, but it now
+ * says why at startup instead of looking like a policy that works.
  */
 function participationPolicy() {
-  const whitelist = (process.env.KVR_PARTICIPATION_WHITELIST ?? '')
+  const bootstrap = (process.env.KVR_PARTICIPATION_WHITELIST ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean);
+  const restricted = /^(1|true|yes)$/i.test(process.env.KVR_PARTICIPATION_RESTRICTED ?? '')
+    || bootstrap.length > 0;
   const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
 
   if (minKvr > 0) {
     console.warn('participation: KVR_PARTICIPATION_MIN_KVR is set and a balance'
       + ' floor is not implemented here — this bridge cannot read a wallet balance.'
       + ' Every node token request will be refused. Name who may join with'
-      + ' KVR_PARTICIPATION_WHITELIST instead.');
+      + ' KVR_PARTICIPATION_RESTRICTED and the admissions list instead.');
     return async () => false;
   }
-  if (whitelist.length === 0) {
+  if (!restricted) {
     console.log('participation: open — any wallet that proves a key may join');
     return null;
   }
-  const allowed = new Set(whitelist);
-  console.log(`participation: restricted to ${allowed.size} listed wallet(s)`);
-  return async (wallet) => allowed.has(wallet);
+  const seeded = new Set(bootstrap);
+  console.log(`participation: restricted — ${seeded.size} bootstrapped, admissions in ${ADMITTED_FILE}`);
+  return async (wallet) => seeded.has(wallet) || admittedWallets().has(wallet);
 }
 
   // Participation is optional: without a token secret a node token could not
