@@ -14,9 +14,10 @@ key may join, which is the case on the public gateway today.
 
 Base URL for anything over the network: https://gate.kvasir-ai.net
 
-The user's part, and it is only this: **how much GPU memory to lend**, and
-keeping a backup of the key. The installer refuses to guess the first — a
-default would either waste the card or take the machine down.
+The user's part, and it is only this: **how much GPU memory to lend**, sending
+one message to the bot that approves machines, and keeping a backup of the key.
+The installer refuses to guess the first — a default would either waste the
+card or take the machine down.
 
 ## Before you start: do not
 
@@ -89,7 +90,40 @@ that is not this machine.
 If a key was already there, the installer kept it and said so. Never overwrite
 one.
 
-## 4. The budget — the user's decision
+## 4. Ask the operator to let this machine in
+
+A bridge can be configured to admit only wallets its operator has listed. Where
+it is, this node's token request is refused however correctly it signs, and
+nothing you run on this machine changes that — the list is the operator's.
+
+Send two things to **@kvasir_watch_bot** on Telegram: the machine's profile and
+the owner's wallet address. One without the other cannot be acted on. The
+address is what gets listed; the profile is what the decision is made on.
+
+Build the block — it contains nothing secret, and the wallet address in it is
+public:
+
+    NODE=~/.local/share/kvasir-node/kvasir-node
+    KEY=~/.config/kvasir/node-key.json
+    . /etc/os-release 2>/dev/null
+    printf 'kvasir join request\n  wallet  %s\n  host    %s\n  arch    %s\n  os      %s\n  glibc   %s\n  cpu     %s cores\n  ram     %s\n  gpu     %s\n' \
+      "$("$NODE" address --key "$KEY")" \
+      "$(hostname)" \
+      "$(uname -m)" \
+      "${PRETTY_NAME:-$(uname -sr)}" \
+      "$(ldd --version 2>/dev/null | head -1 | awk '{print $NF}')" \
+      "$(nproc)" \
+      "$(free -h 2>/dev/null | awk '/^Mem:/{print $2}')" \
+      "$(nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv,noheader 2>/dev/null | paste -sd'; ' -)"
+
+You cannot send this yourself — the bot takes a message from a person, not an
+API call from a server with no credentials. Print the block and ask the user to
+send it to @kvasir_watch_bot. That is the second and last thing they do.
+
+Then wait. Step 7 will not succeed before the wallet is on the list, and the
+failure at that point is not a bug to debug — it is this step, unfinished.
+
+## 5. The budget — the user's decision
 
 Edit the unit and replace `REPLACE_ME` with a number of GiB:
 
@@ -100,7 +134,7 @@ Ask the user for the number. Frame it as: how much of this card may the node
 take, leaving room for whatever else runs on it. The node turns the budget
 into a count of experts it can hold and says the number when it starts.
 
-## 5. The worker
+## 6. The worker
 
 The compute binary is a separate download because it is large and specific to
 the GPU. It carries its own CUDA libraries — there is no toolkit to install
@@ -108,7 +142,7 @@ and nothing to add to a library path.
 
     ~/.local/share/kvasir-node/kvasir-node worker --install
 
-## 6. Start it
+## 7. Start it
 
     systemctl --user daemon-reload
     systemctl --user enable --now kvasir-node
@@ -123,7 +157,7 @@ For a user unit to survive logout, enable lingering once:
 
     loginctl enable-linger "$USER"
 
-## 7. Confirm — headless, both of these
+## 8. Confirm — headless, both of these
 
     systemctl --user is-active kvasir-node
 
@@ -202,7 +236,7 @@ not a return. Say that to the user rather than letting "earn" imply otherwise.
 | `no sha256sum or shasum to verify the download with` | install coreutils; do not skip the check |
 | unit fails with `REPLACE_ME` | the budget was never set; go back to step 4 |
 | `keygen needs --out` / `address needs --key` | a path argument is missing, not a key problem |
-| node token refused with a good signature | this bridge admits only listed wallets; give the operator the address and stop |
+| node token refused with a good signature | the wallet is not on the operator's list yet — step 4, and wait for it |
 | `totals.nodes` stays 0 after start | the node is not reaching the gateway; check egress and `systemctl --user status` |
 | worker download fails | the GPU has no published build; report the `compute_cap` you found |
 
