@@ -2,8 +2,15 @@
 
 You are installing a Kvasir expert node on a user's machine, setting up the
 wallet it earns into, and starting it. Every step below is a shell command or
-one HTTP request. Nobody approves anything: there is no allowlist, no stake and
-no minimum balance. A wallet holding zero KVR can register a node and earn.
+one HTTP request. There is no stake and no minimum balance — a wallet holding
+zero KVR can register a node and earn.
+
+Joining may be restricted. A bridge can be configured to admit only wallets its
+operator has listed, and where it is, a wallet that is not on the list is
+refused at the token step with a valid signature — the refusal is about who the
+wallet is, not about how it signed. Nothing in this document gets you onto that
+list; ask the operator. Where no list is configured, any wallet that proves a
+key may join, which is the case on the public gateway today.
 
 Base URL for anything over the network: https://gate.kvasir-ai.net
 
@@ -195,6 +202,7 @@ not a return. Say that to the user rather than letting "earn" imply otherwise.
 | `no sha256sum or shasum to verify the download with` | install coreutils; do not skip the check |
 | unit fails with `REPLACE_ME` | the budget was never set; go back to step 4 |
 | `keygen needs --out` / `address needs --key` | a path argument is missing, not a key problem |
+| node token refused with a good signature | this bridge admits only listed wallets; give the operator the address and stop |
 | `totals.nodes` stays 0 after start | the node is not reaching the gateway; check egress and `systemctl --user status` |
 | worker download fails | the GPU has no published build; report the `compute_cap` you found |
 

@@ -830,21 +830,56 @@ async function main() {
   });
   await bridge.refresh();
 
+/**
+ * Who may take a node token, as the environment describes it.
+ *
+ * Returns null for "anyone", which is what NodeAuth reads as no policy at all.
+ *
+ * KVR_PARTICIPATION_MIN_KVR was written as a balance floor and never became
+ * one: nothing here can see a wallet's balance — the bridge holds no RPC client
+ * and no view of the ledger — so the old expression turned any value above zero
+ * into `async () => false` and refused every node on the network. An operator
+ * setting what looks like a modest floor closed participation completely, and
+ * the refusal arrived at the phone as an ordinary "not eligible". It still
+ * refuses, because failing closed is the right direction for a gate nobody can
+ * evaluate, but it now says why at startup instead of looking like a policy
+ * that is working.
+ */
+function participationPolicy() {
+  const whitelist = (process.env.KVR_PARTICIPATION_WHITELIST ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
+
+  if (minKvr > 0) {
+    console.warn('participation: KVR_PARTICIPATION_MIN_KVR is set and a balance'
+      + ' floor is not implemented here — this bridge cannot read a wallet balance.'
+      + ' Every node token request will be refused. Name who may join with'
+      + ' KVR_PARTICIPATION_WHITELIST instead.');
+    return async () => false;
+  }
+  if (whitelist.length === 0) {
+    console.log('participation: open — any wallet that proves a key may join');
+    return null;
+  }
+  const allowed = new Set(whitelist);
+  console.log(`participation: restricted to ${allowed.size} listed wallet(s)`);
+  return async (wallet) => allowed.has(wallet);
+}
+
   // Participation is optional: without a token secret a node token could not
   // outlive a restart, and a fleet of phones silently dropping off is worse
   // than a surface that is plainly absent. Say which it is at startup.
   const tokenSecret = (process.env.KVR_NODE_TOKEN_SECRET ?? '').trim();
   if (tokenSecret) {
-    const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
     bridge.participation = new Participation({
       auth: new NodeAuth({
         secret: tokenSecret,
         serviceToken: SERVICE_TOKEN,
         // Operating a bridge and contributing compute to one are different
         // things. The retired hub conflated them and refused every phone that
-        // ever asked; participation is open here unless an operator sets a
-        // floor, and that floor is a separate knob from operator eligibility.
-        eligible: minKvr > 0 ? async () => false : null,
+        // ever asked, so participation stays open here unless an operator names
+        // who may join.
+        eligible: participationPolicy(),
       }),
       credit: (nodeId, units, meta) => bridge.creditRelay(nodeId, units, meta),
       // The reader that owns the model file. It runs beside this process —

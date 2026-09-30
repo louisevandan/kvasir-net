@@ -83,8 +83,11 @@ refuses, and the refusal does not say which byte was wrong.
 
 ## 1. Register the wallet
 
-Self-registration is open on this gateway. Two calls: ask for a challenge,
-sign it, post the signature.
+Do this even though it may be a no-op. Spending KVR on inference needs no
+allowlist, and a gateway that restricts nothing will let an unregistered wallet
+straight through to step 2 — but a gateway that does restrict answers 403 there
+with nothing to say why, and this step is what distinguishes the two. It costs
+two calls: ask for a challenge, sign it, post the signature.
 
     curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/register/challenge \
       -H 'Content-Type: application/json' -d '{"wallet":"<ADDRESS>"}'

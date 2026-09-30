@@ -59,10 +59,10 @@ const MODEL = {
   expertLayers: [1, 2, 3],
 };
 
-function startBridge({ shard = null } = {}) {
+function startBridge({ shard = null, eligible = null } = {}) {
   const credited = [];
   const participation = new Participation({
-    auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret' }),
+    auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret', eligible }),
     credit: (nodeId, units, meta) => credited.push({ nodeId, units, ...meta }),
     models: () => [MODEL],
     shard,
@@ -135,6 +135,34 @@ test('a phone earns a node token from a wallet signature alone', async (t) => {
   assert.ok(token.body.node_token);
   assert.equal(token.body.wallet, wallet.address);
   assert.ok(token.body.expires_in > 0);
+});
+
+test('a wallet the operator did not list gets no node token', async (t) => {
+  const listed = makeWallet();
+  const stranger = makeWallet();
+  const { server, participation } = startBridge({
+    eligible: async (wallet) => wallet === listed.address,
+  });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+
+  const token = async (w) => {
+    const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: w.address } });
+    if (challenge.status !== 200) return challenge;
+    return call(port, 'POST', '/api/auth/node-token', {
+      body: { wallet: w.address, nonce: challenge.body.nonce, signature: w.sign(challenge.body.message) },
+    });
+  };
+
+  const allowed = await token(listed);
+  assert.equal(allowed.status, 200);
+  assert.ok(allowed.body.node_token);
+
+  // Refused for who it is, not for how it signed — the signature above and the
+  // signature below are equally valid, and that is the whole point of the gate.
+  const refused = await token(stranger);
+  assert.notEqual(refused.status, 200);
+  assert.equal(refused.body.node_token, undefined);
 });
 
 test('the wrong method on an open path says so, instead of demanding a token', async (t) => {
