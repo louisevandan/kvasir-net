@@ -90,6 +90,22 @@ const json = (res, status, body) => {
 const fail = (res, status, message) => json(res, status, { error: message });
 
 /**
+ * A refusal a client can act on without reading English.
+ *
+ * `error` stays the sentence, because the shipped iOS, Android and desktop
+ * builds all put it in front of a person — turning it into a symbol would show
+ * them "not_admitted". The machine-readable part is added beside it, and in a
+ * header too: a 403 that never reached this process (Cloudflare's bot check
+ * answers one, with no JSON in it) is then distinguishable from a refusal this
+ * bridge meant. They call for opposite responses — one is "ask a human to
+ * admit you", the other is "you are not the client you said you were".
+ */
+const refuse = (res, status, code, message) => {
+  res.setHeader('X-Kvasir-Error', code);
+  return json(res, status, { error: message, code });
+};
+
+/**
  * The one method each participation path answers.
  *
  * `handle` used to return false when the path matched but the method did not,
@@ -336,7 +352,8 @@ class Participation {
         return fail(res, 400, 'that is not a wallet address'), true;
       }
       if (!await this.auth.allows(wallet)) {
-        return fail(res, 403, 'this wallet is not allowed to participate'), true;
+        return refuse(res, 403, 'not_admitted',
+          'this wallet has not been admitted to the ring yet'), true;
       }
       try {
         return json(res, 200, this.auth.newChallenge(wallet)), true;
@@ -353,7 +370,8 @@ class Participation {
         return fail(res, 400, 'wallet, nonce and signature are required'), true;
       }
       if (!await this.auth.allows(wallet)) {
-        return fail(res, 403, 'this wallet is not allowed to participate'), true;
+        return refuse(res, 403, 'not_admitted',
+          'this wallet has not been admitted to the ring yet'), true;
       }
       const message = this.auth.consumeChallenge(wallet, nonce);
       if (!message) {
