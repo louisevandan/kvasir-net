@@ -165,6 +165,28 @@ test('a wallet the operator did not list gets no node token', async (t) => {
   assert.equal(refused.body.node_token, undefined);
 });
 
+test('taking a wallet off the list stops the token it already holds', async (t) => {
+  let admitted = true;
+  const { server, participation } = startBridge({ eligible: async () => admitted });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const w = makeWallet();
+
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: w.address } });
+  const minted = await call(port, 'POST', '/api/auth/node-token', {
+    body: { wallet: w.address, nonce: challenge.body.nonce, signature: w.sign(challenge.body.message) },
+  });
+  const token = minted.body.node_token;
+  assert.equal((await call(port, 'GET', '/api/expert-demand', { token })).status, 200);
+
+  // The operator removes the wallet. A thirty-day token that kept working
+  // until it expired would make the removal a thing nobody could rely on.
+  admitted = false;
+  const after = await call(port, 'GET', '/api/expert-demand', { token });
+  assert.equal(after.status, 403);
+  assert.equal(after.headers['x-kvasir-error'], 'not_admitted');
+});
+
 test('the wrong method on an open path says so, instead of demanding a token', async (t) => {
   const { server, participation } = startBridge();
   const port = await listen(server);

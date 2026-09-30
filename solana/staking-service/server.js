@@ -2453,7 +2453,10 @@ app.all(['/api/auth/challenge', '/api/auth/node-token',
     // but a worker that holds several shards wants to compare them before
     // parsing megabytes, and this is how it does that cheaply.
     // `allow` rides along so the bridge's 405 keeps saying which method it wanted.
-    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest', 'allow']) {
+    // x-kvasir-error is how a client tells a refusal the bridge meant from a 403
+    // that never reached it. Dropping it here left the header visible only to
+    // callers on the bridge's own loopback — that is, to nobody who needed it.
+    for (const h of ['content-type', 'content-length', 'x-kvasir-shard-digest', 'allow', 'x-kvasir-error']) {
       const v = r.headers.get(h);
       if (v) res.setHeader(h, v);
     }

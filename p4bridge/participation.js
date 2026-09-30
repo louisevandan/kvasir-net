@@ -334,8 +334,27 @@ class Participation {
   /** Returns true when the request was handled. */
   async handle(req, res, path, query, body) {
     const who = this.auth.identify(req);
-    const needsNode = () => {
-      if (who.kind === 'service' || who.kind === 'node') return true;
+    /**
+     * A caller allowed to use the participation surface right now.
+     *
+     * The eligibility check used to happen only where a token is minted, so a
+     * node token outlived the decision that granted it: taking a wallet off the
+     * list left it working for up to thirty days, and the operator who removed
+     * it had no way to know that. A token says which wallet is asking; whether
+     * that wallet may still ask is a question with a current answer, so it is
+     * asked here too. The list is an in-memory set re-read only when the file
+     * changes, so this costs a lookup.
+     *
+     * A service token is exempt: it is the machine-to-machine secret, not a
+     * contributor, and nothing admits or removes it.
+     */
+    const needsNode = async () => {
+      if (who.kind === 'service') return true;
+      if (who.kind === 'node') {
+        if (await this.auth.allows(who.wallet)) return true;
+        refuse(res, 403, 'not_admitted', 'this wallet is no longer admitted to the ring'), true;
+        return false;
+      }
       fail(res, 401, 'authentication required');
       return false;
     };
@@ -386,7 +405,7 @@ class Participation {
     }
 
     if (req.method === 'GET' && path === '/api/expert-demand') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       const want = String(query.get('model') ?? '');
       const models = this.models()
         .filter((m) => !want || m.id === want || m.name === want || m.id.endsWith(want))
@@ -402,7 +421,7 @@ class Participation {
     }
 
     if (req.method === 'POST' && path === '/api/expert-volunteer') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       // Frozen: reachable, authenticating, serving every relay it already has,
       // and handing out nothing new. This is what a migration needs and what
       // stopping the process cannot give it — the old bridge has to stay up to
@@ -457,7 +476,7 @@ class Participation {
     }
 
     if (req.method === 'POST' && path === '/api/expert-coverage') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       const workerId = String(body?.worker_id ?? '').trim();
       const model = String(body?.model ?? '').trim();
       if (!workerId || !model) {
@@ -569,7 +588,7 @@ class Participation {
 
     const shardPath = /^\/api\/proxy\/models\/([^/]+)\/expert-shard$/.exec(path);
     if (req.method === 'GET' && shardPath) {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       if (!this.shard) {
         return fail(res, 503, 'this bridge serves no expert shards'), true;
       }
