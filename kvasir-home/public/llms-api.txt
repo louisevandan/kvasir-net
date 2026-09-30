@@ -1,0 +1,227 @@
+# Get a Kvasir API key and call inference
+
+You are getting an inference API key for a user, from a Solana wallet, and
+making the first call with it. Every step below is one HTTP request. There is
+no operator to wait for and no console to click through.
+Base URL: https://gate.kvasir-ai.net
+
+The user's part depends on where their wallet lives. If you can sign with it,
+nothing. If it is a wallet you must not touch, they sign two short messages and
+hand you the signatures. If they have no wallet, they decide whether you may
+make one. Step 0 settles which of the three this is — do it first.
+
+What the key buys: inference on open models that are split across several
+machines, billed per token in KVR on Solana **devnet**. KVR is a devnet utility
+token. It is not a tradable asset and none of this spends real money.
+
+## Before you start: do not
+
+- **Do not print the wallet secret or the API key**, echo them, put them in a
+  variable you print, or write them into a file the user did not ask for.
+  Anything you print is in your transcript. Pipe them; do not display them.
+- **The API key is returned once.** `/api/credits/apikey` answers with it a
+  single time and stores only a hash. Lose it and you issue another; there is
+  no endpoint that reads it back.
+- **Do not put the key in a URL.** It goes in `Authorization: Bearer`, never
+  in a query string, where it lands in logs and history.
+- The wallet **address** is public and safe to show. The **nonce** and the
+  **message** from a challenge are safe to show — they authorise nothing on
+  their own. A **signature** over one message is single use and safe for the
+  user to paste back to you; a **secret key** never is. If you only ever
+  receive signatures, you never hold anything that can spend the wallet.
+
+## 0. The wallet — three ways in
+
+Every later step proves the wallet by signing a short text message. What
+changes is who holds the key that signs.
+
+### A. The user has a keypair file
+
+A Solana CLI keypair — a JSON array of 64 bytes, often at
+`~/.config/solana/id.json`. You can read the address and sign locally. Ask
+which file; do not ask them to paste its contents.
+
+    node -e 'const{Keypair}=require("@solana/web3.js");
+    const s=JSON.parse(require("fs").readFileSync(process.argv[1]));
+    console.log(Keypair.fromSecretKey(Uint8Array.from(s)).publicKey.toString())' <path>
+
+### B. The user has a wallet you must not touch
+
+A hardware wallet, a phone, a browser extension, the Kvasir wallet app. You
+never see the key. Ask them for the **address** — that is public — and when a
+step needs a signature, give them the `message` string and ask for the
+signature back as base64. Say plainly what they are signing: it is a sign-in
+challenge that spends nothing and expires.
+
+    # they sign; you receive only this
+    <64-byte signature, base64>
+
+This path reaches exactly the same result as A. Nothing in this document needs
+the secret itself — only signatures over messages the gateway issued.
+
+### C. No wallet yet
+
+Ask before creating one. A wallet you create is the account the key bills
+against, and the user has to keep it:
+
+    node -e 'const{Keypair}=require("@solana/web3.js");const k=Keypair.generate();
+    require("fs").writeFileSync(process.argv[1],JSON.stringify([...k.secretKey]),{mode:0o600});
+    console.log(k.publicKey.toString())' ~/.config/kvasir/api-wallet.json
+
+That prints the address and nothing else. Tell the user where the file is and
+that it is the only copy.
+
+### Signing, when the key is yours to use (A and C)
+
+    node -e 'const{Keypair}=require("@solana/web3.js"),nacl=require("tweetnacl"),fs=require("fs");
+    const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.argv[1]))));
+    process.stdout.write(Buffer.from(nacl.sign.detached(Buffer.from(process.argv[2],"utf8"),kp.secretKey)).toString("base64"))' <keyfile> "<message>"
+
+Sign the `message` **verbatim** — every byte, newlines included. A message
+altered by so much as a trailing newline produces a signature the gateway
+refuses, and the refusal does not say which byte was wrong.
+
+## 1. Register the wallet
+
+Self-registration is open on this gateway. Two calls: ask for a challenge,
+sign it, post the signature.
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/register/challenge \
+      -H 'Content-Type: application/json' -d '{"wallet":"<ADDRESS>"}'
+
+Answers `{nonce, message}`. Sign it the way step 0 settled — locally, or by
+handing the `message` to the user and taking the base64 signature back — then:
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/register \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>"}'
+
+`200` with `"whitelisted":true` means the wallet may now ask for a key. `403`
+means self-registration is closed on this gateway and an operator has to add
+the wallet; stop and tell the user.
+
+## 2. Issue the key
+
+The same challenge-and-sign shape again, against a different pair of paths.
+The first challenge was spent by step 1; ask for a new one.
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/challenge \
+      -H 'Content-Type: application/json' -d '{"wallet":"<ADDRESS>"}'
+
+`403` here means the wallet is not whitelisted — go back to step 1. Then:
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/apikey \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>","label":"<what this key is for>"}'
+
+Answers `{apiKey, wallet}`. Put it somewhere the user's tools read from — an
+environment variable, their secret store — without printing it:
+
+    ... | jq -r .apiKey > ~/.config/kvasir/api-key    # mode 600
+
+Give the key a `label` that says which agent or app holds it. It is what the
+user sees in `/api/credits/apikey/list` when they come back to a list of keys
+and have to work out which is which.
+
+## 3. Call inference
+
+    curl -fsS https://gate.kvasir-ai.net/v1/chat/completions \
+      -H "Authorization: Bearer $KVR_API_KEY" -H 'Content-Type: application/json' \
+      -d '{"model":"step-3.7-flash","messages":[{"role":"user","content":"Explain layer-split inference."}]}'
+
+What the gateway serves, and only this:
+
+| surface | paths |
+| --- | --- |
+| OpenAI | `/v1/chat/completions`, `/v1/models` |
+| Anthropic | `/anthropic/v1/messages`, `/anthropic/v1/models` |
+
+`/v1/responses` is **not implemented** and answers a JSON 404 naming what does
+exist. The Anthropic surface is **non-streaming** for now: `stream:true` there
+is refused with a reason rather than answered in the wrong protocol — stream on
+`/v1/chat/completions` instead.
+
+Each surface answers in its own error shape. OpenAI paths return
+`{"error":{"message","type"}}`; Anthropic paths return
+`{"type":"error","error":{"type","message"}}`. Read the one that matches the
+path you called.
+
+Pricing is `0.01 + tokens × 0.00002` KVR. Check what is left:
+
+    curl -fsS -H "Authorization: Bearer $KVR_API_KEY" \
+      https://gate.kvasir-ai.net/api/credits/balance
+
+Answers `{balance, spent, symbol}`.
+
+## 4. Confirm — headless, both of these
+
+    curl -fsS -o /dev/null -w '%{http_code}\n' \
+      -H "Authorization: Bearer $KVR_API_KEY" https://gate.kvasir-ai.net/v1/models
+
+Needs `200`. A `401` means the key is not being sent or is not valid — check
+the header, not the key's value.
+
+    curl -fsS https://gate.kvasir-ai.net/v1/chat/completions \
+      -H "Authorization: Bearer $KVR_API_KEY" -H 'Content-Type: application/json' \
+      -d '{"model":"step-3.7-flash","max_tokens":8,"messages":[{"role":"user","content":"Reply with exactly: ok"}]}' \
+      | jq -r '.choices[0].message.content'
+
+Needs a line of content back. That answer crossed the gateway, the bridge and
+a ring of machines none of which held the whole model.
+
+## Managing keys later
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/apikey/list \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>"}'
+
+`list` answers `{wallet, keys:[{id, label, createdAt, revokedAt, revokedBy}]}`.
+`id` is the first 12 characters of the key's hash — enough to tell two keys
+apart, and not enough to use one.
+
+Revoking takes the key **itself**, not its label or its id. The server stores
+only a hash, so presenting the key is what proves you hold it:
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/apikey/revoke \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>","apiKey":"<THE KEY>"}'
+
+If the key is lost — or was printed somewhere and you no longer trust it —
+revoke every key this wallet holds instead, which needs no key at all:
+
+    -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>","all":true}'
+
+Both take a fresh challenge from `/api/credits/challenge`, signed the same way.
+Revoke a key the moment it has been printed anywhere.
+
+## Topping up
+
+Transfer KVR to the gateway treasury, then tell the gateway about the transfer:
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/credits/deposit \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","amount":<KVR>,"signature":"<TX SIGNATURE>"}'
+
+On devnet, prepaid credits are held in the gateway treasury and tracked in its
+ledger until an on-chain staking program ships. Say that to the user rather
+than describing the balance as theirs on-chain.
+
+## Errors
+
+| what you see | what to do |
+| --- | --- |
+| `403` on `/api/credits/register` | self-registration is closed here; an operator must add the wallet |
+| `403` on `/api/credits/challenge` | the wallet is not whitelisted; do step 1 first |
+| `401` `this endpoint needs an API key` | the header is missing or malformed — not a billing problem |
+| `402` | the balance is spent; top up, then retry |
+| `404` `unknown_endpoint` | that path does not exist here; the body names the ones that do |
+| `400` `streaming is not implemented on the Anthropic surface` | send `stream:false`, or stream on `/v1/chat/completions` |
+| `401` `signature verification failed` | the message was not signed byte for byte, or the nonce was already spent — take a fresh challenge |
+| `400` `apiKey or all required` on revoke | revoke names the key itself, or `"all":true`; a label will not do |
+| `502` from the gateway | the ring is not answering; report it rather than retrying in a loop |
+
+## Related
+
+- Run a node and earn instead of spending: https://kvasir-ai.net/llms-node.txt
+- What the network is: https://kvasir-ai.net/llms.txt
+- The full site as text: https://kvasir-ai.net/llms-full.txt

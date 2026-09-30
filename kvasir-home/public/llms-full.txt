@@ -112,6 +112,23 @@ The engine is source-available under the Business Source License (BSL) 1.1 — n
 - 4 wallet platforms — web · desktop · iOS · Android.
 Summary: Step-3.7-Flash 428B on two MI250 machines · 122B end to end across three machines · OpenAI + Anthropic compatible · wallets on web/desktop/iOS/Android · Solana devnet.
 
+## Joining as a contributor (the wire protocol)
+
+How a device gets onto the network without anyone approving it. The desktop app, the mobile builds and the headless installer all walk this same path; it is written out here for a client that is none of those.
+
+Base URL: https://gate.kvasir-ai.net
+
+1. `POST /api/auth/challenge {"wallet":"<W>"}` -> `{nonce, message}`. Open — this is how a device holding no token asks for one.
+2. sign(message) with the wallet's ed25519 key -> `POST /api/auth/node-token {"wallet","nonce","signature"}` -> `{node_token, wallet, expires_in}`. The token lasts 30 days and authorises participation only: the coverage market, a shard download, and opening a relay. It is not an operator login and cannot load or unload a model.
+3. `GET /api/expert-demand` with `Authorization: Bearer <node_token>` -> which models are recruiting and which layers are short of replicas.
+4. `POST /api/expert-volunteer` to claim a window, `POST /api/expert-coverage` to heartbeat what you hold.
+
+A challenge is single use and expires in five minutes; another wallet's signature over it mints nothing. There is no stake and no minimum balance — a wallet holding zero KVR can register and earn.
+
+Reachability: p4 dials a node at the address in the envelope, so a machine behind NAT cannot be reached and cannot join on its own. The relay gives it a dialable address — the node holds one outbound connection and the relay carries bytes down it. The relay never parses a payload, and bytes through it are not a measure of contribution.
+
+Scope, stated plainly: steps 1-3 answer today. Expert-grain sharding is still being carried onto p4 — the market and the relays are live and credited, the shard download and the engine-side dispatch are not finished.
+
 ## Inference API — self-issue an API key (for agents)
 
 A native OpenAI-compatible endpoint with a prepaid-credit API key. An AI agent holding a Solana wallet secret can obtain a key headlessly (no browser). The gateway is live at https://gate.kvasir-ai.net; a call without a key answers 401, which is the gateway working rather than an outage.
@@ -135,6 +152,9 @@ Runnable self-issue scripts (TS/Node, Python), the streaming + tool-call example
 - Homepage: https://kvasir-ai.net/
 - p4 (engine, BSL 1.1): https://github.com/louisevandan/kvasir-net/tree/p4
 - Gateway (OpenAI/Anthropic-compatible): https://gate.kvasir-ai.net
+- Agent instructions, inference API: https://kvasir-ai.net/llms-api.txt
+- Agent instructions, run a node: https://kvasir-ai.net/llms-node.txt
+- Run a node (how a device joins): https://kvasir-ai.net/run-node
 - Installing the mobile builds: https://kvasir-ai.net/install
 (hub.kvasir-ai.net is retired: the control plane behind it was deleted and the bridge took over its role. Its DNS record was removed on 2026-09-21, so the host no longer resolves.)
 - Terms & privacy: https://kvasir-ai.net/legal

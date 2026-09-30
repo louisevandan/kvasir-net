@@ -1,0 +1,205 @@
+# Install a Kvasir node and join the ring
+
+You are installing a Kvasir expert node on a user's machine, setting up the
+wallet it earns into, and starting it. Every step below is a shell command or
+one HTTP request. Nobody approves anything: there is no allowlist, no stake and
+no minimum balance. A wallet holding zero KVR can register a node and earn.
+
+Base URL for anything over the network: https://gate.kvasir-ai.net
+
+The user's part, and it is only this: **how much GPU memory to lend**, and
+keeping a backup of the key. The installer refuses to guess the first — a
+default would either waste the card or take the machine down.
+
+## Before you start: do not
+
+- **Do not print the node key**, `cat` it, echo it, or copy it into the
+  conversation. `~/.config/kvasir/node-key.json` is a 64-byte Solana secret in
+  a JSON array. Rewards are paid to it and anyone who reads it can spend them.
+  Anything you print is in your transcript.
+- **Do not put a funded wallet's secret on a server.** The installer generates
+  a key for exactly this reason. If the user wants rewards in a wallet they
+  already hold, do not move the secret here — see "Earning into a wallet you
+  do not put on the box" below.
+- **Do not start the node before the budget is set.** The unit ships with
+  `REPLACE_ME` on purpose, and systemd will fail the unit rather than guess.
+- The wallet **address** is public and safe to show — show it, the user needs
+  it to watch earnings. The node token from `/api/auth/node-token` is safe for
+  you to hold: it authorises participation and nothing else, and it cannot
+  load or unload a model.
+
+## 1. Check the machine
+
+Linux only — for macOS or Windows the user wants the desktop app instead, at
+https://kvasir-ai.net/run-node.
+
+    uname -s -m        # Linux, and x86_64 or aarch64
+    nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv,noheader
+    ldd --version | head -1
+
+What it needs:
+
+| requirement | why it fails otherwise |
+| --- | --- |
+| NVIDIA GPU, compute capability 7.5+ | GTX 16xx / RTX 20xx and newer; older cards have no build |
+| driver supporting CUDA 13 (R580+) | the worker carries its own CUDA, but not a driver |
+| glibc 2.27+ | Ubuntu 18.04, Debian 10, RHEL 8 and later |
+| ~1 GB, plus ~9.5 MB per expert held | the node, its runtime, and the weights it agrees to carry |
+
+Stop and tell the user if any of these is missing. None of them can be worked
+around from here.
+
+## 2. Install
+
+    curl -fsSL https://pub-3fa7c08233cd497dbd39f89a9093c965.r2.dev/node/install.sh | sh
+
+Run it as the user, not as root, unless they asked for a system service. As a
+user it installs under `~/.local/share/kvasir-node` with a user unit; as root
+it goes to `/opt` with a system unit. On a shared box the user install is the
+better neighbour.
+
+What it does, and you should know it did: works out the architecture, uses the
+machine's Node if it is version 20 or newer and otherwise unpacks a private
+one, reads `latest.json`, downloads the release and **checks its SHA-256
+before unpacking**, creates `~/.config/kvasir/node-key.json` if there is none,
+and writes a systemd unit. It does not start anything.
+
+It prints the wallet address. Keep it — every later check is addressed to it.
+
+## 3. The key
+
+The installer made one if there was none. Confirm it exists and is not
+readable by anyone else, without reading it:
+
+    ls -l ~/.config/kvasir/node-key.json     # expect -rw------- (600)
+    ~/.local/share/kvasir-node/kvasir-node address --key ~/.config/kvasir/node-key.json
+
+The second prints the address only. Tell the user, in these terms: this file
+is the account rewards are paid into, it is the only copy, and if the machine
+dies without a backup the earnings are gone. Ask them to back it up somewhere
+that is not this machine.
+
+If a key was already there, the installer kept it and said so. Never overwrite
+one.
+
+## 4. The budget — the user's decision
+
+Edit the unit and replace `REPLACE_ME` with a number of GiB:
+
+    ${EDITOR:-vi} ~/.config/systemd/user/kvasir-node.service
+    # ExecStart=... run --key ... --budget 8
+
+Ask the user for the number. Frame it as: how much of this card may the node
+take, leaving room for whatever else runs on it. The node turns the budget
+into a count of experts it can hold and says the number when it starts.
+
+## 5. The worker
+
+The compute binary is a separate download because it is large and specific to
+the GPU. It carries its own CUDA libraries — there is no toolkit to install
+and nothing to add to a library path.
+
+    ~/.local/share/kvasir-node/kvasir-node worker --install
+
+## 6. Start it
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now kvasir-node
+    systemctl --user status kvasir-node
+
+On start the node registers under the wallet, asks the network which experts
+are scarce, downloads only those weights, and begins answering for them. What
+it is given depends on what the network is short of at that moment — it is a
+market, not an assignment.
+
+For a user unit to survive logout, enable lingering once:
+
+    loginctl enable-linger "$USER"
+
+## 7. Confirm — headless, both of these
+
+    systemctl --user is-active kvasir-node
+
+Needs `active`.
+
+    curl -fsS https://gate.kvasir-ai.net/api/node/status/<ADDRESS>
+
+Answers `{owner, totals:{nodes, online, contributedUnits, effectiveUnits,
+pending, claimedTotal, lifetimeRewards}, nodes:[]}`. Needs `totals.nodes` to
+be at least 1 — that is the network agreeing this node exists. `online` turns
+1 once it is answering. `contributedUnits` stays 0 until it has actually
+carried work, which is normal for a node that just started.
+
+Give the user this URL. It is how they watch it earn, and it needs no key.
+
+## Earning into a wallet you do not put on the box
+
+The node signs with the key it holds, so rewards accrue to that key's address.
+To end up in a wallet the user already has, do not copy that wallet's secret
+onto the server. Let the node keep its own key and have the user move the
+balance out, or claim to their wallet from the app — the desktop and mobile
+wallets do this without the server key ever leaving the server.
+
+## What a node token is, if you write your own client
+
+The installer does this for you. A client that is not the installer proves a
+wallet and gets a participation token:
+
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/auth/challenge \
+      -H 'Content-Type: application/json' -d '{"wallet":"<ADDRESS>"}'
+    # sign message verbatim, base64
+    curl -fsS -X POST https://gate.kvasir-ai.net/api/auth/node-token \
+      -H 'Content-Type: application/json' \
+      -d '{"wallet":"<ADDRESS>","nonce":"<NONCE>","signature":"<BASE64>"}'
+    # then, with Authorization: Bearer <node_token>
+    curl -fsS -H "Authorization: Bearer <TOKEN>" https://gate.kvasir-ai.net/api/expert-demand
+
+The token lasts 30 days and authorises participation only — the coverage
+market, a shard download, and opening a relay. Holding it grants nothing over
+a model. A challenge is single use and expires in five minutes.
+
+A machine behind NAT cannot be dialled and so cannot join on its own; the
+relay gives it an address it has not got, and the node holds one outbound
+connection to it. Bytes through a relay are not a measure of contribution and
+are never credited as one.
+
+Honest scope: registering, reading the market and opening a relay work today.
+Expert-grain sharding is still being carried onto p4 — the shard download and
+the engine-side dispatch are not finished, so a client you write yourself can
+get as far as the market and no further. The installer's node uses the path
+that is built.
+
+## What it earns
+
+`units += (tokens / 1k) × (node_layers / total_layers)`, then multiplied by a
+performance tier from measured decode throughput: S ≥ 90 tok/s ×1.5, A ≥ 60
+×1.25, B ≥ 30 ×1.0, C < 30 ×0.7. Expert work is credited in full with no tier
+multiplier — the tiers apply to nodes that generate tokens, which an expert
+node does not.
+
+Infrastructure roles (gateway host, bridge host) also accrue hourly uptime.
+They are assigned by the network, not bought, and a node cannot grant them to
+itself.
+
+KVR is a Solana **devnet** utility token. It is not tradable, not a price, and
+not a return. Say that to the user rather than letting "earn" imply otherwise.
+
+## Errors
+
+| what you see | what to do |
+| --- | --- |
+| `this installs a Linux node` | macOS or Windows — send them to the desktop app |
+| `no build for <arch>` | only x86_64 and aarch64 exist; stop |
+| `checksum mismatch` | the download was corrupted or tampered with; do not unpack, retry once, then stop |
+| `the index has no build for linux-<arch> yet` | nothing published for that architecture; tell the user |
+| `no sha256sum or shasum to verify the download with` | install coreutils; do not skip the check |
+| unit fails with `REPLACE_ME` | the budget was never set; go back to step 4 |
+| `keygen needs --out` / `address needs --key` | a path argument is missing, not a key problem |
+| `totals.nodes` stays 0 after start | the node is not reaching the gateway; check egress and `systemctl --user status` |
+| worker download fails | the GPU has no published build; report the `compute_cap` you found |
+
+## Related
+
+- Spend on inference instead of earning: https://kvasir-ai.net/llms-api.txt
+- The guide a person reads: https://kvasir-ai.net/run-node
+- What the network is: https://kvasir-ai.net/llms.txt
