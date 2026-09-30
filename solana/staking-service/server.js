@@ -2428,6 +2428,12 @@ const andList = (xs) => (xs.length > 1
 // /api/admin/*, which is a different surface with a different lifetime.
 app.all(['/api/auth/challenge', '/api/auth/node-token',
          '/api/expert-demand', '/api/expert-volunteer', '/api/expert-coverage',
+         // Admitting a wallet is the bridge's to record, and the admissions
+         // service reaches the bridge the same way everything else does. It was
+         // missing from this list, so an approval a person had already pressed
+         // came back "no such endpoint" — from the gateway, about a route the
+         // bridge had.
+         '/api/admissions',
          '/api/proxy/models/:model/expert-shard',
          '/api/proxy/models/:model/stage'], async (req, res) => {
   if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
