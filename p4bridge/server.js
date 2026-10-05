@@ -31,7 +31,6 @@ const { Pipeline } = require('./pipeline');
 const catalogModule = require('./catalog');
 const { NodeAuth } = require('./nodeauth');
 const { Participation } = require('./participation');
-const wsrelay = require('./wsrelay');
 const toolcalls = require('./toolcalls');
 const gate = require('./gate');
 
@@ -713,8 +712,7 @@ function createServer(bridge) {
       // Admit a wallet to the ring. Behind the service-token gate above on
       // purpose: the caller is the admissions service, not a contributor, and
       // what it presents is the machine-to-machine secret rather than a wallet
-      // signature. Adding is all it can do — removing one is an operator's job
-      // at the file, where the record of who admitted whom is also kept.
+      // signature. Removal is /api/admissions/remove below, behind the same gate.
       if (req.method === 'POST' && path === '/api/admissions') {
         let body = {};
         try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
@@ -728,6 +726,35 @@ function createServer(bridge) {
         } catch (e) {
           return send(res, 500, { error: `could not record the admission: ${e.message}` });
         }
+      }
+
+      // Remove a wallet: the same gate and the same file as admitting one. Its
+      // node token keeps verifying until it expires, so taking it off the list
+      // is not enough by itself — every relay it has open is closed with 4403
+      // and everything it registered is dropped, now rather than at the next
+      // admission recheck.
+      if (req.method === 'POST' && path === '/api/admissions/remove') {
+        let body = {};
+        try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+        catch { return send(res, 400, { error: 'request body is not JSON' }); }
+        const wallet = String(body.wallet ?? '').trim();
+        if (!wallet) return send(res, 400, { error: 'wallet required' });
+        let removed;
+        try {
+          removed = removeWallet(wallet);
+        } catch (e) {
+          return send(res, 500, { error: `could not record the removal: ${e.message}` });
+        }
+        // A wallet on the bootstrap list (or an open bridge) is still admitted
+        // after leaving the file; cutting it off would contradict the policy
+        // the next request is judged by.
+        const auth = bridge.participation?.auth;
+        const stillAdmitted = auth ? await auth.allows(wallet) : false;
+        const revoked = bridge.participation && !stillAdmitted
+          ? bridge.participation.revoke(wallet) : null;
+        console.log(`participation: ${removed ? 'removed' : 'was not listed'} ${wallet}`
+          + `${stillAdmitted ? ' (still admitted by policy)' : ''}`);
+        return send(res, 200, { ok: true, wallet, removed, still_admitted: stillAdmitted, revoked });
       }
 
       if (req.method === 'POST' && /^\/api\/controllers\/[^/]+\/(serve|unload)$/.test(path)) {
@@ -925,50 +952,25 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
  * dial out and meet here.
  */
 function attachRelays(server, bridge) {
-  server.on('upgrade', async (req, socket, head) => {
+  server.on('upgrade', (req, socket, head) => {
+    // Before anything else, and before anything is awaited: a reset on a
+    // socket with no 'error' listener is an uncaught exception, and this
+    // process also serves the ring.
+    socket.on('error', () => socket.destroy());
     const url = new URL(req.url, 'http://bridge.local');
     const path = url.pathname.replace(/\/+$/, '');
     if (!bridge.participation || !['/api/expert-relay', '/api/ring-relay'].includes(path)) {
       socket.destroy();
       return;
     }
-    // Asynchronous because admission is: the eligibility policy may consult
-    // something outside this process. A throw must not escape as an unhandled
-    // rejection in the process that also serves the ring.
-    let target;
-    try {
-      target = await bridge.participation.resolveUpgrade(path, url.searchParams);
-    } catch (error) {
-      console.error(`[relay] upgrade refused: ${error.message}`);
-      return wsrelay.refuse(req, socket, 1011, 'relay unavailable');
-    }
-    if (!target || target.code) {
-      // A close code rather than a reset: the clients log it, and 4401 from
-      // 4404 is the difference between "your token expired" and "nothing has
-      // claimed that session yet", which are diagnosed very differently.
-      return wsrelay.refuse(req, socket, target?.code ?? 4404, target?.reason ?? 'unknown relay');
-    }
-    wsrelay.bridge(req, socket, head, target, {
-      onBytes: (direction, bytes) =>
-        bridge.participation.noteRelayBytes(target.session, direction, bytes),
-      onClose: () => bridge.participation.noteRelayClosed(target.session),
-      log: (line) => console.log(`[relay ${target.session}] ${line}`),
-    });
+    bridge.participation
+      .handleUpgrade(path, url.searchParams, req, socket, head, (line) => console.log(line))
+      .catch((error) => {
+        console.error(`[relay] upgrade failed: ${error.message}`);
+        socket.destroy();
+      });
   });
 }
-
-async function main() {
-  const catalogFile = process.env.P4_BRIDGE_CATALOG ?? './catalog.json';
-  const port = Number(process.env.P4_BRIDGE_PORT ?? 19100);
-  // Loopback by default. Without P4_BRIDGE_TOKEN this service is unauthenticated
-  // and will run inference on the ring for anyone who can reach it, so the
-  // public path is a tunnel that terminates here — not an open bind.
-  const host = process.env.P4_BRIDGE_HOST ?? '127.0.0.1';
-  const bridge = new Bridge({
-    catalogFile,
-    operatorWallet: process.env.P4_BRIDGE_OPERATOR_WALLET ?? '',
-  });
-  await bridge.refresh();
 
 /**
  * The wallets an operator has admitted, kept where they survive a restart.
@@ -1021,6 +1023,28 @@ function admitWallet(wallet, by) {
   return true;
 }
 
+/** Remove a wallet from the admitted file. Returns false when it was not on it. */
+function removeWallet(wallet) {
+  const w = String(wallet ?? '').trim();
+  if (!w) throw new Error('wallet required');
+  let entries;
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMITTED_FILE, 'utf8'));
+    entries = Array.isArray(raw) ? raw : (raw.wallets ?? []);
+  } catch (e) {
+    if (e.code === 'ENOENT') return false;   // nothing was ever admitted
+    throw e;                                  // never overwrite a file we cannot read
+  }
+  const kept = entries.filter((e) => String(e.wallet ?? e).trim() !== w);
+  if (kept.length === entries.length) return false;
+  fs.mkdirSync(path.dirname(ADMITTED_FILE), { recursive: true });
+  const tmp = `${ADMITTED_FILE}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(kept, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, ADMITTED_FILE);
+  admittedCache = { at: 0, wallets: new Set() };   // force a re-read
+  return true;
+}
+
 /**
  * Who may take a node token, as the environment and the admitted list describe.
  *
@@ -1060,6 +1084,19 @@ function participationPolicy() {
   console.log(`participation: restricted — ${seeded.size} bootstrapped, admissions in ${ADMITTED_FILE}`);
   return async (wallet) => seeded.has(wallet) || admittedWallets().has(wallet);
 }
+
+async function main() {
+  const catalogFile = process.env.P4_BRIDGE_CATALOG ?? './catalog.json';
+  const port = Number(process.env.P4_BRIDGE_PORT ?? 19100);
+  // Loopback by default. Without P4_BRIDGE_TOKEN this service is unauthenticated
+  // and will run inference on the ring for anyone who can reach it, so the
+  // public path is a tunnel that terminates here — not an open bind.
+  const host = process.env.P4_BRIDGE_HOST ?? '127.0.0.1';
+  const bridge = new Bridge({
+    catalogFile,
+    operatorWallet: process.env.P4_BRIDGE_OPERATOR_WALLET ?? '',
+  });
+  await bridge.refresh();
 
   // Participation is optional: without a token secret a node token could not
   // outlive a restart, and a fleet of phones silently dropping off is worse
@@ -1141,4 +1178,7 @@ if (require.main === module) {
   main().catch((error) => { console.error(`p4-bridge failed to start: ${error.message}`); process.exit(1); });
 }
 
-module.exports = { Bridge, createServer, attachRelays, promptFrom, engineOptions };
+module.exports = {
+  Bridge, createServer, attachRelays, promptFrom, engineOptions,
+  participationPolicy, admitWallet, removeWallet,
+};

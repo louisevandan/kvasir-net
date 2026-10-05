@@ -14,7 +14,7 @@ const http = require('node:http');
 const net = require('node:net');
 
 const { NodeAuth } = require('../nodeauth');
-const { Participation } = require('../participation');
+const { Participation, defaultSessionName } = require('../participation');
 const wsrelay = require('../wsrelay');
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -78,16 +78,13 @@ function startBridge({ shard = null, eligible = null } = {}) {
     if (await participation.handle(req, res, url.pathname, url.searchParams, body)) return;
     res.writeHead(404).end();
   });
-  server.on('upgrade', async (req, socket, head) => {
+  // The production path, so the harness cannot drift from it: handleUpgrade
+  // puts an error listener on the socket before it awaits anything.
+  server.on('upgrade', (req, socket, head) => {
+    socket.on('error', () => socket.destroy());
     const url = new URL(req.url, 'http://test.local');
-    const target = await participation.resolveUpgrade(url.pathname, url.searchParams);
-    if (!target || target.code) {
-      return wsrelay.refuse(req, socket, target?.code ?? 4404, target?.reason ?? 'unknown');
-    }
-    wsrelay.bridge(req, socket, head, target, {
-      onBytes: (d, n) => participation.noteRelayBytes(target.session, d, n),
-      onClose: () => participation.noteRelayClosed(target.session),
-    });
+    participation.handleUpgrade(url.pathname, url.searchParams, req, socket, head)
+      .catch(() => socket.destroy());
   });
   return { server, participation, credited };
 }
@@ -796,4 +793,108 @@ test('a relay session name is checked for charset and length', async (t) => {
   const fallback = await call(port, 'POST', '/api/expert-coverage', {
     token, body: coverageFor('', 'phone-9') });
   assert.equal(fallback.body.session, 'expert-phone-9');
+});
+
+test('a reset during a pending upgrade does not take the bridge down', async (t) => {
+  // Admission that takes a moment, as reading the admissions file can.
+  const { server, participation } = startBridge({
+    eligible: () => new Promise((resolve) => setTimeout(() => resolve(true), 150)),
+  });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await mint(port, makeWallet());
+
+  const uncaught = [];
+  const onUncaught = (error) => uncaught.push(error);
+  process.on('uncaughtException', onUncaught);
+  t.after(() => process.off('uncaughtException', onUncaught));
+
+  for (let i = 0; i < 3; i += 1) {
+    await new Promise((resolve) => {
+      const socket = net.connect(port, '127.0.0.1', () => {
+        socket.write(
+          `GET /api/expert-relay?session=x&token=${encodeURIComponent(token)} HTTP/1.1\r\n`
+          + 'Host: test.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+          + `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString('base64')}\r\n`
+          + 'Sec-WebSocket-Version: 13\r\n\r\n');
+        // An RST, not a FIN, while admission is still pending.
+        setTimeout(() => { socket.resetAndDestroy(); resolve(); }, 30);
+      });
+      socket.on('error', () => {});
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual(uncaught.map((e) => e.code ?? e.message), []);
+
+  // And the bridge still answers.
+  const next = await call(port, 'GET', '/api/expert-demand', { token });
+  assert.equal(next.status, 200);
+});
+
+test('revoke closes a wallet\'s open relay with 4403 and drops what it registered', async (t) => {
+  let admitted = true;
+  const { server, participation } = startBridge({ eligible: async () => admitted });
+  const port = await listen(server);
+  const upstream = net.createServer((s) => s.on('error', () => {}));
+  const upstreamPort = await listen(upstream);
+  let client;
+  t.after(() => { client?.destroy(); upstream.close(); server.close(); participation.stop(); });
+  const w = makeWallet();
+  const token = await mint(port, w);
+  assert.equal((await call(port, 'POST', '/api/expert-coverage', {
+    token, body: coverageFor('expert-live', 'live-1') })).status, 200);
+  participation.relayTargets.get('expert-live').port = upstreamPort;
+
+  const code = new Promise((resolve, reject) => {
+    const reached = new Promise((r) => upstream.once('connection', r));
+    client = net.connect(port, '127.0.0.1', () => {
+      client.write(
+        `GET /api/expert-relay?session=expert-live&token=${encodeURIComponent(token)} HTTP/1.1\r\n`
+        + 'Host: test.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
+        + `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString('base64')}\r\n`
+        + 'Sec-WebSocket-Version: 13\r\n\r\n');
+    });
+    let seen = Buffer.alloc(0);
+    client.on('data', (chunk) => {
+      seen = Buffer.concat([seen, chunk]);
+      const end = seen.indexOf('\r\n\r\n');
+      const frame = end >= 0 ? seen.subarray(end + 4) : Buffer.alloc(0);
+      if (frame.length >= 4 && (frame[0] & 0x0f) === 0x8) resolve(frame.readUInt16BE(2));
+    });
+    client.on('error', reject);
+    // Once spliced, the wallet stops being admitted and the periodic recheck runs.
+    reached.then(async () => {
+      assert.equal(participation.relays.size, 1);
+      admitted = false;
+      assert.deepEqual(await participation.recheckAdmissions(), [w.address]);
+    });
+    setTimeout(() => reject(new Error('no close frame')), 5000).unref?.();
+  });
+  assert.equal(await code, 4403);
+  assert.equal(participation.relays.size, 0);
+  assert.equal(participation.relayTargets.has('expert-live'), false);
+  assert.equal(participation.workers.has('live-1'), false);
+});
+
+test('the default relay session name is folded into the allowed charset, not refused', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await mint(port, makeWallet());
+
+  const odd = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor('', 'my box/1:ü') });
+  assert.equal(odd.status, 200);
+  assert.equal(odd.body.session, 'expert-my-box-1--');
+
+  const long1 = 'n'.repeat(200) + 'a';
+  const long2 = 'n'.repeat(200) + 'b';
+  const a = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor('', long1) });
+  const b = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor('', long2) });
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+  assert.equal(a.body.session.length, 128);
+  assert.notEqual(a.body.session, b.body.session, 'a shared prefix must not collide');
+  assert.match(a.body.session, /^expert-n+-[0-9a-f]{8}$/);
+  assert.equal(defaultSessionName(long1), a.body.session, 'stable across heartbeats');
+  assert.equal(defaultSessionName('phone-9'), 'expert-phone-9');
 });

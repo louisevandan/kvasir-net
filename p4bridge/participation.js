@@ -26,6 +26,7 @@
 const crypto = require('node:crypto');
 const { pipeline } = require('node:stream');
 const { timingSafeEqual } = require('./nodeauth');
+const wsrelay = require('./wsrelay');
 
 /** How long a worker's coverage claim stands without a heartbeat. The clients
  *  beat every 15s; the margin is for a backgrounded phone, not for slack. */
@@ -93,6 +94,29 @@ const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * A service-token caller is the operator, and may register them.
  */
 const RESERVED_SESSION_PREFIXES = ['ring-', 'bridge-', 'operator-', 'service-', 'kvasir-'];
+
+/**
+ * How often open relays are re-checked against the admissions list. Removal
+ * through the bridge's API closes a wallet's relays at once; this catches the
+ * other ways a wallet stops being admitted — the file edited by hand, the
+ * bootstrap list changed — within one interval.
+ */
+const ADMISSION_RECHECK_MS = Number(process.env.KVR_RELAY_ADMISSION_RECHECK_MS ?? 30_000);
+
+/**
+ * The relay session a worker gets when it names none: `expert-<worker_id>`,
+ * with the id folded into the session charset. worker_id was only ever
+ * trimmed, so refusing an id with a space or a slash in it would turn away a
+ * node that had been working; it is rewritten instead, and a long one keeps a
+ * short hash of the original so two ids sharing a prefix stay distinct.
+ */
+function defaultSessionName(workerId) {
+  const prefix = 'expert-';
+  const id = String(workerId).replace(/[^A-Za-z0-9._-]/g, '-');
+  if (prefix.length + id.length <= MAX_SESSION_LENGTH) return prefix + id;
+  const hash = crypto.createHash('sha256').update(String(workerId)).digest('hex').slice(0, 8);
+  return `${prefix}${id.slice(0, MAX_SESSION_LENGTH - prefix.length - hash.length - 1)}-${hash}`;
+}
 
 /** Why a session name is unacceptable from a node, or null when it is fine. */
 function sessionProblem(session, { service = false } = {}) {
@@ -189,11 +213,70 @@ class Participation {
     this.relayStats = new Map();
     /** worker_id -> port, so a reconnecting worker keeps its coordinator port */
     this.ports = new Map();
+    /** Open relay sockets: handle -> {session, wallet}. Closed on revoke(). */
+    this.relays = new Map();
     this.flushTimer = setInterval(() => this.flushContributions(), 60_000);
     this.flushTimer.unref?.();
+    this.recheckTimer = setInterval(() => {
+      this.recheckAdmissions().catch((error) => this.log?.(`admission recheck failed: ${error.message}`));
+    }, ADMISSION_RECHECK_MS);
+    this.recheckTimer.unref?.();
   }
 
-  stop() { clearInterval(this.flushTimer); }
+  stop() { clearInterval(this.flushTimer); clearInterval(this.recheckTimer); }
+
+  /**
+   * Take a wallet out of everything it holds here: its open relays are closed
+   * with 4403, and its census entries, relay targets, ports and pending claims
+   * are dropped. What it carried up to now is credited first — those bytes
+   * were carried while it was admitted.
+   *
+   * Returns what was dropped, so the caller can say so.
+   */
+  revoke(wallet) {
+    if (!wallet) return { relays: 0, workers: 0, sessions: 0 };
+    this.flushContributions();
+    let relays = 0;
+    for (const [handle, relay] of this.relays) {
+      if (relay.wallet !== wallet) continue;
+      this.relays.delete(handle);
+      handle.close(4403, 'this wallet is no longer admitted to the ring');
+      relays += 1;
+    }
+    const workerIds = new Set();
+    for (const [id, w] of this.workers) {
+      if (w.wallet === wallet) { workerIds.add(id); this.workers.delete(id); this.ports.delete(id); }
+    }
+    let sessions = 0;
+    for (const [session, target] of this.relayTargets) {
+      if (target.registrant === wallet || workerIds.has(target.nodeId)) {
+        this.relayTargets.delete(session);
+        this.relayStats.delete(session);
+        sessions += 1;
+      }
+    }
+    for (const [key, claim] of this.pending) {
+      if (claim.owner === wallet) this.pending.delete(key);
+    }
+    return { relays, workers: workerIds.size, sessions };
+  }
+
+  /** Revoke every wallet holding something here that is no longer admitted. */
+  async recheckAdmissions() {
+    const wallets = new Set();
+    for (const relay of this.relays.values()) if (relay.wallet) wallets.add(relay.wallet);
+    for (const w of this.workers.values()) if (w.wallet) wallets.add(w.wallet);
+    for (const t of this.relayTargets.values()) {
+      if (t.registrant && t.registrant !== 'service') wallets.add(t.registrant);
+    }
+    const revoked = [];
+    for (const wallet of wallets) {
+      if (await this.auth.allows(wallet)) continue;
+      this.revoke(wallet);
+      revoked.push(wallet);
+    }
+    return revoked;
+  }
 
   liveWorkers() {
     const cutoff = Date.now() - WORKER_STALE_MS;
@@ -524,7 +607,7 @@ class Participation {
       // hops meant for the operator's controller.
       const registrant = who.kind === 'service' ? 'service' : who.wallet;
       const relaySession = url.startsWith('relay:')
-        ? (url.slice('relay:'.length) || `expert-${workerId}`) : null;
+        ? (url.slice('relay:'.length) || defaultSessionName(workerId)) : null;
       if (relaySession !== null) {
         const problem = sessionProblem(relaySession, { service: who.kind === 'service' });
         if (problem) return refuse(res, 400, 'bad_relay_session', problem), true;
@@ -569,6 +652,9 @@ class Participation {
         segments,
         url,
         owner,
+        // The authenticated wallet, unlike `owner`, which the body may set.
+        // This is what revoke() goes by.
+        wallet: who.wallet ?? null,
         platform,
         ts: Date.now(),
       });
@@ -758,7 +844,7 @@ class Participation {
       // has no owner of its own to give — so the dialing wallet is who gets
       // paid for what crosses this socket.
       if (!target.owner && wallet) target.owner = wallet;
-      return { session, host: target.host, port: target.port };
+      return { session, host: target.host, port: target.port, wallet };
     }
 
     if (path === '/api/ring-relay') {
@@ -766,9 +852,52 @@ class Participation {
       const target = this.relayTargets.get(`ring-${controllerId}`);
       if (!target) return { code: 4404, reason: 'unknown ring controller' };
       if (!target.owner && wallet) target.owner = wallet;
-      return { session: `ring-${controllerId}`, host: target.host, port: target.port };
+      return { session: `ring-${controllerId}`, host: target.host, port: target.port, wallet };
     }
     return null;
+  }
+
+  /**
+   * Answer a relay upgrade end to end: authorise it, then refuse or splice.
+   *
+   * The socket gets an error listener before anything is awaited. Admission
+   * is asynchronous, and a peer that resets the connection while it is
+   * pending would otherwise raise an 'error' with no listener — an uncaught
+   * exception in the process that also serves the ring, triggered by anyone
+   * holding a token.
+   */
+  async handleUpgrade(path, query, req, socket, head, log = () => {}) {
+    socket.on('error', () => socket.destroy());
+    let target;
+    try {
+      target = await this.resolveUpgrade(path, query);
+    } catch (error) {
+      log(`upgrade refused: ${error.message}`);
+      if (!socket.destroyed) wsrelay.refuse(req, socket, 1011, 'relay unavailable');
+      return;
+    }
+    // The peer may have gone while we were deciding; there is nobody to answer.
+    if (socket.destroyed) return;
+    if (!target || target.code) {
+      // A close code rather than a reset: the clients log it, and 4401 from
+      // 4404 is the difference between "your token expired" and "nothing has
+      // claimed that session yet", which are diagnosed very differently.
+      wsrelay.refuse(req, socket, target?.code ?? 4404, target?.reason ?? 'unknown relay');
+      return;
+    }
+    let handle = null;
+    handle = wsrelay.bridge(req, socket, head, target, {
+      onBytes: (direction, bytes) => this.noteRelayBytes(target.session, direction, bytes),
+      onClose: () => {
+        if (handle) this.relays.delete(handle);
+        this.noteRelayClosed(target.session);
+      },
+      log: (line) => log(`[relay ${target.session}] ${line}`),
+    });
+    // Tracked only while open: bridge() can tear down synchronously (no key).
+    if (handle && !socket.destroyed) {
+      this.relays.set(handle, { session: target.session, wallet: target.wallet ?? null });
+    }
   }
 
   noteRelayBytes(session, direction, bytes) {
@@ -789,4 +918,5 @@ class Participation {
 
 module.exports = {
   Participation, TARGET_REPLICAS, WORKER_STALE_MS, RESERVED_SESSION_PREFIXES, sessionProblem,
+  defaultSessionName,
 };

@@ -161,6 +161,8 @@ class FrameDecoder {
  * @param {{host: string, port: number}} target
  * @param {{onBytes?: (direction: 'ws2tcp'|'tcp2ws', bytes: number) => void,
  *          onClose?: () => void, log?: (line: string) => void}} hooks
+ * @returns {{close: (code: number, reason: string) => void} | undefined}
+ *          a handle that ends the relay from our side with a chosen close code
  */
 function bridge(req, socket, head, target, hooks = {}) {
   const log = hooks.log ?? (() => {});
@@ -183,11 +185,11 @@ function bridge(req, socket, head, target, hooks = {}) {
   upstream.setKeepAlive(true, RELAY_KEEPALIVE_MS);
 
   let closed = false;
-  const teardown = (why) => {
+  const teardown = (why, code = 1000, reason = 'bridge closed') => {
     if (closed) return;
     closed = true;
     log(`relay closed: ${why}`);
-    try { socket.end(closeFrame(1000, 'bridge closed')); } catch { /* already gone */ }
+    try { socket.end(closeFrame(code, reason)); } catch { /* already gone */ }
     socket.destroy();
     upstream.destroy();
     hooks.onClose?.();
@@ -231,6 +233,8 @@ function bridge(req, socket, head, target, hooks = {}) {
   // stays open with it. Found by GB10 #1, 2026-09-25, with a decisive
   // experiment: destroy the client and the bridge kept both sockets.
   socket.on('end', () => teardown('client ended'));
+
+  return { close: (code, reason) => teardown(`closed by bridge: ${reason}`, code, reason) };
 }
 
 /** Refuse an upgrade with a WebSocket close code, after accepting the upgrade

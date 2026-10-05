@@ -2373,7 +2373,7 @@ app.all(['/api/auth/challenge', '/api/auth/node-token',
          // missing from this list, so an approval a person had already pressed
          // came back "no such endpoint" — from the gateway, about a route the
          // bridge had.
-         '/api/admissions',
+         '/api/admissions', '/api/admissions/remove',
          '/api/proxy/models/:model/expert-shard',
          '/api/proxy/models/:model/stage'], async (req, res) => {
   if (!BRIDGE_URL) return res.status(503).json({ error: 'no bridge configured' });
