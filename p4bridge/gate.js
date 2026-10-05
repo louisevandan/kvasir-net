@@ -20,6 +20,15 @@
  * same slot back twice.
  */
 
+/**
+ * How long a request may wait for a slot by default. A queued request has sent
+ * nothing yet — streaming or not, the status is decided only once it has a
+ * slot or gives up — and Cloudflare in front of the gateway cuts a response
+ * that is silent for about 100 s. 75 s leaves room for the hops on either side,
+ * so the caller hears 503 ring_busy with Retry-After rather than a 524.
+ */
+const DEFAULT_QUEUE_TIMEOUT_S = 75;
+
 class Busy extends Error {
   constructor(message, retryAfterS) {
     super(message);
@@ -42,7 +51,7 @@ class Gate {
    * @param {number} [options.maxQueue] requests allowed to wait
    * @param {number} [options.timeoutMs] how long one may wait
    */
-  constructor({ limit = null, maxQueue = 16, timeoutMs = 120_000 } = {}) {
+  constructor({ limit = null, maxQueue = 16, timeoutMs = DEFAULT_QUEUE_TIMEOUT_S * 1000 } = {}) {
     this.limit = limit;
     this.maxQueue = maxQueue;
     this.timeoutMs = timeoutMs;
@@ -109,7 +118,7 @@ function gateFor(bridge, model) {
   if (!bridge.gates) bridge.gates = new Map();
   let gate = bridge.gates.get(model.id);
   if (!gate) {
-    gate = new Gate({ limit: model.maxConcurrent ?? null, maxQueue: model.maxQueue ?? 16, timeoutMs: model.queueTimeoutMs ?? 120_000 });
+    gate = new Gate({ limit: model.maxConcurrent ?? null, maxQueue: model.maxQueue ?? 16, timeoutMs: model.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_S * 1000 });
     bridge.gates.set(model.id, gate);
   }
   return gate;
@@ -154,4 +163,4 @@ function estimateTokens(prompt) {
   return Math.ceil(ascii / 3) + other;
 }
 
-module.exports = { Gate, Busy, Aborted, gateFor, gateStats, maxConcurrentFor, estimateTokens };
+module.exports = { Gate, Busy, Aborted, gateFor, gateStats, maxConcurrentFor, estimateTokens, DEFAULT_QUEUE_TIMEOUT_S };

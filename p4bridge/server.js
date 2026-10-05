@@ -497,6 +497,44 @@ const send = (res, status, body, headers = {}) => {
   res.end(payload);
 };
 
+/**
+ * How long a stream may stay silent before the bridge says something.
+ *
+ * Cloudflare, in front of the gateway, cuts a response that has sent nothing
+ * for about 100 s. A long prompt is silent for longer than that between the
+ * role delta and the first token: prefill runs near 70 tokens a second, so a
+ * 10K-token prompt is two minutes and more of nothing. An SSE comment is
+ * ignored by every client and by the gateway's own frame scan (it reads only
+ * `data:` lines), and the gateway relays it byte for byte.
+ */
+const SSE_KEEPALIVE_MS = Number(process.env.P4_SSE_KEEPALIVE_MS ?? 15_000);
+const SSE_KEEPALIVE = ': keepalive\n\n';
+
+/**
+ * Write SSE_KEEPALIVE on every tick that follows a tick with nothing written.
+ * `touch()` marks a frame as written; the timer stops on end, error or close,
+ * so nothing is written after the response is over. The longest silence is
+ * therefore under two intervals.
+ */
+function sseKeepalive(res, intervalMs = SSE_KEEPALIVE_MS) {
+  let wrote = true;     // started right after writeHead, as the role delta goes out
+  let timer = null;
+  const stop = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+  };
+  timer = setInterval(() => {
+    if (res.writableEnded || res.destroyed) return stop();
+    if (wrote) { wrote = false; return; }
+    try { res.write(SSE_KEEPALIVE); } catch { stop(); }
+  }, intervalMs);
+  timer.unref?.();
+  res.once('finish', stop);
+  res.once('close', stop);
+  res.once('error', stop);
+  return { touch: () => { wrote = true; }, stop };
+}
+
 const readBody = (req, limit = 8 * 1024 * 1024) => new Promise((resolve, reject) => {
   const chunks = [];
   let size = 0;
@@ -909,12 +947,18 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
 
   // After the client has gone, output is still read to the end (p4 has no
   // cancel, and the slot is held until it ends) but not sent.
-  const write = (data) => { if (!abort.signal.aborted && !res.destroyed) res.write(data); };
+  // From here to res.end() the keepalive runs; every real frame resets it.
+  let keepalive = null;
+  const write = (data) => {
+    keepalive?.touch();
+    if (!abort.signal.aborted && !res.destroyed) res.write(data);
+  };
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
   });
+  keepalive = sseKeepalive(res, bridge.sseKeepaliveMs ?? SSE_KEEPALIVE_MS);
   write(chunkFrame(id, model.id, { role: 'assistant', content: '' }));
   // Reasoning goes out as reasoning_content, as the JSON reply does, and a call
   // goes out as delta.tool_calls once it is whole. Plain text is not delayed
@@ -942,6 +986,8 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
     write('data: [DONE]\n\n');
   } catch (error) {
     write(`data: ${JSON.stringify({ error: { message: error.message, type: 'engine_error' } })}\n\n`);
+  } finally {
+    keepalive.stop();
   }
   res.end();
 }
@@ -1181,4 +1227,5 @@ if (require.main === module) {
 module.exports = {
   Bridge, createServer, attachRelays, promptFrom, engineOptions,
   participationPolicy, admitWallet, removeWallet,
+  sseKeepalive, SSE_KEEPALIVE, SSE_KEEPALIVE_MS,
 };

@@ -99,8 +99,12 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
 - **Admission.** The stage servers share one KV pool (`--ctx-size 32768
   --n-seq-max 8 --kv-unified`), so the bridge admits at most `max_concurrent`
   requests per model (default `ring_context_size / context_size`), streaming or
-  not. The rest wait in one FIFO queue, 16 deep and 120 s long, then get 503
-  `ring_busy` with `Retry-After`. A prompt that cannot fit `context_size` with its
+  not. The rest wait in one FIFO queue, 16 deep and 75 s long (`queue_timeout_s`;
+  kept under Cloudflare's ~100 s silence cut), then get 503 `ring_busy` with
+  `Retry-After`. A stream sends `: keepalive` every 15 s of silence
+  (`P4_SSE_KEEPALIVE_MS`) through prefill; the gateway relays it unchanged. A
+  non-stream reply sends nothing until it is done, so a call that may take
+  longer than ~100 s end to end should stream. A prompt that cannot fit `context_size` with its
   `max_tokens` gets 400 `context_length_exceeded` before it waits (estimated
   high: 3 ASCII characters or 1 other character a token). p4 cannot cancel, so a
   client that disconnects in flight keeps its slot until the engine finishes or
@@ -116,7 +120,7 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
   other 4xx is 502 `bad_upstream_response`. None of these reload the ring except
   the outage path, and none is debited. The gateway waits `KVR_BRIDGE_TIMEOUT_MS`
   (default 450000) end to end, which must stay above the bridge's
-  `queue_timeout_s` + `request_timeout_s` (120 + 300); past it the caller gets
+  `queue_timeout_s` + `request_timeout_s` (75 + 300); past it the caller gets
   504 `upstream_timeout`, or an error frame mid-stream. A reply cut short on
   the upstream side is not debited and is logged with its request id and bytes;
   a caller who hangs up mid-stream is still debited when the usage arrives.

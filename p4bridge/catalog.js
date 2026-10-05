@@ -29,7 +29,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { toolFormatFor } = require('./toolcalls');
-const { maxConcurrentFor } = require('./gate');
+const { maxConcurrentFor, DEFAULT_QUEUE_TIMEOUT_S } = require('./gate');
 
 function load(file) {
   const resolved = path.resolve(file);
@@ -69,7 +69,10 @@ function load(file) {
       ringContextSize: model.ring_context_size ?? null,
       maxConcurrent: maxConcurrentFor(model),
       maxQueue: model.max_queue ?? 16,
-      queueTimeoutMs: (model.queue_timeout_s ?? 120) * 1000,
+      // Under Cloudflare's ~100 s silence cut in front of the gateway: a request
+      // that cannot get a slot hears ring_busy with Retry-After while the
+      // caller is still connected, instead of a 524 nobody can act on.
+      queueTimeoutMs: (model.queue_timeout_s ?? DEFAULT_QUEUE_TIMEOUT_S) * 1000,
       // How long one request may hold its slot. p4 cannot cancel, so this is
       // also how long a slot stays taken after its client has left.
       requestTimeoutMs: (model.request_timeout_s ?? 300) * 1000,

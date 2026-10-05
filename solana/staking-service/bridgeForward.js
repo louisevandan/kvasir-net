@@ -26,9 +26,14 @@
  *   other 4xx            the bridge answered something this gateway does not
  *                        expect. → 502 bad_upstream_response.
  *   our own timeout      the bridge was slow, not down: it may queue a request
- *                        120 s and then generate for up to 300 s.
+ *                        75 s and then generate for up to 300 s.
  *                        → 504 upstream_timeout; mid-stream, an error frame.
  *   no response at all   (refused, reset, unreachable) → ringOutage.
+ *
+ * A stream is relayed byte for byte, SSE comments included: the bridge sends
+ * `: keepalive` through a long prefill so Cloudflare, in front of this gateway,
+ * does not cut a reply that is merely slow. scan() reads only `data:` lines, so
+ * a comment is never mistaken for a frame, and only a usage frame is debited.
  *
  * Billing follows who ended the reply. A complete answer is debited, even when
  * the caller hung up before the last frame: the stream is still read to its
@@ -40,7 +45,7 @@
 
 /**
  * How long the gateway waits for one completion, end to end. It has to cover
- * the bridge's queue wait (queue_timeout_s, 120) plus its request timeout
+ * the bridge's queue wait (queue_timeout_s, 75; it was 120) plus its request timeout
  * (request_timeout_s, 300) plus a margin, or a request the bridge is still
  * honestly serving is cut off here and reported as something it is not.
  */

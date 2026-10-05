@@ -9,6 +9,7 @@
       "ring_context_size": 32768,
       "max_concurrent": 2,
       "max_tokens": 512,
+      "queue_timeout_s": 75,
       "prompt_format": "chatml",
       "reasoning": true,
       "tool_format": "step",

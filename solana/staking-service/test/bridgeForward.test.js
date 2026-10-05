@@ -229,6 +229,34 @@ test('stream: a caller who hangs up mid-stream is still debited once when the us
   assert.equal(r.reloads, 0);
 });
 
+test('stream: bridge keepalive comments reach the caller verbatim, and only usage is debited', async () => {
+  const r = await call(async (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"id":"chatcmpl-k","choices":[{"delta":{"role":"assistant","content":""}}]}\n\n');
+    // A long prefill: nothing but keepalives for a while.
+    for (let i = 0; i < 3; i += 1) { await tick(10); res.write(': keepalive\n\n'); }
+    res.write('data: {"id":"chatcmpl-k","choices":[{"delta":{"content":"hi"}}]}\n\n');
+    res.end(`data: {"choices":[],"usage":${JSON.stringify(USAGE)}}\n\ndata: [DONE]\n\n`);
+  }, { stream: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.text.split(': keepalive\n\n').length - 1, 3, 'every comment passes through');
+  assert.ok(r.text.indexOf(': keepalive') < r.text.indexOf('"content":"hi"'), 'in order');
+  assert.deepEqual(r.debits, [USAGE], 'debited once, from the usage frame');
+  assert.deepEqual([r.reloads, r.oks], [0, 1]);
+});
+
+test('stream: keepalives alone are not an answer; a stream cut before usage is not debited', async () => {
+  const r = await call(async (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"id":"chatcmpl-c","choices":[{"delta":{"role":"assistant","content":""}}]}\n\n');
+    for (let i = 0; i < 3; i += 1) { await tick(10); res.write(': keepalive\n\n'); }
+    setTimeout(() => res.socket.destroy(), 10);
+  }, { stream: true });
+  assert.ok(r.text.includes(': keepalive'));
+  assert.ok(r.text.includes('upstream_interrupted'));
+  assert.deepEqual([r.reloads, r.debits.length, r.oks], [0, 0, 0]);
+});
+
 test('stream: a 200 whose first frame is an error is still an outage', async () => {
   const r = await call((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
