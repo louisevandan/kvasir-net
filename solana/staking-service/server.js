@@ -24,7 +24,7 @@ const HOST_OS = (() => {
 })();
 const express = require('express');
 const gwauth = require('./gatewayAuth');
-const { forwardCompletion } = require('./bridgeForward');
+const { forwardCompletion, anthropicErrorType } = require('./bridgeForward');
 const {
   Connection, Keypair, PublicKey,
 } = require('@solana/web3.js');
@@ -2014,13 +2014,11 @@ app.post('/anthropic/v1/messages', async (req, res) => {
     // every failure to 500: a 401 must still read as a 401 to an Anthropic SDK.
     const retryAfter = upstream.headers.get('retry-after');
     if (retryAfter) res.setHeader('Retry-After', retryAfter);
-    const busy = d?.error?.type === 'ring_busy';
     return res.status(upstream.status || 502).json({
       type: 'error',
       error: {
-        type: upstream.status === 401 ? 'authentication_error'
-          : busy ? 'overloaded_error'
-            : upstream.status === 400 ? 'invalid_request_error' : 'api_error',
+        // A 502 gateway_misconfigured is ours, not the caller's key: api_error.
+        type: anthropicErrorType(upstream.status, d),
         message: d?.error?.message ?? raw.slice(0, 300) ?? 'upstream failure',
       },
     });

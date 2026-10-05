@@ -29,6 +29,9 @@ services:
       P4_BRIDGE_URL: "${P4_BRIDGE_URL:-}"
       # Shared secret the bridge requires (must match the bridge's P4_BRIDGE_TOKEN).
       P4_BRIDGE_TOKEN: "${P4_BRIDGE_TOKEN:-}"
+      # End-to-end wait for one completion. Keep it above the bridge's
+      # queue_timeout_s + request_timeout_s (120 + 300), or a slow reply is cut here.
+      KVR_BRIDGE_TIMEOUT_MS: "${KVR_BRIDGE_TIMEOUT_MS:-450000}"
       # Gateway admin login (Sign-In With Solana + TOTP 2FA) at /admin. Comma-separated
       # admin wallet allowlist; EMPTY => admin surface disabled. KVR_SESSION_SECRET keeps
       # admin sessions valid across restarts (random per-process if unset).

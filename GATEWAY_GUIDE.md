@@ -105,10 +105,21 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
   high: 3 ASCII characters or 1 other character a token). p4 cannot cancel, so a
   client that disconnects in flight keeps its slot until the engine finishes or
   `request_timeout_s` (300) passes; one that disconnects while queued just
-  leaves the queue. `/health` and `/api/runtime` show `queues`. The gateway
-  passes a bridge 4xx and 503 `ring_busy` through to the caller rather than
-  reloading the ring. (After p4bridge/tool-calls is deployed, bridge and
-  gateway together.)
+  leaves the queue. `/health` and `/api/runtime` show `queues`. (After
+  p4bridge/tool-calls is deployed, bridge and gateway together.)
+- **What the gateway does with it** (`solana/staking-service/bridgeForward.js`).
+  Bridge 400/413/422/429 and 503 `ring_busy` pass through unchanged, with
+  `Retry-After`. 401/403 means the two `P4_BRIDGE_TOKEN`s differ: 502
+  `gateway_misconfigured`, logged loudly, never shown as the caller's key
+  problem. 404 and 5xx, and no response at all, keep the ring-outage path; the
+  model pool is read live per request, so there is no cache to invalidate. Any
+  other 4xx is 502 `bad_upstream_response`. None of these reload the ring except
+  the outage path, and none is debited. The gateway waits `KVR_BRIDGE_TIMEOUT_MS`
+  (default 450000) end to end, which must stay above the bridge's
+  `queue_timeout_s` + `request_timeout_s` (120 + 300); past it the caller gets
+  504 `upstream_timeout`, or an error frame mid-stream. A reply cut short on
+  the upstream side is not debited and is logged with its request id and bytes;
+  a caller who hangs up mid-stream is still debited when the usage arrives.
 
 ### p4 agents and stage servers
 
