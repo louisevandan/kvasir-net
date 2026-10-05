@@ -213,7 +213,7 @@ const CALL_BLOCK = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/y;
 const callId = () => `call_${crypto.randomBytes(12).toString('hex')}`;
 
 function schemaTypes(tools, name, key) {
-  const tool = tools.find((t) => (t.function?.name ?? t.name) === name);
+  const tool = tools.find((t) => toolName(t) === name);
   const prop = (tool?.function?.parameters ?? tool?.parameters)?.properties?.[key];
   if (!prop) return null;
   if (Array.isArray(prop.type)) return prop.type;
@@ -249,8 +249,15 @@ function coerce(raw, types) {
     if (kind !== 'string' && (types.includes(kind) || (kind === 'integer' && types.includes('number')))) return parsed;
   }
   if (types.includes('string')) return raw;
+  // `007` is not JSON, but in an integer or number slot it is plainly a number.
+  if (!parses && (types.includes('integer') || types.includes('number')) && /^-?\d+(\.\d+)?$/.test(raw.trim())) {
+    return Number(raw.trim());
+  }
   return parses ? parsed : raw;
 }
+
+const toolName = (tool) => tool?.function?.name ?? tool?.name;
+const knownName = (tools, name) => tools.some((tool) => toolName(tool) === name);
 
 /** The inside of one call: `<function=NAME> … </function>`. Null when malformed. */
 function parseFunction(inner, tools) {
@@ -258,6 +265,9 @@ function parseFunction(inner, tools) {
   if (!head) return null;
   const name = head[1].trim();
   if (!name) return null;
+  // A function the request did not offer is not a call the caller can run:
+  // it stays in the text, where the caller can at least see it.
+  if (!knownName(tools, name)) return null;
   const close = inner.lastIndexOf('</function>');
   const body = inner.slice(head[0].length, close === -1 ? inner.length : close);
   if (close === -1) return null;
@@ -369,6 +379,7 @@ class StreamShaper {
     this.afterThink = false;      // strip the whitespace the template puts after </think>
     this.pending = '';            // text not yet classified
     this.capturing = false;       // inside something that began with an opener
+    this.heldSpace = '';          // whitespace after a call, sent only if text follows it
     this.calls = [];
   }
 
@@ -390,8 +401,11 @@ class StreamShaper {
         this.afterThink = false;
       }
       if (!text) return;
-      // Whitespace between calls is formatting, not something to show.
-      if (this.calls.length && !text.trim()) return;
+      // Whitespace after a call is formatting unless more text follows it, so
+      // it waits for that text. At the end of the reply it is dropped, which is
+      // what trimming does to the whole reply when it is not streamed.
+      if (this.calls.length && !text.trim()) { this.heldSpace += text; return; }
+      if (this.heldSpace) { text = this.heldSpace + text; this.heldSpace = ''; }
       const last = out[out.length - 1];
       if (last && last.content !== undefined) last.content += text; else out.push({ content: text });
     };
@@ -436,6 +450,7 @@ class StreamShaper {
       if (read) {
         const index = this.calls.length;
         this.calls.push(read.call);
+        this.heldSpace = '';
         out.push({ tool_calls: [{ index, ...read.call }] });
         this.pending = this.pending.slice(read.end);
         this.capturing = false;
@@ -451,19 +466,33 @@ class StreamShaper {
     }
   }
 
-  /** True when buffered text can no longer turn into a call. */
+  /**
+   * True when buffered text can no longer turn into a call, so it can go out
+   * as text now instead of at the end of the reply. Only the head is checked:
+   * `<tool_call>`, then `<function=NAME>` naming an offered tool, then a
+   * `<parameter=` or `</function>`. Prose that mentions a tag fails one of
+   * those within a few characters; a parameter value can be anything, so past
+   * the head only a complete block that failed to parse counts.
+   */
   hopeless() {
-    const p = this.pending;
-    if (p.startsWith('<tool_call>')) {
-      // A complete block that failed to parse is malformed for good.
-      return p.includes('</tool_call>');
+    let p = this.pending;
+    const wrapped = p.startsWith('<tool_call>');
+    if (wrapped) {
+      if (p.includes('</tool_call>')) return true;
+      p = p.slice('<tool_call>'.length).replace(/^\s+/, '');
+      if (!p) return false;
+      if (!(p.startsWith('<function=') || '<function='.startsWith(p))) return true;
+    } else if (!p.startsWith('<function=')) {
+      return true;
     }
-    if (p.startsWith('<function=')) {
-      const head = /^<function=([^>\n]*)(>|\n)/.exec(p);
-      if (head && (head[2] === '\n' || !head[1].trim())) return true;
-      return p.includes('</function>');
-    }
-    return true;
+    const head = /^<function=([^>\n]*)(>|\n)?/.exec(p);
+    if (!head) return false;                                // still inside `<function=`
+    if (!head[2]) return head[1].length > 128;              // name still arriving
+    if (head[2] === '\n' || !knownName(this.tools, head[1].trim())) return true;
+    if (!wrapped && p.includes('</function>')) return true; // whole and still unparsed
+    const next = p.slice(head[0].length).replace(/^\s+/, '');
+    const fits = (tag) => next.startsWith(tag) || tag.startsWith(next);
+    return next.length > 0 && !fits('<parameter=') && !fits('</function>');
   }
 }
 

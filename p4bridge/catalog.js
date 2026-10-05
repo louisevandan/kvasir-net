@@ -16,6 +16,9 @@
  *     "load_generation": 1789148231396,       // from the placement plan
  *     "prompt_format": "chatml",
  *     "tool_format": "step",                   // optional; see toolcalls.js
+ *     "context_size": 16384,                   // per request
+ *     "ring_context_size": 32768,              // the stage servers' shared --ctx-size
+ *     "max_concurrent": 2,                     // optional; default ring/context
  *     "stages": [
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1},
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s1", "generation": 1}
@@ -26,6 +29,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { toolFormatFor } = require('./toolcalls');
+const { maxConcurrentFor } = require('./gate');
 
 function load(file) {
   const resolved = path.resolve(file);
@@ -59,7 +63,13 @@ function load(file) {
       stages: model.stages.map((stage) => ({
         agent: stage.agent, node: stage.node, generation: stage.generation,
       })),
+      // Per request, not the ring's: the stage servers share one KV pool of
+      // `ring_context_size` tokens across every sequence (see gate.js).
       contextSize: model.context_size ?? null,
+      ringContextSize: model.ring_context_size ?? null,
+      maxConcurrent: maxConcurrentFor(model),
+      maxQueue: model.max_queue ?? 16,
+      queueTimeoutMs: (model.queue_timeout_s ?? 120) * 1000,
       maxTokens: model.max_tokens ?? 1024,
       options: model.options ?? '',
       // p4 hands the stage server an opaque prompt and applies no chat

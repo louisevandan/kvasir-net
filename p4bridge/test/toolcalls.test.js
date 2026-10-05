@@ -360,3 +360,50 @@ test('HTTP: a stream sends delta.tool_calls and finishes with tool_calls', async
   assert.deepEqual(finishes, ['tool_calls']);
   assert.ok(frames.at(-1).usage);
 });
+
+/* ---- review follow-ups --------------------------------------------------- */
+
+test('a stream keeps the whitespace between words after a call', () => {
+  const chunks = [CALL, 'Done', ' ', 'now', '\n'];
+  const streamed = runStream(chunks, { tools: TOOLS, parseCalls: true });
+  const whole = toolcalls.parseToolCalls(chunks.join(''), TOOLS);
+  assert.equal(streamed.content, 'Done now');
+  assert.equal(streamed.content, whole.content);
+  // Cut at every character, too.
+  assert.equal(runStream([...chunks.join('')], { tools: TOOLS, parseCalls: true }).content, whole.content);
+});
+
+test('a function the request did not offer stays in the text', () => {
+  const reply = '<tool_call>\n<function=delete_everything>\n<parameter=path>\n/\n</parameter>\n</function>\n</tool_call>';
+  const whole = toolcalls.parseToolCalls(reply, TOOLS);
+  assert.deepEqual(whole.toolCalls, []);
+  assert.equal(whole.content, reply);
+  const streamed = runStream([...reply], { tools: TOOLS, parseCalls: true });
+  assert.deepEqual(streamed.calls, []);
+  assert.equal(streamed.content, reply);
+});
+
+test('prose that mentions a tag is released without waiting for the end of the reply', () => {
+  const cases = [
+    ['Write <function=foo> to call foo', ' and so on.'],          // not an offered tool
+    ['The tag <function=read_file> reads', ' a file.'],            // offered, but prose follows
+    ['Wrap it in <tool_call> tags', ' like that.'],                // wrapper with no function
+  ];
+  for (const [first, second] of cases) {
+    const shaper = new toolcalls.StreamShaper({ tools: TOOLS, parseCalls: true });
+    const early = shaper.push(first).map((d) => d.content ?? '').join('');
+    assert.ok(early.length >= first.length - 3, `${first} -> ${JSON.stringify(early)}`);
+    const rest = [...shaper.push(second), ...shaper.end()].map((d) => d.content ?? '').join('');
+    assert.equal(early + rest, first + second);
+    assert.equal(shaper.calls.length, 0);
+  }
+});
+
+test('digits with leading zeros in a numeric field become a number', () => {
+  assert.equal(toolcalls.coerce('007', ['integer']), 7);
+  assert.equal(toolcalls.coerce('007.50', ['number']), 7.5);
+  assert.equal(toolcalls.coerce('007', ['string']), '007');
+  assert.equal(toolcalls.coerce('007', ['integer', 'string']), '007');
+  const reply = '<tool_call>\n<function=run_command>\n<parameter=command>\nls\n</parameter>\n<parameter=timeout_s>\n007\n</parameter>\n</function>\n</tool_call>';
+  assert.deepEqual(JSON.parse(toolcalls.parseToolCalls(reply, TOOLS).toolCalls[0].function.arguments), { command: 'ls', timeout_s: 7 });
+});

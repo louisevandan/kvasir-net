@@ -96,6 +96,14 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
   forced function is asked for in words, which is best effort. `temperature`
   and `stop` are passed to the stage server's sampler; the engine's `eos` is
   reported as `stop`. (In service after p4bridge/tool-calls is deployed.)
+- **Admission.** The stage servers share one KV pool (`--ctx-size 32768
+  --n-seq-max 8 --kv-unified`), so the bridge admits at most `max_concurrent`
+  requests per model (default `ring_context_size / context_size`), streaming or
+  not. The rest wait in one FIFO queue, 16 deep and 120 s long, then get 503
+  `ring_busy` with `Retry-After`. A prompt that cannot fit `context_size` with its
+  `max_tokens` gets 400 `context_length_exceeded` before it waits. A client that
+  disconnects gives its slot back at once. `/health` and `/api/runtime` show
+  `queues`. (Also after p4bridge/tool-calls is deployed.)
 
 ### p4 agents and stage servers
 

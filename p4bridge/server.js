@@ -33,6 +33,7 @@ const { NodeAuth } = require('./nodeauth');
 const { Participation } = require('./participation');
 const wsrelay = require('./wsrelay');
 const toolcalls = require('./toolcalls');
+const gate = require('./gate');
 
 const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000;
 // Optional shared secret. p4 itself has no auth, so when the bridge is not on
@@ -624,6 +625,7 @@ function createServer(bridge) {
           // the bridge is deliberately not probing for another few seconds.
           awaiting_probe: bridge.dialLedger().filter((row) => row.next_probe_in_s)
             .map((row) => ({ agent: row.agent, in_s: row.next_probe_in_s, failed: row.failed_probes })),
+          queues: gate.gateStats(bridge),
           uptime_ms: Date.now() - bridge.startedAt,
         });
       }
@@ -664,6 +666,7 @@ function createServer(bridge) {
           machines,
           inspect_error: bridge.lastInspectError,
           dial_ledger: bridge.dialLedger(),
+          queues: gate.gateStats(bridge),
         });
       }
 
@@ -787,17 +790,56 @@ async function chatCompletions(bridge, model, req, res) {
   // refused by the adapter outright, and a caller asking for more than the ring
   // was loaded to give should get a shorter answer, not an engine error.
   const maxTokens = Math.min(Number(body.max_tokens ?? model.maxTokens), model.maxTokens);
+  // Refuse at the door what cannot fit. The engine would refuse it too, but
+  // only after the request waited for a slot and the prompt crossed the ring.
+  if (model.contextSize) {
+    const promptTokens = gate.estimateTokens(prompt);
+    if (promptTokens + maxTokens > model.contextSize) {
+      return send(res, 400, { error: {
+        message: `This model's maximum context length is ${model.contextSize} tokens. The prompt is about `
+          + `${promptTokens} tokens (estimated at 3 characters a token) and ${maxTokens} were asked for the reply.`,
+        type: 'invalid_request_error', param: 'messages', code: 'context_length_exceeded',
+      } });
+    }
+  }
   const id = `chatcmpl-${crypto.randomBytes(12).toString('hex')}`;
   const stream = Boolean(body.stream);
   const abort = new AbortController();
-  req.on('close', () => abort.abort());
+  // The response closing before it was finished is the client leaving. (The
+  // request's own 'close' fires as soon as its body has been read, which is
+  // not the same thing.)
+  res.on('close', () => { if (!res.writableFinished) abort.abort(); });
 
+  // One limit and one queue per model, streaming or not; see gate.js.
+  let release;
+  try {
+    release = await gate.gateFor(bridge, model).acquire(abort.signal);
+  } catch (error) {
+    if (error.code === 'ring_busy') {
+      return send(res, 503, { error: { message: `model ${model.id} is busy: ${error.message}`, type: 'ring_busy' } },
+        { 'retry-after': String(error.retryAfterS) });
+    }
+    return undefined;     // the client left while it waited; there is no one to answer
+  }
+  // A client that leaves gives its slot back now, not when the engine is done
+  // with a reply nobody will read. release() counts once, so the finally below
+  // is harmless after it.
+  abort.signal.addEventListener('abort', release, { once: true });
+  try {
+    return await runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls });
+  } finally {
+    release();
+  }
+}
+
+async function runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls }) {
   let pipeline;
   try {
     pipeline = await bridge.pipelineFor(model);
   } catch (error) {
     return send(res, 503, { error: { message: `p4 session failed: ${error.message}`, type: 'ring_recovering' } });
   }
+  if (abort.signal.aborted) return undefined;     // left while the session was being set up
 
   if (!stream) {
     try {
@@ -830,17 +872,19 @@ async function chatCompletions(bridge, model, req, res) {
     }
   }
 
+  // After the client has gone, output is read (p4 has no cancel) but not sent.
+  const write = (data) => { if (!abort.signal.aborted && !res.destroyed) res.write(data); };
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
   });
-  res.write(chunkFrame(id, model.id, { role: 'assistant', content: '' }));
+  write(chunkFrame(id, model.id, { role: 'assistant', content: '' }));
   // Reasoning goes out as reasoning_content, as the JSON reply does, and a call
   // goes out as delta.tool_calls once it is whole. Plain text is not delayed
   // beyond the few characters that could still be the start of a tag.
   const shaper = new toolcalls.StreamShaper({ tools, parseCalls, thinkingOpen });
-  const emit = (deltas) => { for (const delta of deltas) res.write(chunkFrame(id, model.id, delta)); };
+  const emit = (deltas) => { for (const delta of deltas) write(chunkFrame(id, model.id, delta)); };
   try {
     const result = await pipeline.generate({
       prompt, maxTokens, options, abort: abort.signal,
@@ -849,9 +893,9 @@ async function chatCompletions(bridge, model, req, res) {
     emit(shaper.end());
     bridge.recordContribution(model, result.stageRows, result);
     const finish = shaper.calls.length ? 'tool_calls' : toolcalls.finishReason(result.finishReason);
-    res.write(chunkFrame(id, model.id, {}, finish));
+    write(chunkFrame(id, model.id, {}, finish));
     // The gateway bills from the last frame that carries usage.
-    res.write(`data: ${JSON.stringify({
+    write(`data: ${JSON.stringify({
       id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: model.id, choices: [],
       usage: {
         prompt_tokens: result.promptTokens ?? 0,
@@ -859,9 +903,9 @@ async function chatCompletions(bridge, model, req, res) {
         total_tokens: (result.promptTokens ?? 0) + result.completionTokens,
       },
     })}\n\n`);
-    res.write('data: [DONE]\n\n');
+    write('data: [DONE]\n\n');
   } catch (error) {
-    res.write(`data: ${JSON.stringify({ error: { message: error.message, type: 'engine_error' } })}\n\n`);
+    write(`data: ${JSON.stringify({ error: { message: error.message, type: 'engine_error' } })}\n\n`);
   }
   res.end();
 }
