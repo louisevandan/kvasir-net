@@ -30,6 +30,8 @@ node server.js
 | `P4_BRIDGE_TOKEN` | shared secret; unset means no auth (loopback only) |
 | `P4_BRIDGE_OPERATOR_WALLET` | owner credited in `/api/contributions` |
 | `P4_BRIDGE_UNITS_PER_KTOKEN` | contribution units per 1k rows (default 1) |
+| `P4_BRIDGE_MEASURE` | one `[measure]` line per completion and `measure` in `/health` (default on; `0` turns it off). Numbers and prompt hashes only, see `measure.js` |
+| `P4_SSE_KEEPALIVE_MS` | SSE keepalive comment after this much silence (default 15000) |
 
 The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
 

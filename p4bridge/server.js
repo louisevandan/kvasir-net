@@ -33,6 +33,7 @@ const { NodeAuth } = require('./nodeauth');
 const { Participation } = require('./participation');
 const toolcalls = require('./toolcalls');
 const gate = require('./gate');
+const measure = require('./measure');
 
 const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000;
 // Optional shared secret. p4 itself has no auth, so when the bridge is not on
@@ -663,6 +664,9 @@ function createServer(bridge) {
           awaiting_probe: bridge.dialLedger().filter((row) => row.next_probe_in_s)
             .map((row) => ({ agent: row.agent, in_s: row.next_probe_in_s, failed: row.failed_probes })),
           queues: gate.gateStats(bridge),
+          // Prefill, decode and shared-prefix numbers over recent requests;
+          // absent when P4_BRIDGE_MEASURE=0.
+          ...(measure.measureFor(bridge) ? { measure: measure.measureFor(bridge).stats() } : {}),
           uptime_ms: Date.now() - bridge.startedAt,
         });
       }
@@ -840,12 +844,50 @@ function engineOptions(catalogOptions, body) {
   return JSON.stringify({ ...base, ...extra });
 }
 
+/**
+ * One chat completion, and its one measurement line (see measure.js). The
+ * meter is filled in as the request goes and recorded once it is over, after
+ * the reply, so measuring adds nothing to the caller's wait and a failure in
+ * it costs only the line.
+ */
 async function chatCompletions(bridge, model, req, res) {
+  const meter = measure.measureFor(bridge)
+    ? { model: model.id, stream: false, outcome: 'bad_request', started: Date.now() }
+    : null;
+  try {
+    return await serveCompletion(bridge, model, req, res, meter);
+  } finally {
+    if (meter) {
+      meter.totalMs = Date.now() - meter.started;
+      try { measure.measureFor(bridge)?.record(meter); } catch (error) {
+        console.error(`[measure] skipped: ${error.message}`);
+      }
+    }
+  }
+}
+
+/** The part of the system turn and tools in a rendered prompt; 0 if none. */
+function systemCharsOf(body, prompt, model, thinkingOpen, toolFormat) {
+  if (typeof body.prompt === 'string') return 0;
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const system = messages.filter((m) => m?.role === 'system' || m?.role === 'developer');
+  const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+  if (!system.length && !hasTools) return 0;
+  const alone = promptFrom({ ...body, messages: system }, model.promptFormat, model.reasoning, thinkingOpen, toolFormat);
+  return measure.systemBlockChars(prompt, alone);
+}
+
+async function serveCompletion(bridge, model, req, res, meter) {
   const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
   const thinkingOpen = Boolean(model.reasoning) && body.chat_template_kwargs?.enable_thinking !== false;
   const toolFormat = model.toolFormat ?? 'none';
   const prompt = promptFrom(body, model.promptFormat, model.reasoning, thinkingOpen, toolFormat);
   if (!prompt) return send(res, 400, { error: { message: 'a prompt or messages are required' } });
+  if (meter) {
+    meter.stream = Boolean(body.stream);
+    meter.prompt = prompt;     // hashed by record(), never kept or logged
+    meter.systemChars = systemCharsOf(body, prompt, model, thinkingOpen, toolFormat);
+  }
   // Calls are read out of the reply only when the request offered tools in a
   // format this model has; otherwise the text is returned as it came.
   const tools = toolFormat === 'none' || typeof body.prompt === 'string' ? [] : toolcalls.activeTools(body);
@@ -860,6 +902,7 @@ async function chatCompletions(bridge, model, req, res) {
   if (model.contextSize) {
     const promptTokens = gate.estimateTokens(prompt);
     if (promptTokens + maxTokens > model.contextSize) {
+      if (meter) meter.outcome = 'context_length_exceeded';
       return send(res, 400, { error: {
         message: `This model's maximum context length is ${model.contextSize} tokens. The prompt is about `
           + `${promptTokens} tokens (estimated high: 3 ASCII characters or 1 other character a token) and ${maxTokens} were asked for the reply.`,
@@ -868,6 +911,7 @@ async function chatCompletions(bridge, model, req, res) {
     }
   }
   const id = `chatcmpl-${crypto.randomBytes(12).toString('hex')}`;
+  if (meter) meter.id = id;
   const stream = Boolean(body.stream);
   const abort = new AbortController();
   // The response closing before it was finished is the client leaving. (The
@@ -877,9 +921,15 @@ async function chatCompletions(bridge, model, req, res) {
 
   // One limit and one queue per model, streaming or not; see gate.js.
   let release;
+  const queuedAt = Date.now();
   try {
     release = await gate.gateFor(bridge, model).acquire(abort.signal);
+    if (meter) meter.queueMs = Date.now() - queuedAt;
   } catch (error) {
+    if (meter) {
+      meter.queueMs = Date.now() - queuedAt;
+      meter.outcome = error.code === 'ring_busy' ? 'ring_busy' : 'client_left';
+    }
     if (error.code === 'ring_busy') {
       return send(res, 503, { error: { message: `model ${model.id} is busy: ${error.message}`, type: 'ring_busy' } },
         { 'retry-after': String(error.retryAfterS) });
@@ -896,18 +946,25 @@ async function chatCompletions(bridge, model, req, res) {
   const timeoutMs = model.requestTimeoutMs ?? 300_000;
   const cap = setTimeout(release, timeoutMs);
   try {
-    return await runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs });
+    return await runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs, meter });
   } finally {
     clearTimeout(cap);
     release();
   }
 }
 
-async function runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs }) {
+async function runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs, meter = null }) {
+  // When the last token arrived, from the start of generate(): the engine's
+  // own elapsed time also counts the wait for its release receipt.
+  let generateAt = 0;
+  const sawToken = () => { if (meter) meter.lastTokenMs = Date.now() - generateAt; };
+  const engineDone = (result) => { if (meter) { meter.result = result; meter.outcome = 'ok'; } };
+  if (meter) meter.outcome = 'engine_error';
   let pipeline;
   try {
     pipeline = await bridge.pipelineFor(model);
   } catch (error) {
+    if (meter) meter.outcome = 'session_failed';
     return send(res, 503, { error: { message: `p4 session failed: ${error.message}`, type: 'ring_recovering' } });
   }
   if (abort.signal.aborted) return undefined;     // left while the session was being set up
@@ -916,7 +973,9 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
     try {
       // No abort passed: see chatCompletions. A reply for a client that left
       // is still read, then sent nowhere.
-      const result = await pipeline.generate({ prompt, maxTokens, options, timeoutMs });
+      generateAt = Date.now();
+      const result = await pipeline.generate({ prompt, maxTokens, options, timeoutMs, onToken: ({ text }) => { if (text) sawToken(); } });
+      engineDone(result);
       bridge.recordContribution(model, result.stageRows, result);
       const message = thinkingOpen
         ? { role: 'assistant', ...splitReasoning(result.text) }
@@ -966,10 +1025,12 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
   const shaper = new toolcalls.StreamShaper({ tools, parseCalls, thinkingOpen });
   const emit = (deltas) => { for (const delta of deltas) write(chunkFrame(id, model.id, delta)); };
   try {
+    generateAt = Date.now();
     const result = await pipeline.generate({
       prompt, maxTokens, options, timeoutMs,
-      onToken: ({ text }) => emit(shaper.push(text)),
+      onToken: ({ text }) => { if (text) sawToken(); emit(shaper.push(text)); },
     });
+    engineDone(result);
     emit(shaper.end());
     bridge.recordContribution(model, result.stageRows, result);
     const finish = shaper.calls.length ? 'tool_calls' : toolcalls.finishReason(result.finishReason);
