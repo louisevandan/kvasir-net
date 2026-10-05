@@ -18,6 +18,18 @@
  * at most ten minutes. Characters are turned into tokens with the engine's own
  * count for that prompt when it reported one.
  *
+ * Three answers to "how much was shared", from optimistic to realistic:
+ *
+ *   prefix_*         the best match among up to 64 recent prompts from any
+ *                    conversation. An upper bound: no engine keeps that much.
+ *   prefix_slots2_*  the best match among the 2 prompts the engine processed
+ *                    most recently — what keeping KV for two sequence slots
+ *                    (the 16384×2 load) could actually reuse.
+ *   prefix_prev_*    the previous processed prompt only.
+ *
+ * Interleaved conversations pull the last two down while the first stays
+ * high; one conversation at a time keeps all three together.
+ *
  * P4_BRIDGE_MEASURE=0 turns it off; it is on otherwise.
  */
 const crypto = require('node:crypto');
@@ -26,6 +38,8 @@ const CHUNK_CHARS = 64;
 const HASH_BYTES = 8;
 /** Characters per token when the engine did not say: gate.js's high estimate. */
 const FALLBACK_CHARS_PER_TOKEN = 3;
+/** Sequence slots whose KV a reuse scheme could plausibly keep. */
+const KV_SLOTS = 2;
 
 const enabled = () => !/^(0|false|no|off)$/i.test(String(process.env.P4_BRIDGE_MEASURE ?? '1'));
 
@@ -152,6 +166,8 @@ const round = (value, digits = 1) => (value === null || value === undefined || !
 class Measure {
   constructor({ capacity = 64, ttlMs = 10 * 60_000, window = 256, log = (line) => console.log(line), now } = {}) {
     this.cache = new PrefixCache({ capacity, ttlMs, now });
+    /** The last KV_SLOTS prompts the engine processed, most recent first. */
+    this.slots = [];
     this.window = window;
     this.recent = [];
     this.count = 0;
@@ -175,12 +191,20 @@ class Measure {
     const promptChars = typeof m.prompt === 'string' ? m.prompt.length : 0;
     let prefix = { prefixChars: 0, systemMatched: false, cached: this.cache.entries.size };
     let systemChars = 0;
+    let slots2Chars = 0;
+    let prevChars = 0;
     if (promptChars) {
       const fp = fingerprint(m.prompt, m.systemChars ?? 0);
       systemChars = fp.system;
       prefix = this.cache.match(fp);
+      prevChars = this.slots[0] ? commonPrefixChars(fp, this.slots[0]) : 0;
+      slots2Chars = Math.max(0, ...this.slots.map((other) => commonPrefixChars(fp, other)));
       // Only a prompt the engine prefilled could have left KV behind to reuse.
-      if (result) this.cache.add(fp);
+      if (result) {
+        this.cache.add(fp);
+        this.slots.unshift(fp);
+        this.slots.length = Math.min(this.slots.length, KV_SLOTS);
+      }
     }
     const engineTokens = result?.promptTokens ?? null;
     const promptTokens = engineTokens ?? (promptChars ? Math.ceil(promptChars / FALLBACK_CHARS_PER_TOKEN) : null);
@@ -192,6 +216,8 @@ class Measure {
     const prefillTps = ttftMs && promptTokens ? promptTokens / (ttftMs / 1000) : null;
     const decodeTps = decodeMs && completionTokens > 1 ? (completionTokens - 1) / (decodeMs / 1000) : null;
     const prefixRatio = promptChars ? prefix.prefixChars / promptChars : null;
+    const slots2Ratio = promptChars ? slots2Chars / promptChars : null;
+    const prevRatio = promptChars ? prevChars / promptChars : null;
 
     const fields = {
       id: m.id ?? '-',
@@ -211,6 +237,9 @@ class Measure {
       prefix_chars: prefix.prefixChars,
       prefix_tokens: promptChars ? Math.round(prefix.prefixChars / charsPerToken) : null,
       prefix_ratio: round(prefixRatio, 3),
+      prefix_slots2_chars: promptChars ? slots2Chars : null,
+      prefix_slots2_ratio: round(slots2Ratio, 3),
+      prefix_prev_ratio: round(prevRatio, 3),
       system_chars: systemChars,
       system_match: prefix.systemMatched ? 1 : 0,
       cached: prefix.cached,
@@ -220,7 +249,7 @@ class Measure {
     this.log(`[measure] ${Object.entries(fields).map(([k, v]) => `${k}=${v ?? '-'}`).join(' ')}`);
 
     if (m.outcome === 'ok') {
-      this.recent.push({ ttftMs, prefillTps, prefixRatio });
+      this.recent.push({ ttftMs, prefillTps, prefixRatio, slots2Ratio, prevRatio });
       if (this.recent.length > this.window) this.recent.shift();
     }
     return fields;
@@ -230,13 +259,18 @@ class Measure {
   stats() {
     const ttft = this.recent.map((r) => r.ttftMs).filter(Number.isFinite);
     const tps = this.recent.map((r) => r.prefillTps).filter(Number.isFinite);
-    const ratios = this.recent.map((r) => r.prefixRatio).filter(Number.isFinite);
+    const mean = (key) => {
+      const values = this.recent.map((r) => r[key]).filter(Number.isFinite);
+      return values.length ? round(values.reduce((a, b) => a + b, 0) / values.length, 3) : null;
+    };
     return {
       count: this.count,
       window: this.recent.length,
       ttft_ms: { p50: percentile(ttft, 50), p90: percentile(ttft, 90) },
       prefill_tps: { p50: round(percentile(tps, 50)), p90: round(percentile(tps, 90)) },
-      prefix_ratio_mean: ratios.length ? round(ratios.reduce((a, b) => a + b, 0) / ratios.length, 3) : null,
+      prefix_ratio_mean: mean('prefixRatio'),
+      prefix_slots2_ratio_mean: mean('slots2Ratio'),
+      prefix_prev_ratio_mean: mean('prevRatio'),
       cached_prompts: this.cache.entries.size,
     };
   }
@@ -251,5 +285,5 @@ function measureFor(bridge) {
 
 module.exports = {
   Measure, PrefixCache, fingerprint, commonPrefixChars, systemBlockChars, chunkChain,
-  measureFor, enabled, CHUNK_CHARS,
+  measureFor, enabled, CHUNK_CHARS, KV_SLOTS,
 };

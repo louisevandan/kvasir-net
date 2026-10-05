@@ -974,6 +974,10 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
       // No abort passed: see chatCompletions. A reply for a client that left
       // is still read, then sent nowhere.
       generateAt = Date.now();
+      // onToken here only stamps the time. In pipeline.generate it is a plain
+      // callback, run after the token is already added to the result; it is not
+      // part of the PREFILL message, so the engine's mode, buffering and the
+      // returned completion are the same with it or without it.
       const result = await pipeline.generate({ prompt, maxTokens, options, timeoutMs, onToken: ({ text }) => { if (text) sawToken(); } });
       engineDone(result);
       bridge.recordContribution(model, result.stageRows, result);

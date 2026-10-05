@@ -35,6 +35,23 @@ node server.js
 
 The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
 
+### Reading `[measure]`
+
+- `ttft_ms` is from the bridge's PREFILL send to the first output event, so it
+  includes the hops around the ring and the first decode step as well as the
+  prefill. `prefill_tps` (`prompt_tokens / ttft_ms`) is therefore approximate
+  and reads low, most visibly on short prompts.
+- `prompt_tokens` is the engine's prefill-row count when it reported one
+  (`prompt_tokens_src=engine`), otherwise characters / 3 (`est`).
+- `decode_ms` runs from the first to the last token the bridge saw.
+- Shared prefix, in 64-character grains converted to tokens:
+  `prefix_*` is the best match among up to 64 recent prompts (10 min) from any
+  conversation, an upper bound; `prefix_slots2_*` only the 2 prompts the engine
+  processed most recently, what two KV slots could keep; `prefix_prev_ratio`
+  only the previous one. `system_match` says whether the system+tools block
+  alone matched a recent prompt. `/health` `measure` has the means of all
+  three and p50/p90 of `ttft_ms` and `prefill_tps`.
+
 ## When an agent stops accepting
 
 An agent that has leaked all 256 connection slots keeps serving on the

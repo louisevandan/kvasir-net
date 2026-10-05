@@ -118,6 +118,84 @@ test('aggregates: p50/p90 of TTFT and prefill rate, mean prefix ratio', () => {
   assert.match(lines[1], /prefill_tps=200 decode_tps=10 /);
 });
 
+/** Turn `n` of a conversation: its system prompt, then every earlier turn. */
+function conversation(name, turns) {
+  let prompt = text(`${name}-system`, 1280);
+  const out = [];
+  for (let i = 0; i < turns; i += 1) {
+    prompt += text(`${name}-turn${i}`, 640);
+    out.push(prompt);
+  }
+  return out;
+}
+
+const okResult = (prompt) => ({ promptTokens: Math.ceil(prompt.length / 4), completionTokens: 2, firstTokenMs: 100, elapsedMs: 200 });
+const field = (line, key) => Number(new RegExp(` ${key}=([\\d.]+)`).exec(line)[1]);
+
+test('reuse: three interleaved conversations defeat two slots, not the upper bound', () => {
+  const lines = [];
+  const m = new Measure({ log: (line) => lines.push(line) });
+  const convs = ['a', 'b', 'c'].map((name) => conversation(name, 6));
+  for (let turn = 0; turn < 6; turn += 1) {
+    for (const conv of convs) {
+      m.record({ id: 'x', model: 'm', stream: true, outcome: 'ok', prompt: conv[turn], result: okResult(conv[turn]) });
+    }
+  }
+  // From the second round on, each request's own previous turn is three back.
+  for (const line of lines.slice(3)) {
+    assert.ok(field(line, 'prefix_ratio') > 0.6, line);
+    assert.equal(field(line, 'prefix_slots2_ratio'), 0, line);
+    assert.equal(field(line, 'prefix_prev_ratio'), 0, line);
+  }
+  const s = m.stats();
+  assert.ok(s.prefix_ratio_mean > 0.5);
+  assert.equal(s.prefix_slots2_ratio_mean, 0);
+  assert.equal(s.prefix_prev_ratio_mean, 0);
+});
+
+test('reuse: two interleaved conversations fit two slots but not one', () => {
+  const lines = [];
+  const m = new Measure({ log: (line) => lines.push(line) });
+  const convs = ['a', 'b'].map((name) => conversation(name, 4));
+  for (let turn = 0; turn < 4; turn += 1) {
+    for (const conv of convs) {
+      m.record({ id: 'x', model: 'm', stream: true, outcome: 'ok', prompt: conv[turn], result: okResult(conv[turn]) });
+    }
+  }
+  for (const line of lines.slice(2)) {
+    assert.equal(field(line, 'prefix_slots2_ratio'), field(line, 'prefix_ratio'), line);
+    assert.equal(field(line, 'prefix_prev_ratio'), 0, line);
+  }
+});
+
+test('reuse: one conversation at a time keeps prev, slots2 and the upper bound together', () => {
+  const lines = [];
+  const m = new Measure({ log: (line) => lines.push(line) });
+  for (const prompt of conversation('solo', 8)) {
+    m.record({ id: 'x', model: 'm', stream: false, outcome: 'ok', prompt, result: okResult(prompt) });
+  }
+  for (const line of lines.slice(1)) {
+    const upper = field(line, 'prefix_ratio');
+    assert.ok(upper > 0.6, line);
+    assert.equal(field(line, 'prefix_slots2_ratio'), upper, line);
+    assert.equal(field(line, 'prefix_prev_ratio'), upper, line);
+    assert.equal(field(line, 'prefix_slots2_chars'), field(line, 'prefix_chars'), line);
+  }
+  const s = m.stats();
+  assert.equal(s.prefix_slots2_ratio_mean, s.prefix_ratio_mean);
+  assert.equal(s.prefix_prev_ratio_mean, s.prefix_ratio_mean);
+});
+
+test('reuse: a request the engine never ran does not occupy a slot', () => {
+  const lines = [];
+  const m = new Measure({ log: (line) => lines.push(line) });
+  const [first, second] = conversation('q', 2);
+  m.record({ id: '1', model: 'm', outcome: 'ok', prompt: first, result: okResult(first) });
+  m.record({ id: 'busy', model: 'm', outcome: 'ring_busy', prompt: text('other', 2000) });
+  m.record({ id: '2', model: 'm', outcome: 'ok', prompt: second, result: okResult(second) });
+  assert.ok(field(lines[2], 'prefix_prev_ratio') > 0.5);
+});
+
 /** A bridge whose engine echoes a fixed reply; prompts reach it as rendered. */
 function stubBridge(logs) {
   const model = {
@@ -180,6 +258,8 @@ test('HTTP: one line per request, numbers only — the prompt never reaches the 
     assert.equal(health.measure.ttft_ms.p50, 20);
     assert.ok(health.measure.prefill_tps.p50 > 0);
     assert.ok(health.measure.prefix_ratio_mean > 0.4, 'the second turn re-sent the first');
+    assert.equal(health.measure.prefix_slots2_ratio_mean, health.measure.prefix_ratio_mean);
+    assert.equal(health.measure.prefix_prev_ratio_mean, health.measure.prefix_ratio_mean);
   });
   assert.equal(logs.length, 2);
   for (const line of [...logs, ...printed]) assert.ok(!line.includes(canary), line);
