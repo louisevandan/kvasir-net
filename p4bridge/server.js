@@ -797,7 +797,7 @@ async function chatCompletions(bridge, model, req, res) {
     if (promptTokens + maxTokens > model.contextSize) {
       return send(res, 400, { error: {
         message: `This model's maximum context length is ${model.contextSize} tokens. The prompt is about `
-          + `${promptTokens} tokens (estimated at 3 characters a token) and ${maxTokens} were asked for the reply.`,
+          + `${promptTokens} tokens (estimated high: 3 ASCII characters or 1 other character a token) and ${maxTokens} were asked for the reply.`,
         type: 'invalid_request_error', param: 'messages', code: 'context_length_exceeded',
       } });
     }
@@ -821,18 +821,24 @@ async function chatCompletions(bridge, model, req, res) {
     }
     return undefined;     // the client left while it waited; there is no one to answer
   }
-  // A client that leaves gives its slot back now, not when the engine is done
-  // with a reply nobody will read. release() counts once, so the finally below
-  // is harmless after it.
-  abort.signal.addEventListener('abort', release, { once: true });
+  // The slot is the engine's, not the client's. p4 has no cancel: a client
+  // that leaves stops nothing, the sequence keeps generating to max_tokens
+  // and keeps its share of the ring's one KV pool. Handing the slot to the next
+  // request then would run more sequences than the pool was divided for. So the
+  // reply is read to its end and dropped, and the slot comes back when the
+  // engine is done — or, if it never says so, after the request timeout.
+  // release() counts once, whichever comes first.
+  const timeoutMs = model.requestTimeoutMs ?? 300_000;
+  const cap = setTimeout(release, timeoutMs);
   try {
-    return await runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls });
+    return await runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs });
   } finally {
+    clearTimeout(cap);
     release();
   }
 }
 
-async function runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls }) {
+async function runCompletion({ bridge, model, res, prompt, maxTokens, options, id, stream, abort, thinkingOpen, tools, parseCalls, timeoutMs }) {
   let pipeline;
   try {
     pipeline = await bridge.pipelineFor(model);
@@ -843,7 +849,9 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
 
   if (!stream) {
     try {
-      const result = await pipeline.generate({ prompt, maxTokens, options, abort: abort.signal });
+      // No abort passed: see chatCompletions. A reply for a client that left
+      // is still read, then sent nowhere.
+      const result = await pipeline.generate({ prompt, maxTokens, options, timeoutMs });
       bridge.recordContribution(model, result.stageRows, result);
       const message = thinkingOpen
         ? { role: 'assistant', ...splitReasoning(result.text) }
@@ -872,7 +880,8 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
     }
   }
 
-  // After the client has gone, output is read (p4 has no cancel) but not sent.
+  // After the client has gone, output is still read to the end (p4 has no
+  // cancel, and the slot is held until it ends) but not sent.
   const write = (data) => { if (!abort.signal.aborted && !res.destroyed) res.write(data); };
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -887,7 +896,7 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
   const emit = (deltas) => { for (const delta of deltas) write(chunkFrame(id, model.id, delta)); };
   try {
     const result = await pipeline.generate({
-      prompt, maxTokens, options, abort: abort.signal,
+      prompt, maxTokens, options, timeoutMs,
       onToken: ({ text }) => emit(shaper.push(text)),
     });
     emit(shaper.end());

@@ -100,11 +100,11 @@ test('the limit comes from the catalog or from ring and request context', () => 
  * `hold` true: generate() ignores the abort, as a ring with no cancel would,
  * and stays pending until released. Each call is recorded.
  */
-function heldBridge({ limit = 1, maxQueue = 16, queueTimeoutMs = 120_000, contextSize = 16384 } = {}) {
+function heldBridge({ limit = 1, maxQueue = 16, queueTimeoutMs = 120_000, contextSize = 16384, requestTimeoutMs = 120_000 } = {}) {
   const model = {
     id: 'step-3.7-flash', name: 'Step', maxTokens: 512, options: '', promptFormat: 'chatml',
     reasoning: true, toolFormat: 'step', stages: [], contextSize,
-    maxConcurrent: limit, maxQueue, queueTimeoutMs,
+    maxConcurrent: limit, maxQueue, queueTimeoutMs, requestTimeoutMs,
   };
   const calls = [];
   const bridge = {
@@ -120,10 +120,11 @@ function heldBridge({ limit = 1, maxQueue = 16, queueTimeoutMs = 120_000, contex
     startedAt: Date.now(),
     async pipelineFor() {
       return {
-        generate({ onToken, abort }) {
+        generate({ onToken, abort, timeoutMs }) {
           return new Promise((resolve, reject) => {
             const call = {
               abort,
+              timeoutMs,
               finish: (text = 'ok') => { onToken?.({ text }); resolve({ requestId: 'r', text, finishReason: 'eos', completionTokens: 1, promptTokens: 1, stageRows: {} }); },
               fail: (message = 'engine fell over') => reject(new Error(message)),
             };
@@ -253,7 +254,7 @@ test('HTTP: a client that leaves while queued is taken out of the queue', async 
   }
 });
 
-test('HTTP: a client that leaves in flight frees its slot for the next one at once', async () => {
+test('HTTP: a client that leaves in flight keeps its slot until the engine finishes', async () => {
   const bridge = heldBridge({ limit: 1 });
   const server = await listen(bridge);
   try {
@@ -262,10 +263,13 @@ test('HTTP: a client that leaves in flight frees its slot for the next one at on
     const b = start(server, {});
     await until(() => stats(bridge).queued === 1, 'one queued');
     a.cut();
-    // The engine has not finished the first request — it never will here —
-    // and the second is admitted anyway.
-    await until(() => bridge.calls.length === 2, 'the queued one admitted');
-    assert.equal(bridge.calls[0].abort.aborted, true);
+    await tick(50);
+    // p4 cannot cancel, so the first sequence still holds its share of the KV
+    // pool: the second must not start yet, and the engine was never told to stop.
+    assert.equal(bridge.calls[0].abort, undefined);
+    assert.deepEqual([bridge.calls.length, stats(bridge).in_flight, stats(bridge).queued], [1, 1, 1]);
+    bridge.calls[0].finish('a reply nobody reads');
+    await until(() => bridge.calls.length === 2, 'the queued one admitted once the engine finished');
     assert.deepEqual([stats(bridge).in_flight, stats(bridge).queued], [1, 0]);
     bridge.calls[1].finish();
     assert.equal((await b.done).status, 200);
@@ -275,7 +279,7 @@ test('HTTP: a client that leaves in flight frees its slot for the next one at on
   }
 });
 
-test('HTTP: an engine error after the client left does not release twice', async () => {
+test('HTTP: an engine error after the client left releases once', async () => {
   const bridge = heldBridge({ limit: 1 });
   const server = await listen(bridge);
   try {
@@ -285,17 +289,64 @@ test('HTTP: an engine error after the client left does not release twice', async
     const c = start(server, {});
     await until(() => stats(bridge).queued === 2, 'two queued');
     a.cut();
-    await until(() => bridge.calls.length === 2, 'b admitted');
-    // Now the first request's engine call fails. Its slot is already back; a
-    // second release would admit c alongside b and break the limit.
-    bridge.calls[0].fail();
     await tick(30);
+    assert.equal(bridge.calls.length, 1);
+    bridge.calls[0].fail();
+    await until(() => bridge.calls.length === 2, 'b admitted');
+    await tick(30);
+    // One release for a: b in, c still waiting. Two would have let c in too.
     assert.deepEqual([stats(bridge).in_flight, stats(bridge).queued, bridge.calls.length], [1, 1, 2]);
     bridge.calls[1].finish();
     await until(() => bridge.calls.length === 3, 'c admitted');
     bridge.calls[2].finish();
     assert.deepEqual([(await b.done).status, (await c.done).status], [200, 200]);
     assert.equal(stats(bridge).in_flight, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('HTTP: an engine that never answers gives its slot back at the request timeout, once', async () => {
+  const bridge = heldBridge({ limit: 1, requestTimeoutMs: 80 });
+  const server = await listen(bridge);
+  try {
+    const a = start(server, {});
+    await until(() => bridge.calls.length === 1, 'one in flight');
+    assert.equal(bridge.calls[0].timeoutMs, 80);       // the engine read is bounded by the same number
+    a.cut();
+    const b = start(server, {});
+    const c = start(server, {});
+    await until(() => stats(bridge).queued === 2, 'two queued');
+    await until(() => bridge.calls.length === 2, 'b admitted after the timeout', 1000);
+    // The engine answering late must not release a's slot a second time.
+    bridge.calls[0].finish();
+    await tick(30);
+    assert.deepEqual([stats(bridge).in_flight, stats(bridge).queued, bridge.calls.length], [1, 1, 2]);
+    bridge.calls[1].finish();
+    await until(() => bridge.calls.length === 3, 'c admitted');
+    bridge.calls[2].finish();
+    assert.deepEqual([(await b.done).status, (await c.done).status], [200, 200]);
+  } finally {
+    server.close();
+  }
+});
+
+test('the token estimate counts Korean a token a character', () => {
+  assert.equal(estimateTokens('abcdef'), 2);
+  assert.equal(estimateTokens('안녕하세요'), 5);
+  assert.equal(estimateTokens('ab 안녕'), 3);
+});
+
+test('HTTP: a Korean prompt that cannot fit is refused', async () => {
+  const bridge = heldBridge({ limit: 1, contextSize: 2048 });
+  const server = await listen(bridge);
+  try {
+    // 1800 Hangul characters: about 600 tokens at 3 a token, which would fit
+    // 2048 with 512 for the reply; counted a token each, they do not.
+    const r = await start(server, { messages: [{ role: 'user', content: '가'.repeat(1800) }] }).done;
+    assert.equal(r.status, 400);
+    assert.equal(JSON.parse(r.text).error.code, 'context_length_exceeded');
+    assert.equal(bridge.calls.length, 0);
   } finally {
     server.close();
   }

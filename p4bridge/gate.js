@@ -11,10 +11,13 @@
  * one FIFO queue — bounded, and for a bounded time, because a client stuck
  * behind a wedged ring is better told "busy, retry" than left hanging.
  *
- * A slot belongs to a request until it ends, whichever way it ends: answered,
- * failed, timed out, or the client gone. Each of those calls release(), and
- * release() counts only once, so an abort followed by the engine's own error
- * cannot hand the same slot back twice.
+ * A slot belongs to a request until the ENGINE is done with it: answered,
+ * failed, or past the request timeout. A client leaving is not one of those —
+ * p4 has no cancel, so its sequence keeps generating and keeps its share of
+ * the KV pool; the bridge reads the reply to its end and drops it. A client
+ * that leaves while still queued is simply taken out of the queue. release()
+ * counts only once, so the timeout and a late engine answer cannot hand the
+ * same slot back twice.
  */
 
 class Busy extends Error {
@@ -135,11 +138,20 @@ function maxConcurrentFor(entry) {
 }
 
 /**
- * Tokens a prompt may take, without a tokenizer: three characters a token.
- * That over-counts English and code (about four), so what it refuses would
- * not have fit; it under-counts Korean and Chinese, so a prompt it lets
- * through can still be refused by the engine. It is a door check, not a count.
+ * Tokens a prompt may take, without a tokenizer, erring high. ASCII runs about
+ * four characters a token and is counted at three. Anything else — Korean,
+ * Chinese, emoji — is counted a token per character, which is roughly what a
+ * BPE vocabulary gives Hangul and never much less; at three characters a token
+ * a Korean prompt would be counted at a third of its size and let through to
+ * fail in the engine.
  */
-const estimateTokens = (prompt) => Math.ceil(String(prompt).length / 3);
+function estimateTokens(prompt) {
+  let ascii = 0;
+  let other = 0;
+  for (const ch of String(prompt)) {
+    if (ch.codePointAt(0) < 0x80) ascii += 1; else other += 1;
+  }
+  return Math.ceil(ascii / 3) + other;
+}
 
 module.exports = { Gate, Busy, Aborted, gateFor, gateStats, maxConcurrentFor, estimateTokens };

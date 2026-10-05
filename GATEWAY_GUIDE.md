@@ -101,9 +101,14 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
   requests per model (default `ring_context_size / context_size`), streaming or
   not. The rest wait in one FIFO queue, 16 deep and 120 s long, then get 503
   `ring_busy` with `Retry-After`. A prompt that cannot fit `context_size` with its
-  `max_tokens` gets 400 `context_length_exceeded` before it waits. A client that
-  disconnects gives its slot back at once. `/health` and `/api/runtime` show
-  `queues`. (Also after p4bridge/tool-calls is deployed.)
+  `max_tokens` gets 400 `context_length_exceeded` before it waits (estimated
+  high: 3 ASCII characters or 1 other character a token). p4 cannot cancel, so a
+  client that disconnects in flight keeps its slot until the engine finishes or
+  `request_timeout_s` (300) passes; one that disconnects while queued just
+  leaves the queue. `/health` and `/api/runtime` show `queues`. The gateway
+  passes a bridge 4xx and 503 `ring_busy` through to the caller rather than
+  reloading the ring. (After p4bridge/tool-calls is deployed, bridge and
+  gateway together.)
 
 ### p4 agents and stage servers
 

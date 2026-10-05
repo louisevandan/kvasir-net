@@ -70,6 +70,9 @@ function load(file) {
       maxConcurrent: maxConcurrentFor(model),
       maxQueue: model.max_queue ?? 16,
       queueTimeoutMs: (model.queue_timeout_s ?? 120) * 1000,
+      // How long one request may hold its slot. p4 cannot cancel, so this is
+      // also how long a slot stays taken after its client has left.
+      requestTimeoutMs: (model.request_timeout_s ?? 300) * 1000,
       maxTokens: model.max_tokens ?? 1024,
       options: model.options ?? '',
       // p4 hands the stage server an opaque prompt and applies no chat

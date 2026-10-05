@@ -24,7 +24,7 @@ FROM node:20-alpine AS gateway
 WORKDIR /app
 COPY solana/staking-service/package.json solana/staking-service/package-lock.json* ./
 RUN npm install --omit=dev --no-audit --no-fund
-COPY solana/staking-service/server.js solana/staking-service/gatewayAuth.js ./
+COPY solana/staking-service/server.js solana/staking-service/gatewayAuth.js solana/staking-service/bridgeForward.js ./
 # token spec (public source of truth) baked as a default; override with a mount + KVR_TOKEN_SPEC
 COPY wallet/shared-spec/token.devnet.json /app/spec/token.devnet.json
 # web UI bundle from stage 1

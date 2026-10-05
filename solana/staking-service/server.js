@@ -24,6 +24,7 @@ const HOST_OS = (() => {
 })();
 const express = require('express');
 const gwauth = require('./gatewayAuth');
+const { forwardCompletion } = require('./bridgeForward');
 const {
   Connection, Keypair, PublicKey,
 } = require('@solana/web3.js');
@@ -1933,19 +1934,6 @@ function ringOutage(res, m, detail) {
     type: 'hub_unavailable', code: 'ring_recovering', detail: String(detail || '').slice(0, 200),
   } });
 }
-// A bridge "ring down" shows up either as a non-2xx, or as a 200 SSE whose FIRST
-// chunk is a data:{"error":...} — treat both as an outage.
-function sseFirstError(text) {
-  for (const line of String(text || '').split('\n')) {
-    const t = line.trim();
-    if (!t.startsWith('data:')) continue;
-    const p = t.slice(5).trim();
-    if (p === '[DONE]') return null;
-    try { const o = JSON.parse(p); return o && o.error ? (o.error.message || 'upstream error') : null; } catch { return null; }
-  }
-  return null;
-}
-
 /* ---- Anthropic-compatible surface -----------------------------------------
  *
  * The site has advertised an Anthropic surface alongside the OpenAI one, and
@@ -2024,10 +2012,15 @@ app.post('/anthropic/v1/messages', async (req, res) => {
   if (!upstream.ok || !d) {
     // Carry the OpenAI-side status and reason across rather than flattening
     // every failure to 500: a 401 must still read as a 401 to an Anthropic SDK.
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) res.setHeader('Retry-After', retryAfter);
+    const busy = d?.error?.type === 'ring_busy';
     return res.status(upstream.status || 502).json({
       type: 'error',
       error: {
-        type: upstream.status === 401 ? 'authentication_error' : 'api_error',
+        type: upstream.status === 401 ? 'authentication_error'
+          : busy ? 'overloaded_error'
+            : upstream.status === 400 ? 'invalid_request_error' : 'api_error',
         message: d?.error?.message ?? raw.slice(0, 300) ?? 'upstream failure',
       },
     });
@@ -2111,69 +2104,15 @@ app.post('/v1/chat/completions', async (req, res) => {
   // app uses does not error on M3. An explicit caller value still wins.
   fwd.chat_template_kwargs = { enable_thinking: false, ...(body.chat_template_kwargs || {}) };
   if (wantStream) fwd.stream_options = { ...(body.stream_options || {}), include_usage: true };
-  let upstream;
-  try {
-    upstream = await fetch(`${m.bridgeUrl}/c/${m.cid}/v1/chat/completions`, {
-      method: 'POST', headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(fwd), signal: AbortSignal.timeout(300000),
-    });
-  } catch (e) { return ringOutage(res, m, `upstream unreachable: ${e.message}`); }
-
-  if (!wantStream) {
-    const raw = await upstream.text().catch(() => '');
-    if (!upstream.ok) return ringOutage(res, m, raw || `upstream ${upstream.status}`);
-    let d; try { d = JSON.parse(raw); } catch { return ringOutage(res, m, 'non-JSON upstream response'); }
-    if (!d || !d.choices) return ringOutage(res, m, 'upstream returned no choices');
-    markRingOk(m.cid);
-    if (d.usage) debitCredits(w, m.id, d.usage);
-    return res.json(d);
-  }
-
-  if (!upstream.ok || !upstream.body) {
-    const t = await upstream.text().catch(() => '');
-    return ringOutage(res, m, t || `upstream ${upstream.status}`);
-  }
-  // Peek the first chunk: a down ring answers 200 with data:{"error":...}. Catch
-  // it BEFORE committing SSE headers so we can return a typed 503 + auto-reload.
-  const reader = upstream.body.getReader();
-  const dec = new TextDecoder();
-  let first;
-  try { first = await reader.read(); } catch (e) { return ringOutage(res, m, `stream read: ${e.message}`); }
-  const firstText = first && first.value ? dec.decode(first.value, { stream: true }) : '';
-  const errMsg = sseFirstError(firstText);
-  if (errMsg) return ringOutage(res, m, errMsg);
-
-  res.status(200);
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  let usage = null, buf = '';
-  const scan = (text) => {
-    buf += text;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') continue;
-      try { const obj = JSON.parse(payload); if (obj && obj.usage) usage = obj.usage; } catch { /* partial */ }
-    }
-  };
-  try {
-    if (firstText) { res.write(firstText); scan(firstText); }
-    if (!(first && first.done)) {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = dec.decode(value, { stream: true });
-        res.write(text);
-        scan(text);
-      }
-    }
-  } catch { /* client/stream aborted */ }
-  markRingOk(m.cid);
-  res.end();
-  if (usage) debitCredits(w, m.id, usage);
+  // A bridge 4xx or 503 ring_busy is passed through, not treated as an outage:
+  // see bridgeForward.js.
+  await forwardCompletion({
+    res, m, fwd, wantStream,
+    headers: bridgeHeaders({ 'Content-Type': 'application/json' }),
+    ringOutage,
+    debit: (usage) => debitCredits(w, m.id, usage),
+    markOk: () => markRingOk(m.cid),
+  });
  } catch (e) {
   // Last-resort guard: never leak an Express default 500 {}. If we haven't
   // committed a response yet, return a typed error the agent can branch on.
