@@ -78,6 +78,36 @@ const MAX_WORKERS = 4_096;
 const MAX_WALLET_LENGTH = 64;
 /** A relay session name is ours to shape; a caller may not make it a payload. */
 const MAX_SESSION_LENGTH = 128;
+/**
+ * What a relay session name may be made of. Every shipped client names its
+ * session `expert-<node id>` from letters, digits and dashes; the dot and
+ * underscore are room for a hand-run worker, nothing more.
+ */
+const SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/**
+ * Names the operator's side of the network uses, so a node may not claim them.
+ * `ring-<controller>` is what /api/ring-relay dials: a node that registered
+ * one would be handed every ring hop meant for that controller. The rest are
+ * held back for the bridge and operator so a future name of theirs is not
+ * already squatted. Compared without case, so `RING-x` is no way around it.
+ * A service-token caller is the operator, and may register them.
+ */
+const RESERVED_SESSION_PREFIXES = ['ring-', 'bridge-', 'operator-', 'service-', 'kvasir-'];
+
+/** Why a session name is unacceptable from a node, or null when it is fine. */
+function sessionProblem(session, { service = false } = {}) {
+  if (!session || session.length > MAX_SESSION_LENGTH) {
+    return `a relay session name is 1-${MAX_SESSION_LENGTH} characters`;
+  }
+  if (!SESSION_NAME.test(session)) {
+    return 'a relay session name is letters, digits, ".", "_" and "-", starting with a letter or digit';
+  }
+  const lower = session.toLowerCase();
+  if (!service && RESERVED_SESSION_PREFIXES.some((p) => lower.startsWith(p))) {
+    return 'that relay session name is reserved for the operator';
+  }
+  return null;
+}
 
 const json = (res, status, body) => {
   const text = JSON.stringify(body);
@@ -488,6 +518,25 @@ class Participation {
         .map((s) => s.map(Number))
         .filter((s) => s.every(Number.isFinite));
       const url = String(body?.url ?? '');
+      // The relay session is checked before anything is recorded, so a refused
+      // name leaves no census entry behind. It used to be truncated and taken
+      // as given, which let a node register `ring-<id>` and be handed the ring
+      // hops meant for the operator's controller.
+      const registrant = who.kind === 'service' ? 'service' : who.wallet;
+      const relaySession = url.startsWith('relay:')
+        ? (url.slice('relay:'.length) || `expert-${workerId}`) : null;
+      if (relaySession !== null) {
+        const problem = sessionProblem(relaySession, { service: who.kind === 'service' });
+        if (problem) return refuse(res, 400, 'bad_relay_session', problem), true;
+        // A name belongs to the wallet that registered it, for as long as that
+        // registration lives. Another wallet re-registering it would point the
+        // target at its own port and take the traffic, and the payment.
+        const held = this.relayTargets.get(relaySession);
+        if (held && held.registrant && held.registrant !== registrant) {
+          return refuse(res, 409, 'relay_session_taken',
+            'that relay session name is registered to another wallet'), true;
+        }
+      }
       const previous = this.workers.get(workerId);
       if (!previous && this.liveWorkers().length >= MAX_WORKERS) {
         // The census is already at capacity with workers that are still beating.
@@ -527,9 +576,8 @@ class Participation {
       let wired = false;
       let listenPort = null;
       let session = null;
-      if (url.startsWith('relay:')) {
-        session = (url.slice('relay:'.length) || `expert-${workerId}`)
-          .slice(0, MAX_SESSION_LENGTH);
+      if (relaySession !== null) {
+        session = relaySession;
         listenPort = this.portFor(workerId);
         if (listenPort) {
           const prior = this.relayTargets.get(session);
@@ -542,6 +590,7 @@ class Participation {
             owner: owner || prior?.owner || '',
             platform,
             nodeId: workerId,
+            registrant,
             ts: Date.now(),
           });
           wired = true;
@@ -678,7 +727,7 @@ class Participation {
    * through untouched: it is how a NAT'd stage that dials both neighbours tells
    * each one which file descriptor it is.
    */
-  resolveUpgrade(path, query) {
+  async resolveUpgrade(path, query) {
     const token = query.get('token') ?? '';
     const wallet = this.auth.verifyToken(token);
     // Constant-time, like identify() on the HTTP path. A plain === here leaks
@@ -686,11 +735,25 @@ class Participation {
     const service = Boolean(this.auth.serviceToken)
       && timingSafeEqual(token, this.auth.serviceToken);
     if (!wallet && !service) return { code: 4401, reason: 'authentication required' };
+    // The same question the HTTP paths ask in needsNode(): a signature says
+    // which wallet this is, not whether it is still admitted. Without it a
+    // wallet taken off the list kept opening relays until its token expired,
+    // up to thirty days later.
+    if (!service && !await this.auth.allows(wallet)) {
+      return { code: 4403, reason: 'this wallet is no longer admitted to the ring' };
+    }
 
     if (path === '/api/expert-relay') {
       const session = query.get('session') ?? '';
       const target = this.relayTargets.get(session);
       if (!target) return { code: 4404, reason: 'unknown relay session' };
+      // An expert session is dialled by the worker that registered it, with the
+      // same token. Anyone else on the far end would be splicing themselves
+      // into another node's dispatch and being paid for its bytes.
+      if (!service && target.registrant && target.registrant !== 'service'
+        && target.registrant !== wallet) {
+        return { code: 4403, reason: 'that relay session is registered to another wallet' };
+      }
       // The coverage POST creates the target before the worker dials, and it
       // has no owner of its own to give — so the dialing wallet is who gets
       // paid for what crosses this socket.
@@ -724,4 +787,6 @@ class Participation {
   }
 }
 
-module.exports = { Participation, TARGET_REPLICAS, WORKER_STALE_MS };
+module.exports = {
+  Participation, TARGET_REPLICAS, WORKER_STALE_MS, RESERVED_SESSION_PREFIXES, sessionProblem,
+};

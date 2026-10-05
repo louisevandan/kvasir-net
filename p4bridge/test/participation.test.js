@@ -78,9 +78,9 @@ function startBridge({ shard = null, eligible = null } = {}) {
     if (await participation.handle(req, res, url.pathname, url.searchParams, body)) return;
     res.writeHead(404).end();
   });
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url, 'http://test.local');
-    const target = participation.resolveUpgrade(url.pathname, url.searchParams);
+    const target = await participation.resolveUpgrade(url.pathname, url.searchParams);
     if (!target || target.code) {
       return wsrelay.refuse(req, socket, target?.code ?? 4404, target?.reason ?? 'unknown');
     }
@@ -652,3 +652,148 @@ function closeCodeFor(port, path) {
     setTimeout(() => reject(new Error('no close frame')), 5000).unref?.();
   });
 }
+
+// ---- relay hardening ------------------------------------------------------
+
+async function mint(port, wallet) {
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: wallet.address } });
+  const minted = await call(port, 'POST', '/api/auth/node-token', {
+    body: { wallet: wallet.address, nonce: challenge.body.nonce, signature: wallet.sign(challenge.body.message) },
+  });
+  return minted.body.node_token;
+}
+
+const coverageFor = (session, workerId = 'w-1') => ({
+  worker_id: workerId, model: MODEL.id, n_layer: MODEL.nLayer, n_expert: MODEL.nExpert,
+  segments: [[1, 0, 2]], url: `relay:${session}`,
+});
+
+async function serviceCall(port, path, body) {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-kvasir-service-token': 'svc-secret' },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+}
+
+/** Dial a relay and report whether the bridge spliced it to `upstream`. */
+function dialReachesUpstream(port, path, upstream) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ reached: false, code: null }), 2000);
+    upstream.once('connection', (s) => { clearTimeout(timer); s.destroy(); resolve({ reached: true }); });
+    closeCodeFor(port, path).then((code) => { clearTimeout(timer); resolve({ reached: false, code }); },
+      () => {});
+  });
+}
+
+test('a wallet removed from admissions cannot open a relay with its still-valid token', async (t) => {
+  let admitted = true;
+  const { server, participation } = startBridge({ eligible: async () => admitted });
+  const port = await listen(server);
+  const upstream = net.createServer();
+  const upstreamPort = await listen(upstream);
+  t.after(() => { upstream.close(); server.close(); participation.stop(); });
+  const w = makeWallet();
+  const token = await mint(port, w);
+
+  assert.equal((await call(port, 'POST', '/api/expert-coverage', {
+    token, body: coverageFor('expert-gone') })).status, 200);
+  participation.relayTargets.get('expert-gone').port = upstreamPort;
+  const path = `/api/expert-relay?session=expert-gone&token=${encodeURIComponent(token)}`;
+
+  // Admitted: the relay is spliced through.
+  const before = await dialReachesUpstream(port, path, upstream);
+  assert.equal(before.reached, true, 'an admitted wallet is accepted at upgrade');
+
+  // Removed: the token still verifies, and the upgrade is refused anyway.
+  admitted = false;
+  assert.ok(participation.auth.verifyToken(token), 'the token itself is still valid');
+  assert.equal(await closeCodeFor(port, path), 4403);
+  assert.equal(await closeCodeFor(port,
+    `/api/ring-relay?controller_id=c1&token=${encodeURIComponent(token)}`), 4403);
+});
+
+test('a node cannot register a reserved relay session name, in any case', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await mint(port, makeWallet());
+
+  for (const name of ['ring-c1', 'RING-c1', 'Ring-c1', 'bridge-x', 'Operator-x', 'service-x', 'kvasir-x']) {
+    const refused = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor(name) });
+    assert.equal(refused.status, 400, name);
+    assert.equal(refused.body.code, 'bad_relay_session', name);
+    assert.equal(participation.relayTargets.has(name), false, name);
+  }
+  assert.equal(participation.workers.size, 0, 'a refused report leaves no census entry');
+
+  // The operator, holding the service token, may.
+  const operator = await serviceCall(port, '/api/expert-coverage', coverageFor('ring-c1', 'ring-host'));
+  assert.equal(operator.status, 200);
+  assert.equal(participation.relayTargets.get('ring-c1').registrant, 'service');
+  // And a node cannot then take it over.
+  const takeover = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor('ring-c1') });
+  assert.equal(takeover.status, 400);
+});
+
+test('a relay session name is bound to the wallet that registered it', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  const upstream = net.createServer();
+  const upstreamPort = await listen(upstream);
+  t.after(() => { upstream.close(); server.close(); participation.stop(); });
+  const a = makeWallet();
+  const b = makeWallet();
+  const tokenA = await mint(port, a);
+  const tokenB = await mint(port, b);
+
+  assert.equal((await call(port, 'POST', '/api/expert-coverage', {
+    token: tokenA, body: coverageFor('expert-mine', 'a-1') })).status, 200);
+  const portA = participation.relayTargets.get('expert-mine').port;
+
+  // Another wallet can neither re-register the name nor move it to its worker.
+  const stolen = await call(port, 'POST', '/api/expert-coverage', {
+    token: tokenB, body: coverageFor('expert-mine', 'b-1') });
+  assert.equal(stolen.status, 409);
+  assert.equal(stolen.body.code, 'relay_session_taken');
+  assert.equal(participation.relayTargets.get('expert-mine').port, portA);
+  assert.equal(participation.relayTargets.get('expert-mine').registrant, a.address);
+
+  // The same wallet re-registers freely: that is every heartbeat.
+  const again = await call(port, 'POST', '/api/expert-coverage', {
+    token: tokenA, body: coverageFor('expert-mine', 'a-1') });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.wired, true);
+
+  // Nor can the other wallet dial into it.
+  participation.relayTargets.get('expert-mine').port = upstreamPort;
+  assert.equal(await closeCodeFor(port,
+    `/api/expert-relay?session=expert-mine&token=${encodeURIComponent(tokenB)}`), 4403);
+  const own = await dialReachesUpstream(port,
+    `/api/expert-relay?session=expert-mine&token=${encodeURIComponent(tokenA)}`, upstream);
+  assert.equal(own.reached, true, 'the registering wallet still dials its own session');
+});
+
+test('a relay session name is checked for charset and length', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const token = await mint(port, makeWallet());
+
+  for (const name of ['has space', 'a/b', '../etc', '-lead', '.hidden', 'semi;colon',
+    'x'.repeat(129), 'ünïcode', 'nul\u0000x']) {
+    const refused = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor(name) });
+    assert.equal(refused.status, 400, JSON.stringify(name));
+    assert.equal(refused.body.code, 'bad_relay_session', JSON.stringify(name));
+  }
+  for (const name of ['expert-android-1a2b3c4d', 'expert-ios-abcd1234', 'Worker_2.slot-3', 'x'.repeat(128)]) {
+    const ok = await call(port, 'POST', '/api/expert-coverage', { token, body: coverageFor(name, name) });
+    assert.equal(ok.status, 200, name);
+    assert.equal(ok.body.session, name);
+  }
+  // An empty name still falls back to expert-<worker_id>.
+  const fallback = await call(port, 'POST', '/api/expert-coverage', {
+    token, body: coverageFor('', 'phone-9') });
+  assert.equal(fallback.body.session, 'expert-phone-9');
+});

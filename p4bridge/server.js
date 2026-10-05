@@ -925,14 +925,23 @@ async function runCompletion({ bridge, model, res, prompt, maxTokens, options, i
  * dial out and meet here.
  */
 function attachRelays(server, bridge) {
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url, 'http://bridge.local');
     const path = url.pathname.replace(/\/+$/, '');
     if (!bridge.participation || !['/api/expert-relay', '/api/ring-relay'].includes(path)) {
       socket.destroy();
       return;
     }
-    const target = bridge.participation.resolveUpgrade(path, url.searchParams);
+    // Asynchronous because admission is: the eligibility policy may consult
+    // something outside this process. A throw must not escape as an unhandled
+    // rejection in the process that also serves the ring.
+    let target;
+    try {
+      target = await bridge.participation.resolveUpgrade(path, url.searchParams);
+    } catch (error) {
+      console.error(`[relay] upgrade refused: ${error.message}`);
+      return wsrelay.refuse(req, socket, 1011, 'relay unavailable');
+    }
     if (!target || target.code) {
       // A close code rather than a reset: the clients log it, and 4401 from
       // 4404 is the difference between "your token expired" and "nothing has
