@@ -134,7 +134,7 @@ Scope, stated plainly: steps 1-3 answer today. Expert-grain sharding is still be
 A native OpenAI-compatible endpoint with a prepaid-credit API key. An AI agent holding a Solana wallet secret can obtain a key headlessly (no browser). The gateway is live at https://gate.kvasir-ai.net; a call without a key answers 401, which is the gateway working rather than an outage.
 
 - Base URL: https://gate.kvasir-ai.net/v1 · Auth: `Authorization: Bearer <apiKey>`
-- Model: `step-3.7-flash` (Step-3.7-Flash, 428B MoE); `GET /v1/models` to list. Streaming (SSE) and native tool_calls are supported.
+- Model: `step-3.7-flash` (Step-3.7-Flash, 428B MoE); `GET /v1/models` to list. Streaming (SSE) is supported. Native tool_calls (OpenAI `tools` in, `message.tool_calls` / `delta.tool_calls` out, `finish_reason: "tool_calls"`) are supported after p4bridge/tool-calls is deployed; until then a `tools` field is ignored and calls are not returned.
 - SIWS signing: sign the challenge `message` string verbatim with the wallet's ed25519 key; submit the 64-byte signature as base64. `wallet` is the base58 public key.
 
 Self-issue flow:

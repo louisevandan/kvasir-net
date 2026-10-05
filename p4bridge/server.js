@@ -32,6 +32,7 @@ const catalogModule = require('./catalog');
 const { NodeAuth } = require('./nodeauth');
 const { Participation } = require('./participation');
 const wsrelay = require('./wsrelay');
+const toolcalls = require('./toolcalls');
 
 const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000;
 // Optional shared secret. p4 itself has no auth, so when the bridge is not on
@@ -525,9 +526,16 @@ const textOf = (message) => (Array.isArray(message.content)
  * end-of-turn token belongs to. A reasoning model additionally opens the
  * assistant turn with a thinking block.
  */
-function promptFrom(body, format = 'raw', reasoning = false, thinkingOpen = reasoning) {
+function promptFrom(body, format = 'raw', reasoning = false, thinkingOpen = reasoning, toolFormat = 'none') {
   if (typeof body.prompt === 'string') return body.prompt;
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (format === 'chatml' && toolFormat === 'step') {
+    // The whole Step template, not just its turn markers: tools in the system
+    // turn, earlier calls in the model's own syntax, results as tool_response.
+    // For a plain conversation it renders exactly what the branch below does.
+    const think = !reasoning ? '' : thinkingOpen ? '<think>\n' : '<think>\n\n</think>\n\n';
+    return toolcalls.renderStep(body, think);
+  }
   if (format === 'chatml') {
     const turns = messages
       .map((message) => `<|im_start|>${message.role ?? 'user'}\n${textOf(message)}<|im_end|>\n`)
@@ -735,11 +743,46 @@ function createServer(bridge) {
   });
 }
 
+/**
+ * Sampling options for the engine, from the request.
+ *
+ * The stage server reads a request's `options` as a JSON object and already
+ * honours `temperature` and `stop` (request_options.cpp, request_stops.cpp).
+ * The catalog may set defaults there; the request's own values win. A catalog
+ * `options` that is not a JSON object is left exactly as it is, since there is
+ * nothing to merge into.
+ */
+function engineOptions(catalogOptions, body) {
+  const extra = {};
+  const temperature = Number(body.temperature);
+  if (body.temperature !== undefined && body.temperature !== null && Number.isFinite(temperature) && temperature >= 0) {
+    extra.temperature = temperature;
+  }
+  if (typeof body.stop === 'string' && body.stop) extra.stop = [body.stop];
+  else if (Array.isArray(body.stop)) {
+    const stops = body.stop.filter((item) => typeof item === 'string' && item);
+    if (stops.length) extra.stop = stops;
+  }
+  if (!Object.keys(extra).length) return catalogOptions;
+  let base = {};
+  if (catalogOptions) {
+    try { base = JSON.parse(catalogOptions); } catch { return catalogOptions; }
+    if (!base || typeof base !== 'object' || Array.isArray(base)) return catalogOptions;
+  }
+  return JSON.stringify({ ...base, ...extra });
+}
+
 async function chatCompletions(bridge, model, req, res) {
   const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
   const thinkingOpen = Boolean(model.reasoning) && body.chat_template_kwargs?.enable_thinking !== false;
-  const prompt = promptFrom(body, model.promptFormat, model.reasoning, thinkingOpen);
+  const toolFormat = model.toolFormat ?? 'none';
+  const prompt = promptFrom(body, model.promptFormat, model.reasoning, thinkingOpen, toolFormat);
   if (!prompt) return send(res, 400, { error: { message: 'a prompt or messages are required' } });
+  // Calls are read out of the reply only when the request offered tools in a
+  // format this model has; otherwise the text is returned as it came.
+  const tools = toolFormat === 'none' || typeof body.prompt === 'string' ? [] : toolcalls.activeTools(body);
+  const parseCalls = tools.length > 0;
+  const options = engineOptions(model.options, body);
   // Clamp rather than forward: a request above the loaded resource profile is
   // refused by the adapter outright, and a caller asking for more than the ring
   // was loaded to give should get a shorter answer, not an engine error.
@@ -758,17 +801,23 @@ async function chatCompletions(bridge, model, req, res) {
 
   if (!stream) {
     try {
-      const result = await pipeline.generate({ prompt, maxTokens, options: model.options, abort: abort.signal });
+      const result = await pipeline.generate({ prompt, maxTokens, options, abort: abort.signal });
       bridge.recordContribution(model, result.stageRows, result);
+      const message = thinkingOpen
+        ? { role: 'assistant', ...splitReasoning(result.text) }
+        : { role: 'assistant', content: result.text };
+      let finish = toolcalls.finishReason(result.finishReason);
+      if (parseCalls) {
+        const parsed = toolcalls.parseToolCalls(message.content ?? '', tools);
+        if (parsed.toolCalls.length) {
+          message.content = parsed.content;
+          message.tool_calls = parsed.toolCalls;
+          finish = 'tool_calls';
+        }
+      }
       return send(res, 200, {
         id, object: 'chat.completion', created: Math.floor(Date.now() / 1000), model: model.id,
-        choices: [{
-          index: 0,
-          message: thinkingOpen
-            ? { role: 'assistant', ...splitReasoning(result.text) }
-            : { role: 'assistant', content: result.text },
-          finish_reason: result.finishReason,
-        }],
+        choices: [{ index: 0, message, finish_reason: finish }],
         usage: {
           prompt_tokens: result.promptTokens ?? 0,
           completion_tokens: result.completionTokens,
@@ -787,13 +836,20 @@ async function chatCompletions(bridge, model, req, res) {
     connection: 'keep-alive',
   });
   res.write(chunkFrame(id, model.id, { role: 'assistant', content: '' }));
+  // Reasoning goes out as reasoning_content, as the JSON reply does, and a call
+  // goes out as delta.tool_calls once it is whole. Plain text is not delayed
+  // beyond the few characters that could still be the start of a tag.
+  const shaper = new toolcalls.StreamShaper({ tools, parseCalls, thinkingOpen });
+  const emit = (deltas) => { for (const delta of deltas) res.write(chunkFrame(id, model.id, delta)); };
   try {
     const result = await pipeline.generate({
-      prompt, maxTokens, options: model.options, abort: abort.signal,
-      onToken: ({ text }) => res.write(chunkFrame(id, model.id, { content: text })),
+      prompt, maxTokens, options, abort: abort.signal,
+      onToken: ({ text }) => emit(shaper.push(text)),
     });
+    emit(shaper.end());
     bridge.recordContribution(model, result.stageRows, result);
-    res.write(chunkFrame(id, model.id, {}, result.finishReason));
+    const finish = shaper.calls.length ? 'tool_calls' : toolcalls.finishReason(result.finishReason);
+    res.write(chunkFrame(id, model.id, {}, finish));
     // The gateway bills from the last frame that carries usage.
     res.write(`data: ${JSON.stringify({
       id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: model.id, choices: [],
@@ -1023,4 +1079,4 @@ if (require.main === module) {
   main().catch((error) => { console.error(`p4-bridge failed to start: ${error.message}`); process.exit(1); });
 }
 
-module.exports = { Bridge, createServer, attachRelays, promptFrom };
+module.exports = { Bridge, createServer, attachRelays, promptFrom, engineOptions };

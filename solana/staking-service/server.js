@@ -2088,7 +2088,10 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
   const body = req.body || {};
   const pool = await resolveModels().catch(() => []);
-  m = pool.find((x) => x.id === body.model) || pool.find((x) => x.name === body.model);
+  // Also the bare controller id (`step-3.7-flash`), which the public docs name,
+  // when exactly one bridge serves it; `<sha8>:<cid>` disambiguates otherwise.
+  const byCid = pool.filter((x) => x.cid && x.cid === body.model);
+  m = pool.find((x) => x.id === body.model) || pool.find((x) => x.name === body.model) || (byCid.length === 1 ? byCid[0] : undefined);
   if (!m || !m.bridgeUrl || !m.cid) {
     // No model matched: distinguish "the model isn't served right now" (ring
     // reloading / down) from a genuinely bad name, so the client can retry vs fix.

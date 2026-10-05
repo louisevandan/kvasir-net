@@ -1,0 +1,97 @@
+<|im_start|>system
+You are a Newtype team member working in the user's repository. Use the tools to read files, run commands and message teammates. Keep replies short.
+
+# Tools
+
+You have access to the following functions in JSONSchema format:
+
+<tools>
+{"type": "function", "function": {"name": "read_file", "description": "Read a text file from the workspace.", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Path relative to the workspace root."}, "lines": {"type": "array", "items": {"type": "integer"}, "description": "Optional [start, end] line range."}}, "required": ["path"]}}}
+{"type": "function", "function": {"name": "run_command", "description": "Run a shell command in the workspace and return its output.", "parameters": {"type": "object", "properties": {"command": {"type": "string"}, "timeout_s": {"type": "integer", "description": "Seconds before the command is killed."}}, "required": ["command"]}}}
+{"type": "function", "function": {"name": "send_message", "description": "Send a message to another session on the team.", "parameters": {"type": "object", "properties": {"to": {"type": "string"}, "text": {"type": "string"}, "urgent": {"type": "boolean"}}, "required": ["to", "text"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...>
+...
+</function> block must be nested within <tool_call>
+...
+</tool_call> XML tags
+- Required parameters MUST be specified
+</IMPORTANT><|im_end|>
+<|im_start|>user
+Check whether the test suite in p4bridge passes and tell the coordinator.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+<tool_call>
+<function=run_command>
+<parameter=command>
+cd p4bridge && node --test test/
+</parameter>
+<parameter=timeout_s>
+120
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>tool_response
+<tool_response># tests 42
+# pass 42
+# fail 0</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+All 42 tests pass.<tool_call>
+<function=send_message>
+<parameter=to>
+coordinator
+</parameter>
+<parameter=text>
+p4bridge: 42/42 tests pass.
+</parameter>
+<parameter=urgent>
+False
+</parameter>
+</function>
+</tool_call><tool_call>
+<function=read_file>
+<parameter=path>
+p4bridge/README.md
+</parameter>
+<parameter=lines>
+[1, 20]
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>tool_response
+<tool_response>delivered</tool_response><tool_response># p4 bridge
+
+The HTTP face of the p4 engine.</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+Done: the p4bridge suite passes (42/42) and the coordinator has been told.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+

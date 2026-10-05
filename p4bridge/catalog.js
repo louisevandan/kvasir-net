@@ -14,6 +14,8 @@
  *     "id": "step-3.7-flash",
  *     "name": "Step-3.7-Flash (428B MoE)",
  *     "load_generation": 1789148231396,       // from the placement plan
+ *     "prompt_format": "chatml",
+ *     "tool_format": "step",                   // optional; see toolcalls.js
  *     "stages": [
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1},
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s1", "generation": 1}
@@ -23,6 +25,7 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { toolFormatFor } = require('./toolcalls');
 
 function load(file) {
   const resolved = path.resolve(file);
@@ -81,6 +84,11 @@ function load(file) {
       expertLayers: Array.isArray(model.expert_layers) ? model.expert_layers : null,
       bytesPerExpert: model.bytes_per_expert ?? null,
       promptFormat: model.prompt_format ?? 'raw',
+      // How tools are declared, how the model calls one and how results go
+      // back: the syntax its own chat template uses (see toolcalls.js). It is
+      // per model for the same reason the turn format is. Unstated means the
+      // format known for this model id, and 'none' for a model not yet read.
+      toolFormat: toolFormatFor(model),
       // A reasoning model opens its reply with a thinking block. Kept out of
       // `content` so a chat client shows the answer, and returned alongside.
       reasoning: model.reasoning === true,

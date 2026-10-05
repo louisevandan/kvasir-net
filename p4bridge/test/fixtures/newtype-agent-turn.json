@@ -1,0 +1,146 @@
+{
+  "model": "step-3.7-flash",
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a Newtype team member working in the user's repository. Use the tools to read files, run commands and message teammates. Keep replies short."
+    },
+    {
+      "role": "user",
+      "content": "Check whether the test suite in p4bridge passes and tell the coordinator."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "run_command",
+            "arguments": "{\"command\": \"cd p4bridge && node --test test/\", \"timeout_s\": 120}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "# tests 42\n# pass 42\n# fail 0"
+    },
+    {
+      "role": "assistant",
+      "content": "All 42 tests pass.",
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "type": "function",
+          "function": {
+            "name": "send_message",
+            "arguments": "{\"to\": \"coordinator\", \"text\": \"p4bridge: 42/42 tests pass.\", \"urgent\": false}"
+          }
+        },
+        {
+          "id": "call_3",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"p4bridge/README.md\", \"lines\": [1, 20]}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_2",
+      "content": "delivered"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3",
+      "content": "# p4 bridge\n\nThe HTTP face of the p4 engine."
+    },
+    {
+      "role": "assistant",
+      "content": "Done: the p4bridge suite passes (42/42) and the coordinator has been told."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a text file from the workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Path relative to the workspace root."
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "description": "Optional [start, end] line range."
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "run_command",
+        "description": "Run a shell command in the workspace and return its output.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "timeout_s": {
+              "type": "integer",
+              "description": "Seconds before the command is killed."
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "send_message",
+        "description": "Send a message to another session on the team.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "urgent": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "to",
+            "text"
+          ]
+        }
+      }
+    }
+  ]
+}

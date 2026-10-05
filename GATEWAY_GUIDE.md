@@ -86,6 +86,16 @@ the head, and gathers the token stream. Two jobs p4 deliberately leaves to it:
   honours `chat_template_kwargs.enable_thinking: false` by closing the block in
   the prompt — a reasoning pass that eats the whole token budget would
   otherwise leave `content` empty and bill the payer for a blank reply.
+- **Tool calls.** Also the model's own syntax, named per model as `tool_format`
+  in the catalog (`step` for Step-3.7-Flash, read from the GGUF's
+  `tokenizer.chat_template`; `p4bridge/toolcalls.js`). The bridge writes OpenAI
+  `tools` into the system turn, earlier `tool_calls` and `role: "tool"` results
+  back into the history, and reads the reply's calls out as `tool_calls` with
+  `finish_reason: "tool_calls"`, streamed as `delta.tool_calls`. A call that does
+  not parse comes back as text. `tool_choice: "none"` leaves the tools out; a
+  forced function is asked for in words, which is best effort. `temperature`
+  and `stop` are passed to the stage server's sampler; the engine's `eos` is
+  reported as `stop`. (In service after p4bridge/tool-calls is deployed.)
 
 ### p4 agents and stage servers
 
