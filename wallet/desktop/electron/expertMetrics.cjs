@@ -91,7 +91,7 @@ class ExpertFrames {
 
 // Reuses ONLY a currently owned worker; synthetic bytes do not traverse the
 // relay and cannot be counted as real work or sent to contribution accounting.
-async function benchmarkExpert({ port, nEmbd, experts, isCurrent, iterations = 5, timeoutMs = 10000 }) {
+async function benchmarkExpert({ port, nEmbd, experts, isCurrent, iterations = 30, timeoutMs = 2000 }) {
   if (!Number.isInteger(port) || port < 1 || port > 65535 || !Number.isInteger(nEmbd) || nEmbd < 1 || nEmbd > 65536
     || !Number.isInteger(experts) || experts < 1 || !isCurrent()) throw Error('expert worker unavailable')
   const rows = 1, nUsed = Math.min(experts, 8)
@@ -107,10 +107,13 @@ async function benchmarkExpert({ port, nEmbd, experts, isCurrent, iterations = 5
     let floatTail = Buffer.alloc(0)
     const finish = (error, result) => {
       if (settled) return
-      settled = true; clearTimeout(timer); socket.destroy()
+      settled = true; clearTimeout(timer); clearInterval(assignmentWatch); socket.destroy()
       error ? reject(error) : resolve(result)
     }
     const timer = setTimeout(() => finish(Error('expert benchmark timed out')), timeoutMs)
+    const assignmentWatch = setInterval(() => {
+      if (!isCurrent()) finish(Error('expert assignment changed'))
+    }, 25)
     const send = () => {
       if (!isCurrent()) return finish(Error('expert assignment changed'))
       received = 0; started = performance.now(); socket.write(frame)

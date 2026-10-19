@@ -4,9 +4,11 @@ import { useI18n } from '../i18n'
 import { Card, MetricRow, CopyButton } from '../components'
 import { QR } from '../qr'
 import { ExpertLayersCard } from './expertLayers'
+import { ExpertMeasureControl, runMeasurement } from './expertMeasure'
+import type { MeasureState } from './expertMeasure'
 import { Staking } from '../services'
 import { api, capacityForBudget, isElectron, NODE_GUIDE_URL } from '../api'
-import type { NodeStatus } from '../api'
+import type { NodeStatus, ExpertMeasurementProgress } from '../api'
 
 const osLabel = (os: string) => ({ macos: 'macOS', windows: 'Windows', linux: 'Linux' }[os] || os)
 const BACKEND_LABEL: Record<string, string> = { metal: 'GPU · Metal', cuda: 'GPU · CUDA', rocm: 'GPU · ROCm', cpu: 'CPU' }
@@ -191,6 +193,22 @@ export function NodeSettingsScreen() {
   const [status, setStatus] = useState<NodeStatus | null>(null)
   const [busy, setBusy] = useState<'start' | 'stop' | 'measure' | null>(null)
   const [connectMsg, setConnectMsg] = useState<string | null>(null)
+  const [measureState, setMeasureState] = useState<MeasureState>({ running: false, error: null })
+  const [measureProgress, setMeasureProgress] = useState<ExpertMeasurementProgress | null>(null)
+  // Lightweight progress IPC: no network, hardware probe, or full status walk.
+  useEffect(() => {
+    if (!measureState.running || !api.node?.benchmarkProgress) return
+    let active = true, pending = false
+    const poll = async () => {
+      if (pending) return
+      pending = true
+      try { const p = await api.node!.benchmarkProgress!(); if (active) setMeasureProgress(p) } catch { /* final refresh reports failures */ }
+      finally { pending = false }
+    }
+    void poll()
+    const id = setInterval(poll, 100)
+    return () => { active = false; clearInterval(id) }
+  }, [measureState.running])
   const timer = useRef<any>(null)
   const nodeId = `desktop-${(address ?? 'dev').slice(0, 8)}`
   const cmd = `KVASIR_SERVICE=${stakingUrl} KVASIR_OWNER=${address ?? ''} p4-agent 127.0.0.1:42031 tcp://127.0.0.1:42031`
@@ -219,7 +237,7 @@ export function NodeSettingsScreen() {
   const live = status?.liveRing
   const liveState = (state?: string) => t(`ns.liveRingState.${['live', 'idle', 'stale', 'unavailable'].includes(state ?? '') ? state : 'unavailable'}`)
   const liveReason = (code?: string | null, httpStatus?: number | null) => {
-    const known = ['agentStale', 'expertOnly', 'noStage', 'feedUnavailable', 'feedHttp', 'noMatch', 'missingMetadata']
+    const known = ['agentNotInspected', 'agentUnavailable', 'agentStale', 'expertOnly', 'noStage', 'feedUnavailable', 'feedHttp', 'noMatch', 'missingMetadata']
     return t(`ns.liveRingReason.${known.includes(code ?? '') ? code : 'feedUnavailable'}`, httpStatus ?? '')
   }
   const running = !!status?.running
@@ -258,11 +276,11 @@ export function NodeSettingsScreen() {
   const measure = async () => {
     if (!api.node) return
     setBusy('measure')
+    setMeasureProgress(null)
     try {
-      const r = await api.node.benchmark(64)
-      setStatus(await api.node.status())
-      if (!r.ok) setConnectMsg(r.errorCode === 'noMeasurementTarget' ? t('ns.noMeasurementTarget') : r.error ?? t('ns.measureFailed'))
-      else setConnectMsg(null)
+      await runMeasurement({ benchmark: () => api.node!.benchmark(64),
+        refresh: async () => { setStatus(await api.node!.status()) }, setState: setMeasureState,
+        failed: t('ns.measureFailed'), noTarget: t('ns.noMeasurementTarget') })
     } finally { setBusy(null) }
   }
 
@@ -357,35 +375,12 @@ export function NodeSettingsScreen() {
 
       {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
-        <ExpertLayersCard slots={status?.expertWork?.slots} />
-        <Card>
-          <div className="label">{t('ns.expertWorkTitle')}</div>
-          <div className="small muted">{t('ns.expertWorkHint')}</div>
-          {(status?.expertWork?.slots.filter(slot => slot.held).length ?? 0) === 0 && <div className="small muted">{t('ns.expertWorkNone')}</div>}
-          {status?.expertWork?.slots.filter(slot => slot.held).map(slot => (
-            <div key={slot.workerId} className="small" style={{ marginTop: 8 }}>
-              <div>{t('ns.expertWorkShard', slot.held!.model, slot.held!.layer, slot.held!.begin, slot.held!.end)}</div>
-              <div>{slot.phase === 'serving' ? liveState(slot.work.state) : liveState('unavailable')}</div>
-              <strong>{t('ns.expertWorkRates', slot.work.rowsPerSecond.toFixed(1), slot.work.callsPerSecond.toFixed(2))}</strong>
-              <div className="muted">{t('ns.expertWorkLatency', slot.work.p50Ms?.toFixed(2) ?? '—', slot.work.p95Ms?.toFixed(2) ?? '—')}</div>
-              <div className="muted">{t('ns.expertWorkWindow', (slot.work.windowMs / 1000).toFixed(1), slot.work.calls, slot.work.rows)}</div>
-              <div className="muted">{t('ns.liveRingLastWork', slot.work.lastWorkAt ? new Date(slot.work.lastWorkAt).toLocaleString() : t('ns.liveRingUnknown'))}</div>
-              {slot.localBenchmark && <div style={{ marginTop: 6 }}>
-                <div>{t('ns.expertBenchTitle')}</div>
-                <strong>{t('ns.expertWorkRates', slot.localBenchmark.rowsPerSecond.toFixed(1), slot.localBenchmark.callsPerSecond.toFixed(2))}</strong>
-                <div className="muted">{t('ns.expertWorkLatency', slot.localBenchmark.p50Ms.toFixed(2), slot.localBenchmark.p95Ms.toFixed(2))}</div>
-                <div className="muted">{t('ns.expertBenchDetail', slot.localBenchmark.batchRows, slot.localBenchmark.expertsPerRow, slot.localBenchmark.calls, new Date(slot.localBenchmark.at).toLocaleString())}</div>
-              </div>}
-            </div>
-          ))}
-          {isElectron && <button className="btn block" style={{ marginTop: 8 }} disabled={busy !== null} onClick={measure}>
-            {busy === 'measure' ? t('ns.measuring') : t('ns.measure')}
-          </button>}
-          <div className="small muted">{t('ns.expertMeasureHint')}</div>
-          {connectMsg && <div className="small muted">{connectMsg}</div>}
-        </Card>
-        <Card>
-          <div className="spread"><div className="label">{t('ns.liveRingTitle')}</div><span className="chip">{liveState(live?.state)}</span></div>
+        <ExpertLayersCard slots={status?.expertWork?.slots} status={status}>
+          {isElectron && <ExpertMeasureControl state={measureState} progress={measureState.running ? measureProgress : null}
+            disabled={busy !== null && busy !== 'measure'} onMeasure={measure} />}
+        </ExpertLayersCard>
+        {(status?.nodes.length ?? 0) > 0 && <Card>
+          <div className="spread"><div className="label">{t('ns.liveRingTitle')}</div><span className="chip">{live?.reasonCode === 'agentNotInspected' ? t('ns.liveRingReason.agentNotInspected') : liveState(live?.state)}</span></div>
           <div className="small muted">{t('ns.liveRingMetric')}</div>
           {live?.reason && <div className="small muted">{liveReason(live.reasonCode, live.httpStatus)}</div>}
           {live?.stages.map(stage => (
@@ -399,7 +394,7 @@ export function NodeSettingsScreen() {
           <div className="small muted" style={{ marginTop: 8 }}>{t('ns.liveRingSource', live?.source ?? liveState('unavailable'))}</div>
           <div className="small muted">{t('ns.liveRingWindow', live?.window ? t('ns.liveRingEwma') : t('ns.liveRingUnknown'))}</div>
           <div className="small muted">{t('ns.liveRingRelay', live?.relayBytes ?? 0)}</div>
-        </Card>
+        </Card>}
         <Card>
           <div className="spread">
             <div className="label">{t('ns.localDecodeTitle')}</div>

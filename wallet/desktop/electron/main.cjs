@@ -718,7 +718,7 @@ async function benchmark(sender, maxTokens = 64) {
 // separate from the historical full-model decode measurement.
 async function measureNode(sender, maxTokens = 64) {
   const serving = expertPool.slots.find(slot => slot.phase === 'serving' && slot.proc)
-  if (serving) return serving.benchmark()
+  if (serving || expertPool.measurement?.running) return expertPool.benchmark()
   if (listModels().length) return benchmark(sender, maxTokens)
   return { ok: false, error: 'no serving expert shard or local GGUF to measure', errorCode: 'noMeasurementTarget' }
 }
@@ -953,6 +953,7 @@ function register() {
     return { vramBudgetBytes: vramBudgetBytes(), maxExperts: maxExpertsForBudget() }
   })
   ipcMain.handle('node:benchmark', (e, maxTokens) => measureNode(e.sender, maxTokens || 64))
+  ipcMain.handle('node:benchmarkProgress', () => expertPool.measurementStatus())
 }
 
 function createWindow() {

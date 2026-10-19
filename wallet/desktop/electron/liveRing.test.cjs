@@ -28,7 +28,17 @@ test('other agent, other node, duplicate and missing matches fail closed', () =>
 test('stale work and stale agent inspection suppress rates', () => {
   assert.equal(run([{ ...row, last_work_at_ms: 1 }]).state, 'stale')
   assert.equal(run([row], { agent: { ...agent, snapshotAt: 1 } }).state, 'stale')
-  assert.equal(run([row], { agent: { ...agent, lastError: 'inspect timeout' } }).state, 'stale')
+  assert.equal(run([row], { agent: { ...agent, lastError: 'inspect timeout' } }).state, 'unavailable')
+})
+test('never-inspected agents are pending, not stale, and do not fetch contributions', async () => {
+  const fresh = { ...agent, snapshotAt: null }
+  const result = run([row], { agent: fresh })
+  assert.equal(result.state, 'unavailable'); assert.equal(result.reasonCode, 'agentNotInspected')
+  assert.deepEqual(result.stages, [])
+  let calls = 0
+  const cache = createLiveRingCache({ now: () => now, observe: async () => { calls++; return run([row]) } })
+  cache(fresh, {}, 'https://example.com'); await flush()
+  assert.equal(calls, 0)
 })
 test('invalid timestamps and rates cannot produce live throughput', () => {
   for (const at of [undefined, 0, NaN, now + 1]) assert.equal(run([{ ...row, last_work_at_ms: at }]).stages[0].tps, null)
@@ -112,7 +122,7 @@ test('cache absorbs failed refreshes, throttles retries, and handles no-stage lo
   clock++; poll(); await flush(); assert.equal(calls, 2)
 })
 test('reason codes retain diagnostic compatibility and expose HTTP status separately', async () => {
-  assert.equal(run([], { agent: { ...agent, running: false } }).reasonCode, 'agentStale')
+  assert.equal(run([], { agent: { ...agent, running: false } }).reasonCode, 'agentUnavailable')
   assert.equal(run([], { agent: { ...agent, nodes: [] } }).reasonCode, 'noStage')
   assert.equal(run([], { agent: { ...agent, nodes: [] }, experts: { servingSlots: 1 } }).reasonCode, 'expertOnly')
   assert.equal(run(undefined).reasonCode, 'feedUnavailable')
