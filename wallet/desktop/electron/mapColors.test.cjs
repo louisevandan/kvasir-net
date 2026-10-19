@@ -9,7 +9,7 @@ const { transformSync } = require('esbuild')
 const source = fs.readFileSync(path.join(__dirname, '../src/screens/map.tsx'), 'utf8')
 const components = fs.readFileSync(path.join(__dirname, '../src/components.tsx'), 'utf8')
 const palette = components.slice(components.indexOf('export const TIER_COLORS'), components.indexOf('\n', components.indexOf('export const tierColor')))
-const start = source.indexOf('export const MAP_TIER_COLORS'), end = source.indexOf("'#64748b'", start) + "'#64748b'".length
+const start = source.indexOf('export const MAP_TIER_COLORS'), end = source.indexOf("status === 'idle'", start) + "status === 'idle'".length
 const { code } = transformSync(palette + '\n' + source.slice(start, end), { loader: 'ts', format: 'cjs' })
 const mod = { exports: {} }; new Function('module', 'exports', code)(mod, mod.exports)
 
@@ -18,6 +18,9 @@ test('online nodes: S red, A yellow, B blue, C green; offline grey', () => {
   assert.equal(mapNodeColor('S'), '#ef4444'); assert.equal(mapNodeColor('A'), '#facc15')
   assert.equal(mapNodeColor('B'), '#3b82f6'); assert.equal(mapNodeColor('C'), '#22c55e')
   assert.equal(mapNodeColor('S', false), '#64748b')
+  assert.equal(mapNodeColor('unrated'), '#a855f7'); assert.equal(mapNodeColor(undefined), '#a855f7')
+  const { isLiveStatus } = mod.exports
+  assert.equal(isLiveStatus('online'), true); assert.equal(isLiveStatus('idle'), true); assert.equal(isLiveStatus('offline'), false)
   assert.doesNotMatch(source, /tierColor/)
   // The tier table and badges use the same palette as the map.
   const { tierColor } = mod.exports

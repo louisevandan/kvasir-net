@@ -4,11 +4,16 @@ import { useI18n } from '../i18n'
 import { fmt } from '../api'
 import { Card, Stat, TIER_COLORS } from '../components'
 
-// Online nodes use the shared tier palette (S red, A yellow, B blue, C green);
+// Live nodes use the shared tier palette (S red, A yellow, B blue, C green).
+// A node with no decode rating ("unrated": expert workers, gateway, bridge —
+// they generate no tokens, so the network gives them no tier) is violet;
 // offline nodes stay grey so the live ones stand out on the dotted map.
 export const MAP_TIER_COLORS: Record<string, string> = TIER_COLORS
+export const MAP_UNRATED = '#a855f7'
 export const mapNodeColor = (tier?: string, online = true) =>
-  online ? (MAP_TIER_COLORS[tier ?? ''] ?? '#94a3b8') : '#64748b'
+  online ? (MAP_TIER_COLORS[tier ?? ''] ?? MAP_UNRATED) : '#64748b'
+// 'idle' is a loaded node between requests: live, not gone.
+export const isLiveStatus = (status?: string) => status === 'online' || status === 'idle'
 import { Staking, GlobalNode, GlobalNodeStatus } from '../services'
 
 const W = 1000, H = 500
@@ -89,6 +94,9 @@ export function MapScreen() {
                 <span className="badge-dot" style={{ background: mapNodeColor(tr) }} />{tr}{totals?.byTier?.[tr] ? ` ${totals.byTier[tr]}` : ''}
               </span>
             ))}
+            <span className="row small" style={{ gap: 5 }}>
+              <span className="badge-dot" style={{ background: MAP_UNRATED }} />{t('map.unrated')}
+            </span>
           </div>
         </div>
 
@@ -98,13 +106,13 @@ export function MapScreen() {
             {data?.nodes.map((n) => {
               const [lng, lat] = nodeLngLat(n.nodeId)
               const { x, y } = project(lng, lat)
-              const c = mapNodeColor(n.tier, n.status === 'online')
+              const c = mapNodeColor(n.tier, isLiveStatus(n.status))
               const r = 4 + Math.min(6, (n.effectiveUnits || 0) / 300)
               return (
                 <g key={n.nodeId}
                   onMouseEnter={() => setHover({ n, x, y })}
                   onMouseMove={() => setHover({ n, x, y })}>
-                  {n.status === 'online' && <circle className="node-ring" cx={x} cy={y} r={4} fill="none" stroke={c} strokeWidth={2} />}
+                  {isLiveStatus(n.status) && <circle className="node-ring" cx={x} cy={y} r={4} fill="none" stroke={c} strokeWidth={2} />}
                   <circle className="node-mark" cx={x} cy={y} r={r} fill={c} stroke="#fff" strokeWidth={0.8} fillOpacity={0.9} />
                 </g>
               )
@@ -113,7 +121,7 @@ export function MapScreen() {
           {hover && (
             <div className="map-tip" style={{ left: `${(hover.x / W) * 100}%`, top: `${(hover.y / H) * 100}%`, transform: 'translate(12px, -50%)' }}>
               <div style={{ fontWeight: 700 }}>{hover.n.label}</div>
-              <div className="muted">{hover.n.os} · <span style={{ color: mapNodeColor(hover.n.tier, hover.n.status === 'online') }}>{hover.n.tier} ×{fmt(hover.n.perfMultiplier)}</span> · {hover.n.status}</div>
+              <div className="muted">{hover.n.os} · <span style={{ color: mapNodeColor(hover.n.tier, isLiveStatus(hover.n.status)) }}>{hover.n.tier} ×{fmt(hover.n.perfMultiplier)}</span> · {hover.n.status}</div>
               <div className="muted">{fmt(hover.n.effectiveUnits)} eff · {hover.n.ownerShort}</div>
             </div>
           )}
