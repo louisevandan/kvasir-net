@@ -23,13 +23,18 @@ test('hit probability matches the hypergeometric miss for top-8 of 288 with 64 h
 })
 
 test('plan: per-layer cost, rows and the largest layer count that still meets the target', () => {
-  const plan = planLayers({ rttMs: 14, computeMs: 2, baseTps: 6.7, nExpert: 288, nUsed: 8, expertsPerLayer: 64, nEmbd: 4096, uploadBytesPerSecond: 5e6, maxLayers: 8, targetTps: 5 })
+  const plan = planLayers({ rttMs: 14, computeMs: 2, baseTps: 6.7, nExpert: 288, nUsed: 8, expertsPerLayer: 64, nEmbd: 4096, uploadBytesPerSecond: 5e6, maxLayers: 8, targetTps: 5, wire: 'v2f16' })
   assert.ok(Math.abs(plan.transferMs - 1.6384) < 1e-6)
   assert.ok(Math.abs(plan.perLayerMs - 17.6384) < 1e-6)
   assert.equal(plan.rows.length, 9)
   assert.ok(Math.abs(plan.rows[0].tps - 6.7) < 1e-9)
   assert.ok(plan.rows.every((r, i) => i === 0 || r.tps < plan.rows[i - 1].tps))
   assert.equal(plan.recommendedLayers, plan.rows.filter((r) => r.layers > 0 && r.tps >= 5).at(-1).layers)
+  // v1 (today's wire): one f32 row per pair, ~2.04 pairs per token that touches 64/288 experts.
+  const v1 = planLayers({ rttMs: 14, computeMs: 2, baseTps: 6.7, uploadBytesPerSecond: 5e6 })
+  assert.equal(v1.wire, 'v1')
+  assert.ok(Math.abs(v1.transferMs - (8 * 64 / 288) / hitProbability(288, 64, 8) * 4096 * 4 / 5e6 * 1000) < 1e-9)
+  assert.ok(v1.perLayerMs > plan.perLayerMs)
   // The relay path measured 2026-10-19 (266 ms) cannot hold even one layer at 5 tok/s.
   assert.equal(planLayers({ rttMs: 266, baseTps: 6.7, targetTps: 5 }).recommendedLayers, 0)
 })
@@ -61,6 +66,12 @@ test('planner measures every backbone in parallel, prefers one that serves, hono
   assert.equal(s.bestId, 'a')       // serving beats a faster candidate with no backbone
   assert.equal(s.selectedId, 'a')
   assert.equal(s.targets.find((t) => t.id === 'c').state, 'failed')
+  assert.ok(s.targets.every((t) => t.state !== 'ready' || t.rtt.source === 'tcp'))
+  // A backbone this PC already relays to is planned from the relay's own pings.
+  const live = await planner.refresh({}, { a: { p50Ms: 28, p90Ms: 60, samples: 9 } })
+  const a = live.targets.find((t) => t.id === 'a')
+  assert.equal(a.rtt.source, 'relay'); assert.equal(a.rtt.p50Ms, 28); assert.equal(a.rtt.samples, 9)
+  assert.equal(live.targets.find((t) => t.id === 'b').rtt.source, 'tcp')
   selected = 'b'
   assert.equal(planner.status().selectedId, 'b')
   selected = 'unknown'
@@ -84,6 +95,10 @@ test('card lists every backbone, marks best/chosen, shows the chosen plan and th
   assert.match(html, /candidate · no backbone/)
   assert.match(html, /data-recommended="true"/)
   assert.doesNotMatch(html, /gate\.kvasir-ai\.net|Cloudflare/)
+  assert.match(html, /data-selected="true"[^>]*style="[^"]*color:var\(--good\)/)
+  assert.match(html, /estimate: TCP handshake/)
+  const relayed = status(28); relayed.targets[0].rtt.source = 'relay'
+  assert.match(render(NetworkPlanCard, { status: relayed, onSelect() {} }), /data-rtt-source="relay"[\s\S]*measured: relay round trip/)
   const ko = render(NetworkPlanCard, { status: status(14, { selectedId: 'mi250-02' }) }, 'ko')
   assert.match(ko, /data-backbone="mi250-02" data-chosen="true"/); assert.match(ko, /아직 백본이 없습니다/)
   assert.match(render(NetworkPlanCard, { status: null }), /When this PC joins/)

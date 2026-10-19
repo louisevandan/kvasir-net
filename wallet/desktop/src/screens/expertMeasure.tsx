@@ -33,6 +33,6 @@ export function ExpertMeasureControl({ state, progress, disabled, ready = true, 
       {progress?.running && <progress aria-label={t('ns.measuring')} value={Math.max(0, progress.index - 1)} max={progress.count} style={{ width: '100%', accentColor: 'var(--pink)' }} />}
     </div>}
     {!running && (state.error || progress?.error) && <div role="alert" className="small" style={{ color: 'var(--danger)' }}>{state.error || progress?.error}</div>}
-    <div className="small muted">{t(ready ? 'ns.expertMeasureHint' : 'ns.expertMeasureWaiting')}</div>
+    <div className="small muted" style={{ marginTop: 10, lineHeight: 1.5 }}>{t(ready ? 'ns.expertMeasureHint' : 'ns.expertMeasureWaiting')}</div>
   </div>
 }

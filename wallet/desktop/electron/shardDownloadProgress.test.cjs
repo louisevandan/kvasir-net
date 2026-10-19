@@ -39,3 +39,10 @@ test('pool downloadStatus reports per-slot progress copies without touching hard
   out[0].download.bytes = 99
   assert.equal(pool.slots[0].downloadProgress.bytes, 5)
 })
+
+test('relay round trip summary comes from the pong samples', () => {
+  const { relayRtt } = require('./expertHost.cjs')
+  assert.equal(relayRtt({ rtt: [] }), null)
+  const r = relayRtt({ rtt: [30, 10, 20, 40, 50], rttAt: 7 })
+  assert.equal(r.p50Ms, 30); assert.equal(r.p90Ms, 50); assert.equal(r.lastMs, 50); assert.equal(r.samples, 5); assert.equal(r.at, 7)
+})
