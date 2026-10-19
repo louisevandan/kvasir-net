@@ -357,7 +357,9 @@ export function NodeSettingsScreen() {
             <span className="chip">{capability?.cpu.cores ?? '—'} cores</span>
             <span className="chip">{gib(capability?.ramBytes)} RAM</span>
           </div>
-          <div className="small muted" style={{ marginBottom: 4 }}>{capability?.cpu.brand}</div>
+          {/* On Apple silicon the GPU reports the same name as the CPU; say it once. */}
+          {capability?.cpu.brand && !(capability?.gpus ?? []).some((gpu) => gpu.name === capability.cpu.brand) &&
+            <div className="small muted" data-cpu-brand style={{ marginBottom: 4 }}>{capability.cpu.brand}</div>}
           {(capability?.gpus ?? []).map((gpu, i) => (
             <div key={i} className="spread small" style={{ padding: '4px 0' }}>
               <span>{gpu.name}</span><span className="muted">{gib(gpu.memoryBytes)}</span>
@@ -441,6 +443,50 @@ export function NodeSettingsScreen() {
           <div className="small muted">{t('ns.liveRingWindow', live?.window ? t('ns.liveRingEwma') : t('ns.liveRingUnknown'))}</div>
           <div className="small muted">{t('ns.liveRingRelay', live?.relayBytes ?? 0)}</div>
         </Card>}
+      </div>
+
+      {/* col 3 — account + device connection (merged from Devices) */}
+      <div className="grid">
+        <Card style={{ textAlign: 'center' }}>
+          <div className="label" style={{ textAlign: 'left', marginBottom: 6 }}>{t('dev.account')}</div>
+          <div className="small muted" style={{ textAlign: 'left', marginBottom: 14 }}>{t('dev.accountHint')}</div>
+          {address && <QR text={address} size={150} />}
+          <div className="mono small muted" style={{ margin: '12px 0', wordBreak: 'break-all' }}>{address}</div>
+          {address && <CopyButton text={address} />}
+        </Card>
+        {isElectron ? (
+          <Card>
+            <div className="spread" style={{ marginBottom: 10 }}>
+              <div className="label">{t('dev.connectThis')}</div>
+              {status && <span className="chip" data-connected={connected} style={{ color: connected ? 'var(--good)' : 'var(--muted)' }}>{connected ? t('dev.connected') : t('ns.stopped')}</span>}
+            </div>
+            {!status ? <div className="small muted">{t('dev.connectChecking')}</div>
+              : connected ? <>
+                <div className="small" style={{ color: 'var(--good)' }}>✓ {nodeId} · {osLabel(os)} ({arch})</div>
+                {status.participation?.phase && <div className="small muted">{t('dev.connectPhase', status.participation.phase)}</div>}
+              </>
+              : <button className="btn block" disabled={busy !== null || !address} aria-busy={busy === 'start'} onClick={connectThis}>
+                  {busy === 'start' && <span className="measure-spinner" aria-hidden="true" />}{busy === 'start' ? t('dev.connecting') : t('dev.connectThis')}
+                </button>}
+            {connectMsg && <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>{connectMsg}</div>}
+          </Card>
+        ) : (
+          // Web mode: the browser can't run a node — hand off to the native apps.
+          <Card style={{ textAlign: 'center' }}>
+            <div className="label" style={{ textAlign: 'left', marginBottom: 6 }}>{t('dev.getApp')}</div>
+            <div className="small muted" style={{ textAlign: 'left', marginBottom: 14 }}>{t('dev.getAppHint')}</div>
+            <QR text={NODE_GUIDE_URL} size={150} />
+            <div className="small muted" style={{ margin: '12px 0' }}>{t('dev.scanQr')}</div>
+            <button className="btn block" onClick={() => api.openExternal(NODE_GUIDE_URL)}>{t('dev.downloadDesktop')}</button>
+          </Card>
+        )}
+        <Card>
+          <div className="label" style={{ marginBottom: 6 }}>{t('dev.otherHint')}</div>
+          <div className="mono small" style={{ background: 'var(--surface-2)', padding: 12, borderRadius: 10, wordBreak: 'break-all', marginBottom: 10 }}>{cmd}</div>
+          <CopyButton text={cmd} />
+        </Card>
+
+        {/* Local benchmark, agent gauge and agent log sit with the device column. */}
         <Card>
           <div className="spread">
             <div className="label">{t('ns.localDecodeTitle')}</div>
@@ -484,48 +530,6 @@ export function NodeSettingsScreen() {
             </div>
           </Card>
         )}
-      </div>
-
-      {/* col 3 — account + device connection (merged from Devices) */}
-      <div className="grid">
-        <Card style={{ textAlign: 'center' }}>
-          <div className="label" style={{ textAlign: 'left', marginBottom: 6 }}>{t('dev.account')}</div>
-          <div className="small muted" style={{ textAlign: 'left', marginBottom: 14 }}>{t('dev.accountHint')}</div>
-          {address && <QR text={address} size={150} />}
-          <div className="mono small muted" style={{ margin: '12px 0', wordBreak: 'break-all' }}>{address}</div>
-          {address && <CopyButton text={address} />}
-        </Card>
-        {isElectron ? (
-          <Card>
-            <div className="spread" style={{ marginBottom: 10 }}>
-              <div className="label">{t('dev.connectThis')}</div>
-              {status && <span className="chip" data-connected={connected} style={{ color: connected ? 'var(--good)' : 'var(--muted)' }}>{connected ? t('dev.connected') : t('ns.stopped')}</span>}
-            </div>
-            {!status ? <div className="small muted">{t('dev.connectChecking')}</div>
-              : connected ? <>
-                <div className="small" style={{ color: 'var(--good)' }}>✓ {nodeId} · {osLabel(os)} ({arch})</div>
-                {status.participation?.phase && <div className="small muted">{t('dev.connectPhase', status.participation.phase)}</div>}
-              </>
-              : <button className="btn block" disabled={busy !== null || !address} aria-busy={busy === 'start'} onClick={connectThis}>
-                  {busy === 'start' && <span className="measure-spinner" aria-hidden="true" />}{busy === 'start' ? t('dev.connecting') : t('dev.connectThis')}
-                </button>}
-            {connectMsg && <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>{connectMsg}</div>}
-          </Card>
-        ) : (
-          // Web mode: the browser can't run a node — hand off to the native apps.
-          <Card style={{ textAlign: 'center' }}>
-            <div className="label" style={{ textAlign: 'left', marginBottom: 6 }}>{t('dev.getApp')}</div>
-            <div className="small muted" style={{ textAlign: 'left', marginBottom: 14 }}>{t('dev.getAppHint')}</div>
-            <QR text={NODE_GUIDE_URL} size={150} />
-            <div className="small muted" style={{ margin: '12px 0' }}>{t('dev.scanQr')}</div>
-            <button className="btn block" onClick={() => api.openExternal(NODE_GUIDE_URL)}>{t('dev.downloadDesktop')}</button>
-          </Card>
-        )}
-        <Card>
-          <div className="label" style={{ marginBottom: 6 }}>{t('dev.otherHint')}</div>
-          <div className="mono small" style={{ background: 'var(--surface-2)', padding: 12, borderRadius: 10, wordBreak: 'break-all', marginBottom: 10 }}>{cmd}</div>
-          <CopyButton text={cmd} />
-        </Card>
       </div>
     </div>
   )

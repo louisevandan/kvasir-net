@@ -54,3 +54,14 @@ test('connect card follows the main process status, so it survives leaving the s
   assert.match(stopped, /data-connected="false"/); assert.match(stopped, />dev\.connectThis<\/button>/)
   assert.match(render(null, opts), /dev\.connectChecking/)
 })
+
+test('machine name is printed once on unified Apple silicon; benchmark, gauge and log live in the right column', () => {
+  const capability = { cpu: { brand: 'Apple M4 Pro', cores: 12 }, gpus: [{ name: 'Apple M4 Pro', memoryBytes: 24 * 2 ** 30 }], ramBytes: 24 * 2 ** 30, backend: 'metal' }
+  const html = render({ nodes: [], log: ['line one'], running: true, snapshotAt: null, capability, expertWork: { slots: [] }, participation: { running: true, phase: 'serving' } }, { electron: true, address: 'JcVYk4PpWallet' })
+  assert.equal((html.match(/Apple M4 Pro/g) || []).length, 1)
+  assert.doesNotMatch(html, /data-cpu-brand/)
+  const discrete = render({ nodes: [], log: [], running: false, snapshotAt: null, capability: { ...capability, cpu: { brand: 'AMD Ryzen 9', cores: 16 }, gpus: [{ name: 'RTX 4090', memoryBytes: 24 * 2 ** 30 }] }, expertWork: { slots: [] } }, { electron: true, address: 'x' })
+  assert.match(discrete, /data-cpu-brand[^>]*>AMD Ryzen 9</)
+  const right = html.indexOf('dev.otherHint')
+  assert.ok(right > 0 && html.indexOf('ns.localDecodeTitle') > right && html.indexOf('ns.agentRunning') > right && html.indexOf('line one') > right)
+})
