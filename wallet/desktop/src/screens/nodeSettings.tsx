@@ -8,7 +8,7 @@ import { ExpertMeasureControl, runMeasurement } from './expertMeasure'
 import type { MeasureState } from './expertMeasure'
 import { Staking } from '../services'
 import { api, capacityForBudget, isElectron, NODE_GUIDE_URL } from '../api'
-import type { NodeStatus, ExpertMeasurementProgress } from '../api'
+import type { NodeStatus, ExpertMeasurementProgress, ShardDownload } from '../api'
 
 const osLabel = (os: string) => ({ macos: 'macOS', windows: 'Windows', linux: 'Linux' }[os] || os)
 const BACKEND_LABEL: Record<string, string> = { metal: 'GPU · Metal', cuda: 'GPU · CUDA', rocm: 'GPU · ROCm', cpu: 'CPU' }
@@ -209,6 +209,27 @@ export function NodeSettingsScreen() {
     const id = setInterval(poll, 100)
     return () => { active = false; clearInterval(id) }
   }, [measureState.running])
+  // Shard download progress: a cheap IPC (bytes counters only) polled fast so the
+  // bar fills smoothly; the 5 s status poll alone would jump in large steps.
+  const [downloads, setDownloads] = useState<Record<string, ShardDownload | null>>({})
+  useEffect(() => {
+    if (!api.node?.expertDownloads) return
+    let active = true, pending = false
+    const poll = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const list = await api.node!.expertDownloads!()
+        if (active) setDownloads(Object.fromEntries(list.map(d => [d.workerId, d.download])))
+      } catch { /* the status poll still reports the phase */ }
+      finally { pending = false }
+    }
+    void poll()
+    const id = setInterval(poll, 400)
+    return () => { active = false; clearInterval(id) }
+  }, [])
+  const expertSlots = status?.expertWork?.slots?.map(slot =>
+    slot.workerId in downloads ? { ...slot, download: downloads[slot.workerId] } : slot)
   const timer = useRef<any>(null)
   const nodeId = `desktop-${(address ?? 'dev').slice(0, 8)}`
   const cmd = `KVASIR_SERVICE=${stakingUrl} KVASIR_OWNER=${address ?? ''} p4-agent 127.0.0.1:42031 tcp://127.0.0.1:42031`
@@ -375,7 +396,7 @@ export function NodeSettingsScreen() {
 
       {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
-        <ExpertLayersCard slots={status?.expertWork?.slots} status={status}>
+        <ExpertLayersCard slots={expertSlots} status={status}>
           {isElectron && <ExpertMeasureControl state={measureState} progress={measureState.running ? measureProgress : null}
             disabled={busy !== null && busy !== 'measure'}
             ready={!!status?.expertWork?.slots?.some(slot => slot.phase === 'serving')} onMeasure={measure} />}

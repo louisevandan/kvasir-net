@@ -207,3 +207,8 @@ select { appearance: none; }
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+
+/* shard download bar without a known size: slide instead of a fake percentage */
+.shard-progress.indeterminate > div { animation: shard-slide 1.2s ease-in-out infinite; }
+@keyframes shard-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .shard-progress.indeterminate > div { animation: none; } }

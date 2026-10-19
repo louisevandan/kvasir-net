@@ -954,6 +954,7 @@ function register() {
   })
   ipcMain.handle('node:benchmark', (e, maxTokens) => measureNode(e.sender, maxTokens || 64))
   ipcMain.handle('node:benchmarkProgress', () => expertPool.measurementStatus())
+  ipcMain.handle('node:expertDownloads', () => expertPool.downloadStatus())
 }
 
 function createWindow() {
