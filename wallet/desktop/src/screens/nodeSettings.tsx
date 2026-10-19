@@ -320,12 +320,19 @@ export function NodeSettingsScreen() {
     } finally { setBusy(null) }
   }
 
+  // Connected is what the main process says, not something this screen
+  // remembers: leaving the screen unmounts it, and a local flag came back false
+  // while the node was still running.
+  const connected = running || !!status?.participation?.running
   const connectThis = async () => {
-    if (!address) return
+    if (!address || !api.node) return
+    setBusy('start')
     try {
+      if (!running) setStatus(await api.node.start())
       await new Staking(stakingUrl).registerNode(nodeBody())
-      setConnectMsg(`✓ ${nodeId} · ${osLabel(os)} (${arch})`)
+      setConnectMsg(null)
     } catch (e: any) { setConnectMsg(String(e?.message ?? e)) }
+    finally { setBusy(null) }
   }
 
   // The slider commits on release; the main process caps the next volunteer
@@ -490,9 +497,19 @@ export function NodeSettingsScreen() {
         </Card>
         {isElectron ? (
           <Card>
-            <div className="label" style={{ marginBottom: 10 }}>{t('dev.connectThis')}</div>
-            <button className="btn block" onClick={connectThis}>{t('dev.connectThis')}</button>
-            {connectMsg && <div className="small" style={{ marginTop: 10, color: connectMsg.startsWith('✓') ? 'var(--good)' : 'var(--danger)' }}>{connectMsg}</div>}
+            <div className="spread" style={{ marginBottom: 10 }}>
+              <div className="label">{t('dev.connectThis')}</div>
+              {status && <span className="chip" data-connected={connected} style={{ color: connected ? 'var(--good)' : 'var(--muted)' }}>{connected ? t('dev.connected') : t('ns.stopped')}</span>}
+            </div>
+            {!status ? <div className="small muted">{t('dev.connectChecking')}</div>
+              : connected ? <>
+                <div className="small" style={{ color: 'var(--good)' }}>✓ {nodeId} · {osLabel(os)} ({arch})</div>
+                {status.participation?.phase && <div className="small muted">{t('dev.connectPhase', status.participation.phase)}</div>}
+              </>
+              : <button className="btn block" disabled={busy !== null || !address} aria-busy={busy === 'start'} onClick={connectThis}>
+                  {busy === 'start' && <span className="measure-spinner" aria-hidden="true" />}{busy === 'start' ? t('dev.connecting') : t('dev.connectThis')}
+                </button>}
+            {connectMsg && <div className="small" style={{ marginTop: 10, color: 'var(--danger)' }}>{connectMsg}</div>}
           </Card>
         ) : (
           // Web mode: the browser can't run a node — hand off to the native apps.
