@@ -107,6 +107,7 @@ export interface BackboneCandidate {
   rtt: { p50Ms: number; p90Ms: number; minMs: number; samples: number; failed: number } | null
   plan: NetworkPlan | null; error: string | null
 }
+export interface DirectRelayStatus { state: 'off' | 'starting' | 'up' | 'failed'; via: string | null; localPort: number | null; error: string | null }
 export interface NetworkPlanStatus {
   state: 'idle' | 'measuring' | 'ready' | 'failed'
   targets: BackboneCandidate[]; bestId: string | null; selectedId: string | null
@@ -134,6 +135,7 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
+  directRelay?: DirectRelayStatus | null
   expertWork?: { measurement?: ExpertMeasurementProgress | null; slots: { workerId: string; phase: string;
     held: { model: string; layer: number; begin: number; end: number; nLayer?: number | null; nExpert?: number | null; denseLayers?: number | null; shardFile?: string | null } | null
     download?: ShardDownload | null

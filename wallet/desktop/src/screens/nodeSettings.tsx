@@ -411,7 +411,7 @@ export function NodeSettingsScreen() {
 
       {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
-        {isElectron && <NetworkPlanCard status={netPlan} onMeasure={measureNetwork} onSelect={selectBackbone} />}
+        {isElectron && <NetworkPlanCard status={netPlan} relay={status?.directRelay} onMeasure={measureNetwork} onSelect={selectBackbone} />}
         {isElectron && slowNet.open && netPlan && <SlowNetworkDialog status={netPlan} onClose={slowNet.dismiss} onMeasure={() => { slowNet.dismiss(); measureNetwork() }} />}
         <ExpertLayersCard slots={expertSlots} status={status}>
           {isElectron && <ExpertMeasureControl state={measureState} progress={measureState.running ? measureProgress : null}

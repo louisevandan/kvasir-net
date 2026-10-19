@@ -626,6 +626,17 @@ setInstalledExecutor('linkcpp-expert-worker', () => cudaPack.workerPath())
 // Turns an assignment into a served segment: shard download, the worker, the
 // relay. Declared before participation, which drives it.
 let participation = null
+// Direct relay over SSH for an operator-listed wallet (config.directRelay); off otherwise.
+const { DirectRelay, directRelaySettings } = require('./directRelay.cjs')
+let directRelay = new DirectRelay({ settings: null })
+function startDirectRelay() {
+  const settings = directRelaySettings(readConfig(), activeAddress())
+  if (!settings) { directRelay.stop(); directRelay = new DirectRelay({ settings: null }); return }
+  if (directRelay.settings && JSON.stringify(directRelay.settings) === JSON.stringify(settings)) { void directRelay.start(); return }
+  directRelay.stop()
+  directRelay = new DirectRelay({ settings, log: (line) => console.log(line) })
+  void directRelay.start()
+}
 const expertPool = new ExpertPool({
   makeHost: () => new ExpertHost({
     baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
@@ -633,6 +644,7 @@ const expertPool = new ExpertPool({
     workerBinary: () => expertExecutor().path,
     shardDir: path.join(app.getPath('userData'), 'shards'),
     log: (line) => console.log(line),
+    relayBase: () => directRelay.base(),
   }),
   workerId: () => participation.workerIdFn(),
   // Both refuse outright when the memory model is unknown. capacityForBudget
@@ -748,6 +760,7 @@ async function nodeStatus({ inspect = false } = {}) {
   return {
     ...p4node.status(), capability: (lastCapability = await capability()), measured,
     expertWork: expertPool.status(),
+    directRelay: directRelay.status(),
     localBenchmark: measured, // additive alias: older renderers still read measured
     liveRing: cachedLiveRing(p4node.status(), expertPool.status(), readConfig().stakingUrl || C.stakingServiceUrl),
     relay: relay.status(), participation: participation.status(),
@@ -940,6 +953,7 @@ function register() {
     // local agent is useful on its own. Size the card first so the first
     // request carries a budget rather than asking for a whole layer.
     await refreshGpuTotal()
+    startDirectRelay()
     participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
     // The tunnel comes up beside the agent, not after it is proven: the relay
     // only needs the port to exist by the time somebody dials, and a stream
@@ -949,7 +963,7 @@ function register() {
     await new Promise((r) => setTimeout(r, 1200))
     return nodeStatus({ inspect: true })
   })
-  ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); await p4node.stop(); return nodeStatus() })
+  ipcMain.handle('node:stop', async () => { participation.stop(); relay.stop(); directRelay.stop(); await p4node.stop(); return nodeStatus() })
   ipcMain.handle('node:capability', (_e, refresh) => capability({ refresh: !!refresh }))
   ipcMain.handle('node:executors', () => executors())
   // Starts the pack install and returns at once; progress arrives through
@@ -1018,10 +1032,11 @@ app.whenReady().then(() => {
     // Size the card first, so the first volunteer request already carries a
     // budget instead of asking for an entire layer.
     Promise.all([resolveMemoryTopology().catch(() => {}), refreshGpuTotal()]).finally(() => {
+      startDirectRelay()
       participation.start({ pollMs: 45_000, maxExperts: () => maxExpertsForBudget() })
     })
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => { localServer.stop(); stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
+app.on('before-quit', () => { directRelay.stop(); localServer.stop(); stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

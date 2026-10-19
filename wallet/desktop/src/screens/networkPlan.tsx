@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Card } from '../components'
 import { useI18n } from '../i18n'
-import type { BackboneCandidate, NetworkPlanStatus } from '../api'
+import type { BackboneCandidate, DirectRelayStatus, NetworkPlanStatus } from '../api'
 
 /** The backbone this PC would attach to: the operator's pick, else the best measured one. */
 export function chosenBackbone(status?: NetworkPlanStatus | null): BackboneCandidate | null {
@@ -50,8 +50,8 @@ function PlanTable({ target }: { target: BackboneCandidate }) {
 
 // Every candidate backbone, measured directly from this PC, with what its round
 // trip costs the ring per layer this PC would hold — and which one to attach to.
-export function NetworkPlanCard({ status, onMeasure, onSelect }: {
-  status?: NetworkPlanStatus | null; onMeasure?: () => void; onSelect?: (id: string) => void
+export function NetworkPlanCard({ status, relay, onMeasure, onSelect }: {
+  status?: NetworkPlanStatus | null; relay?: DirectRelayStatus | null; onMeasure?: () => void; onSelect?: (id: string) => void
 }) {
   const { t } = useI18n()
   const measuring = status?.state === 'measuring'
@@ -95,6 +95,9 @@ export function NetworkPlanCard({ status, onMeasure, onSelect }: {
       </div>}
       <div className="small muted" style={{ marginTop: 6 }}>{t('ns.netPlanEstimate')}</div>
     </>}
+    {relay && relay.state !== 'off' && <div className="small" data-direct-relay={relay.state} style={{ marginTop: 8, color: relay.state === 'up' ? 'var(--good)' : relay.state === 'failed' ? 'var(--danger)' : undefined }}>
+      {t(`ns.directRelay.${relay.state}`, relay.via ?? '—', relay.error ?? '')}
+    </div>}
   </Card>
 }
 
