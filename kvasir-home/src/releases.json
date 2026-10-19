@@ -45,7 +45,7 @@
       "version": "Step-3.7-Flash",
       "date": "2026-09-15",
       "title": "A 428B MoE placed across two machines",
-      "body": "Step-3.7-Flash — 428B parameters, 45 layers, 288 experts per layer with top-8 routing, Q4_K_XL at about 114 GiB — is placed as 16 stages across two AMD MI250 machines and serves from there. Placement comes from an operator's plan; the engine does not load a model because an HTTP call asked it to.",
+      "body": "Step-3.7-Flash — 198B parameters, 45 layers, 288 experts per layer with top-8 routing, Q4_K_XL at about 114 GiB — is placed as 16 stages across two AMD MI250 machines and serves from there. Placement comes from an operator's plan; the engine does not load a model because an HTTP call asked it to.",
       "evidence": [
         "Both agents report their stages loaded at the same generation, verified by INSPECT rather than by a status page.",
         "Eight GPUs per machine, 64 GiB each."

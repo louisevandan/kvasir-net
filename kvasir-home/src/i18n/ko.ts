@@ -37,7 +37,7 @@ export const ko: Dict = {
     eyebrow: "DePIN · 데이터센터 없이 돌리는 프런티어 모델",
     headline1: "428B 모델을 돌릴 하드웨어, 당신에겐 없습니다.",
     headline2: "사실 저희도 없습니다.",
-    sub: "이 플릿의 어떤 기기도 Step-3.7-Flash를 혼자 담아내지 못합니다 — 4,280억 파라미터, 저희가 가진 어떤 기기 한 대도 한참 넘어서는 크기입니다. Kvasir는 이 모델을 레이어 구간으로 잘라 각 기기가 자기 구간만 들고 있게 하고, 각 기기는 hidden state를 다음 기기에 넘깁니다. 오늘 서빙 링에서 측정한 값: 초당 28–31 토큰, 첫 토큰까지 270 ms.",
+    sub: "이 플릿의 어떤 기기도 Step-3.7-Flash를 혼자 담아내지 못합니다 — 1,980억 파라미터, 저희가 가진 어떤 기기 한 대도 한참 넘어서는 크기입니다. Kvasir는 이 모델을 레이어 구간으로 잘라 각 기기가 자기 구간만 들고 있게 하고, 각 기기는 hidden state를 다음 기기에 넘깁니다. 오늘 서빙 링에서 측정한 값: 초당 28–31 토큰, 첫 토큰까지 270 ms.",
     badges: [
       "GPU · CPU · NPU · 휴대폰에서 실행",
       "OpenAI + Anthropic 호환",
@@ -99,7 +99,7 @@ export const ko: Dict = {
       {
         title: "분할",
         body: "모델은 연속된 레이어 구간으로 나뉩니다. 모든 기기는 모델 파일 사본을 두되 자기 구간만 메모리에 로드하므로, 어떤 노드도 전체를 실행할 필요가 없습니다.",
-        note: "Step-3.7-Flash 428B · 45 layers · 16 stages",
+        note: "Step-3.7-Flash 198B · 45 layers · 16 stages",
       },
       {
         title: "제공",
@@ -234,7 +234,7 @@ export const ko: Dict = {
       },
       {
         title: "분산 레이어 배치",
-        body: "p4는 GGUF 메타데이터를 읽고 배치 계획으로부터 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다. 428B MoE인 Step-3.7-Flash는 현재 머신 2대에 16 stages로 올라가 있습니다.",
+        body: "p4는 GGUF 메타데이터를 읽고 배치 계획으로부터 노드별 연속 레이어 구간을 계산하며, 선택적으로 MoE 전문가-FFN을 노드 RAM으로 오프로드합니다. 198B MoE인 Step-3.7-Flash는 현재 머신 2대에 16 stages로 올라가 있습니다.",
       },
       {
         title: "SIWS + 2FA 보안",
@@ -253,7 +253,7 @@ export const ko: Dict = {
       {
         phase: "현재",
         title: "최전선 규모 서빙, 가동 중",
-        body: "428B MoE인 Step-3.7-Flash가 AMD MI250 머신 2대에 16 stages로 배치되어 서빙 중입니다. 122B 모델은 물리 머신 3대에 걸쳐 끝에서 끝까지 실행됐고, 그중 한 대는 모델 일부를 보유한 휴대폰이었습니다. web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관합니다.",
+        body: "198B MoE인 Step-3.7-Flash가 AMD MI250 머신 2대에 16 stages로 배치되어 서빙 중입니다. 122B 모델은 물리 머신 3대에 걸쳐 끝에서 끝까지 실행됐고, 그중 한 대는 모델 일부를 보유한 휴대폰이었습니다. web·desktop·iOS·Android 지갑은 키를 사용자 기기에 보관합니다.",
       },
       {
         phase: "진행 중",
@@ -283,7 +283,7 @@ export const ko: Dict = {
       "지갑 플랫폼 — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B를 MI250 머신 2대에서 · 122B를 머신 3대에 걸쳐 끝에서 끝까지 · OpenAI + Anthropic 호환 · Solana devnet",
+      "Step-3.7-Flash 198B를 MI250 머신 2대에서 · 122B를 머신 3대에 걸쳐 끝에서 끝까지 · OpenAI + Anthropic 호환 · Solana devnet",
   },
 
   footer: {

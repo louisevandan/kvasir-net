@@ -37,7 +37,7 @@ export const id: Dict = {
     eyebrow: "DePIN · Model frontier tanpa pusat data",
     headline1: "Anda tidak punya perangkat keras",
     headline2: "untuk model 428B. Kami juga tidak.",
-    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 428 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
+    sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 198 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",
       "Kompatibel dengan OpenAI + Anthropic",
@@ -100,7 +100,7 @@ export const id: Dict = {
       {
         title: "Bagi",
         body: "Model dibagi menjadi jendela layer yang berdekatan. Setiap perangkat menyimpan salinan file model tetapi hanya memuat jendelanya sendiri ke memori, sehingga tidak ada node yang harus menjalankan seluruhnya.",
-        note: "Step-3.7-Flash 428B · 45 layer · 16 stage",
+        note: "Step-3.7-Flash 198B · 45 layer · 16 stage",
       },
       {
         title: "Sajikan",
@@ -235,7 +235,7 @@ export const id: Dict = {
       },
       {
         title: "Penempatan layer terdistribusi",
-        body: "p4 membaca metadata GGUF dan menghitung jendela layer berdekatan per node dari sebuah rencana penempatan, ditambah opsi offload expert-FFN MoE ke RAM node. Step-3.7-Flash, MoE 428B, saat ini ditempatkan sebagai 16 stage di dua mesin.",
+        body: "p4 membaca metadata GGUF dan menghitung jendela layer berdekatan per node dari sebuah rencana penempatan, ditambah opsi offload expert-FFN MoE ke RAM node. Step-3.7-Flash, MoE 198B, saat ini ditempatkan sebagai 16 stage di dua mesin.",
       },
       {
         title: "Keamanan SIWS + 2FA",
@@ -254,7 +254,7 @@ export const id: Dict = {
       {
         phase: "Sekarang",
         title: "Penyajian berskala frontier, aktif",
-        body: "Step-3.7-Flash — MoE 428B — ditempatkan sebagai 16 stage di dua mesin AMD MI250 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
+        body: "Step-3.7-Flash — MoE 198B — ditempatkan sebagai 16 stage di dua mesin AMD MI250 dan sudah menyajikan permintaan. Model 122B berjalan menyeluruh di tiga mesin fisik, salah satunya ponsel yang menyimpan sebagian model. Dompet di web, desktop, iOS, dan Android menyimpan kunci di perangkat pengguna.",
       },
       {
         phase: "Sedang berjalan",
@@ -284,7 +284,7 @@ export const id: Dict = {
       "platform dompet — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B di dua mesin MI250 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 198B di dua mesin MI250 · 122B menyeluruh di tiga mesin · kompatibel dengan OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

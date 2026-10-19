@@ -237,7 +237,7 @@ const plan = {
   load_generation: GENERATION,
   model: {
     id: 'step-3.7-flash',
-    name: 'Step-3.7-Flash (428B MoE)',
+    name: 'Step-3.7-Flash (198B MoE)',
     context_size: CONTEXT,
     max_tokens: 1024,
     // Dimensions the participation market needs to hand a volunteering node a
