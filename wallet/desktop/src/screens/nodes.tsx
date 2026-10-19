@@ -5,6 +5,7 @@ import { useNav } from '../nav'
 import { fmt } from '../api'
 import { Card, Stat, TierBadge, tierColor, StatusPill } from '../components'
 import { Staking, NodeStatus, NodeStatusItem } from '../services'
+import { MachinePerfCard } from './machinePerf'
 
 const TIERS: [string, string, string][] = [['S', '≥ 90 tok/s', '×1.5'], ['A', '60–89 tok/s', '×1.25'], ['B', '30–59 tok/s', '×1.0'], ['C', '< 30 tok/s', '×0.7']]
 const osIcon = (os?: string) => ({ macos: '🖥', ios: '📱', android: '🤖', windows: '🪟', linux: '🐧' }[(os || '').toLowerCase()] || '💻')
@@ -39,6 +40,7 @@ export function NodesScreen() {
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: '1fr 2fr', alignItems: 'start' }}>
+        <div className="grid">
         <Card>
           <div className="label" style={{ marginBottom: 4 }}>{t('node.tier')}</div>
           <div className="small muted" style={{ marginBottom: 12 }}>{t('node.tierDesc')}</div>
@@ -50,6 +52,9 @@ export function NodesScreen() {
             </div>
           ))}
         </Card>
+        {/* This machine's measured place in the bands above, from the node settings. */}
+        <MachinePerfCard onOpenSettings={() => go('nodeSettings')} />
+        </div>
 
         <div className="grid">
           {(!status || status.nodes.length === 0) ? (
