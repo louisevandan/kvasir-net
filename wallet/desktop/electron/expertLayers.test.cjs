@@ -33,6 +33,17 @@ test('seven layers collapse to one summary, default-closed table and one factual
   assert.doesNotMatch(render([{ ...fixture, relay: { connected: true, lastClose: fixture.relay.lastClose } }]), /role="note"/)
   assert.doesNotMatch(render([{ ...fixture, phase: 'starting' }]), /role="note"/)
 })
+test('layer stack and per-layer expert strips stay visible above the collapsed table', () => {
+  const slots = Array.from({ length: 7 }, (_, i) => ({ ...fixture, workerId: `fixture-${i}`, held: { ...fixture.held, layer: 6 + i } }))
+  const html = render(slots)
+  const visible = html.slice(0, html.indexOf('<details'))
+  assert.equal((visible.match(/data-layer="/g) || []).length, 45)
+  assert.equal((visible.match(/data-layer="\d+" data-held="true"/g) || []).length, 7)
+  assert.equal((visible.match(/data-dense="true"/g) || []).length, 3)
+  assert.equal((visible.match(/data-expert="/g) || []).length, 7 * 288)
+  assert.equal((visible.match(/data-expert="\d+" data-held="true"/g) || []).length, 7 * 64)
+  assert.match(render([{ ...fixture, held: { ...fixture.held, nLayer: null, nExpert: null } }]), /topology unavailable/)
+})
 test('starting and downloading are explicit rather than unavailable, per-layer benchmark is visible', () => {
   assert.equal(expertLayerState({ ...fixture, phase: 'starting', held: { ...fixture.held, shardFile: null } }), 'starting')
   assert.equal(expertLayerState({ ...fixture, phase: 'starting' }), 'cached')
@@ -72,4 +83,11 @@ test('renderer measurement state idle → measuring → done/error enables contr
     assert.doesNotMatch(renderState(), /disabled=""/)
     if (outcome !== 'done') assert.match(renderState(), /role="alert"/)
   }
+})
+test('measure stays disabled until an expert shard is downloaded and serving', () => {
+  const state = { running: false, error: null }
+  const waiting = renderComponent(ExpertMeasureControl, { state, ready: false, onMeasure() {} }, 'ko')
+  assert.match(waiting, /<button[^>]*disabled/); assert.match(waiting, /내려받아 워커가 서빙을 시작하면/)
+  const ready = renderComponent(ExpertMeasureControl, { state, ready: true, onMeasure() {} }, 'en')
+  assert.doesNotMatch(ready, /<button[^>]*disabled/); assert.doesNotMatch(ready, /becomes available once/)
 })
