@@ -474,38 +474,15 @@ function llamaServerBin() {
   } catch { /* not on PATH either */ }
   return null
 }
-let localProc = null
+const { LocalServer } = require('./localServer.cjs')
+const localServer = new LocalServer()
 async function localGenerate(sender, name, prompt, maxTokens) {
   const bin = llamaServerBin()
   const safe = path.basename(String(name || ''))
   const model = path.join(modelsDir(), safe)
   if (!bin) return { ok: false, error: 'no local llama-server binary found (set LINKCPP_LLAMA_SERVER)' }
   if (!fs.existsSync(model)) return { ok: false, error: 'model not found' }
-  const port = 8123
-  if (!localProc) {
-    const libDir = path.dirname(bin)
-    localProc = spawn(bin, ['-m', model, '-ngl', '999', '--host', '127.0.0.1',
-      '--port', String(port), '-c', '2048', '--no-mmap'],
-      { stdio: 'ignore', env: { ...process.env, DYLD_LIBRARY_PATH: libDir } })
-    localProc.on('exit', () => { localProc = null })
-  }
-  // Wait for the server, then stream a chat completion.
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 1000))
-    try { const h = await fetch(`http://127.0.0.1:${port}/health`); if (h.ok) break } catch {}
-  }
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }],
-        max_tokens: maxTokens, stream: false }),
-    })
-    const data = await res.json()
-    return { ok: true, text: data.choices?.[0]?.message?.content ?? '',
-      usage: data.usage || {} }
-  } catch (e) {
-    return { ok: false, error: String(e) }
-  }
+  return localServer.generate(bin, model, prompt, maxTokens)
 }
 
 // ---- this machine as a p4 node ----------------------------------------------
@@ -719,9 +696,21 @@ async function benchmark(sender, maxTokens = 64) {
   const result = await localGenerate(sender, smallest.name, 'Write one sentence about distributed systems.', maxTokens)
   if (!result.ok) return { ok: false, error: result.error }
   const elapsedMs = Date.now() - started
-  const tokens = Number(result.usage?.completion_tokens ?? 0)
-  if (!tokens || elapsedMs <= 0) return { ok: false, error: 'the run reported no token count' }
-  measured = { tps: tokens / (elapsedMs / 1000), tokens, elapsedMs, model: smallest.name, at: Date.now() }
+  // Only server decode time belongs in decode throughput. Wall time includes
+  // model startup, the health wait, prompt processing and request overhead.
+  const timing = result.timings
+  const tokens = timing?.predicted_n
+  const decodeMs = timing?.predicted_ms
+  if (!Number.isInteger(tokens) || tokens <= 0 || !Number.isFinite(decodeMs) || decodeMs <= 0) {
+    return { ok: false, error: 'the local server reported no valid decode timings; use a llama-server with timings support' }
+  }
+  const reported = timing.predicted_per_second
+  const tps = Number.isFinite(reported) && reported > 0 ? reported : tokens / decodeMs * 1000
+  if (!Number.isFinite(tps) || tps <= 0) return { ok: false, error: 'the local server reported invalid decode timings' }
+  const promptMs = Number.isFinite(timing.prompt_ms) && timing.prompt_ms >= 0 ? timing.prompt_ms : null
+  // Keep this a local benchmark. Live expert contribution is partial-model work,
+  // not comparable to full-model decode, and must not overwrite this number.
+  measured = { tps, tokens, elapsedMs, decodeMs, promptMs, model: smallest.name, at: Date.now() }
   return { ok: true, ...measured }
 }
 
@@ -994,5 +983,5 @@ app.whenReady().then(() => {
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
-app.on('before-quit', () => { stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
+app.on('before-quit', () => { localServer.stop(); stopGateway(); p4node.stop().catch(() => {}); expertPool.release('quitting') })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

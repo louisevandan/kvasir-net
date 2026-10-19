@@ -43,7 +43,7 @@ export interface NodeCompute {
   gpu: { vendor: string | null; ready: boolean; reason?: string; cudaVersion?: string | null; gpus?: GpuLive[] }
   summary: { canHostPipelineStages: boolean; canServeExperts: boolean; blockers: string[] }
 }
-export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; model: string; at: number }
+export interface NodeMeasurement { tps: number; tokens: number; elapsedMs: number; decodeMs: number; promptMs: number | null; model: string; at: number }
 /** The on-demand NVIDIA pack (electron/cudaPack.cjs). */
 export type CudaPackStatus = {
   available: boolean            // published (the app knows where to get it)
