@@ -162,6 +162,45 @@ test('a truncated download is retried and never left on disk', async () => {
   })
 })
 
+test('real relay framing records completed work but never partial responses', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eh-'))
+  let bridgeSide
+  await withGateway({ shard: serveShard, relay: ws => { bridgeSide = ws } }, async base => {
+    const host = makeHost(base, dir)
+    const workerJs = path.join(dir, 'framed-worker.js')
+    fs.writeFileSync(workerJs, `
+      const net = require('net'), args = process.argv;
+      net.createServer(c => { let pending = Buffer.alloc(0); c.on('data', d => {
+        pending = Buffer.concat([pending, d]);
+        while (pending.length >= 28) {
+          pending = pending.subarray(28);
+          c.write(Buffer.alloc(7)); setTimeout(() => c.write(Buffer.alloc(9)), 30);
+        }
+      }) }).listen(Number(args[args.indexOf('--serve') + 1]), '127.0.0.1');
+    `)
+    host.workerArgs = [workerJs]
+    try {
+      await host.provision({ ...ASSIGN, n_embd: 4, n_layer: 45, n_expert: 288, leading_dense_block_count: 3 }, { workerId: 'framed' })
+      host.wired(); await until(() => bridgeSide && host.relay.tcp)
+      const frame = Buffer.alloc(28); frame.writeInt32LE(1); frame.writeInt32LE(1, 4)
+      bridgeSide.send(frame.subarray(0, 3)); bridgeSide.send(frame.subarray(3))
+      await until(() => host.status().work.calls === 1)
+      assert.equal(host.status().work.rows, 1)
+      assert.ok(host.status().work.p50Ms >= 0)
+      assert.equal(host.status().held.layer, 7)
+      assert.equal(host.status().held.nLayer, 45)
+      assert.equal(host.status().held.nExpert, 288)
+      assert.equal(host.status().held.denseLayers, 3)
+      assert.equal(host.status().held.shardFile, 'L7_e004-006.gguf')
+      assert.equal(host.status().work.recentRows.length, 12)
+      bridgeSide.send(frame.subarray(0, 10))
+      await new Promise(r => setTimeout(r, 50))
+      assert.equal(host.status().work.calls, 1)
+      assert.equal(host.status().localBenchmark, null)
+    } finally { host.release() }
+  })
+})
+
 test('a shard for the wrong range is refused, and nothing is held', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eh-'))
   const wrong = (u, res) => {

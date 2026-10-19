@@ -3,6 +3,7 @@ import { useWallet } from '../state'
 import { useI18n } from '../i18n'
 import { Card, MetricRow, CopyButton } from '../components'
 import { QR } from '../qr'
+import { ExpertLayersCard } from './expertLayers'
 import { Staking } from '../services'
 import { api, capacityForBudget, isElectron, NODE_GUIDE_URL } from '../api'
 import type { NodeStatus } from '../api'
@@ -260,7 +261,8 @@ export function NodeSettingsScreen() {
     try {
       const r = await api.node.benchmark(64)
       setStatus(await api.node.status())
-      if (!r.ok) setConnectMsg(r.error ?? 'measurement failed')
+      if (!r.ok) setConnectMsg(r.errorCode === 'noMeasurementTarget' ? t('ns.noMeasurementTarget') : r.error ?? t('ns.measureFailed'))
+      else setConnectMsg(null)
     } finally { setBusy(null) }
   }
 
@@ -355,6 +357,33 @@ export function NodeSettingsScreen() {
 
       {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
+        <ExpertLayersCard slots={status?.expertWork?.slots} />
+        <Card>
+          <div className="label">{t('ns.expertWorkTitle')}</div>
+          <div className="small muted">{t('ns.expertWorkHint')}</div>
+          {(status?.expertWork?.slots.filter(slot => slot.held).length ?? 0) === 0 && <div className="small muted">{t('ns.expertWorkNone')}</div>}
+          {status?.expertWork?.slots.filter(slot => slot.held).map(slot => (
+            <div key={slot.workerId} className="small" style={{ marginTop: 8 }}>
+              <div>{t('ns.expertWorkShard', slot.held!.model, slot.held!.layer, slot.held!.begin, slot.held!.end)}</div>
+              <div>{slot.phase === 'serving' ? liveState(slot.work.state) : liveState('unavailable')}</div>
+              <strong>{t('ns.expertWorkRates', slot.work.rowsPerSecond.toFixed(1), slot.work.callsPerSecond.toFixed(2))}</strong>
+              <div className="muted">{t('ns.expertWorkLatency', slot.work.p50Ms?.toFixed(2) ?? '—', slot.work.p95Ms?.toFixed(2) ?? '—')}</div>
+              <div className="muted">{t('ns.expertWorkWindow', (slot.work.windowMs / 1000).toFixed(1), slot.work.calls, slot.work.rows)}</div>
+              <div className="muted">{t('ns.liveRingLastWork', slot.work.lastWorkAt ? new Date(slot.work.lastWorkAt).toLocaleString() : t('ns.liveRingUnknown'))}</div>
+              {slot.localBenchmark && <div style={{ marginTop: 6 }}>
+                <div>{t('ns.expertBenchTitle')}</div>
+                <strong>{t('ns.expertWorkRates', slot.localBenchmark.rowsPerSecond.toFixed(1), slot.localBenchmark.callsPerSecond.toFixed(2))}</strong>
+                <div className="muted">{t('ns.expertWorkLatency', slot.localBenchmark.p50Ms.toFixed(2), slot.localBenchmark.p95Ms.toFixed(2))}</div>
+                <div className="muted">{t('ns.expertBenchDetail', slot.localBenchmark.batchRows, slot.localBenchmark.expertsPerRow, slot.localBenchmark.calls, new Date(slot.localBenchmark.at).toLocaleString())}</div>
+              </div>}
+            </div>
+          ))}
+          {isElectron && <button className="btn block" style={{ marginTop: 8 }} disabled={busy !== null} onClick={measure}>
+            {busy === 'measure' ? t('ns.measuring') : t('ns.measure')}
+          </button>}
+          <div className="small muted">{t('ns.expertMeasureHint')}</div>
+          {connectMsg && <div className="small muted">{connectMsg}</div>}
+        </Card>
         <Card>
           <div className="spread"><div className="label">{t('ns.liveRingTitle')}</div><span className="chip">{liveState(live?.state)}</span></div>
           <div className="small muted">{t('ns.liveRingMetric')}</div>
@@ -373,7 +402,7 @@ export function NodeSettingsScreen() {
         </Card>
         <Card>
           <div className="spread">
-            <div className="label">{t('ns.throughput')}</div>
+            <div className="label">{t('ns.localDecodeTitle')}</div>
             <div style={{ textAlign: 'right' }}>
               <div className="grad-text" style={{ fontSize: 24, fontWeight: 800 }}>
                 {measured ? measured.tps.toFixed(1) : '—'}
@@ -385,11 +414,6 @@ export function NodeSettingsScreen() {
           <div className="small muted" style={{ margin: '0 0 12px' }}>
             {t('ns.tierNote')} {measured ? `(${tierOf(measured.tps)})` : ''}
           </div>
-          {isElectron && (
-            <button className="btn block" disabled={busy !== null} onClick={measure}>
-              {busy === 'measure' ? t('ns.measuring') : t('ns.measure')}
-            </button>
-          )}
           {measured
             ? <div className="small muted" style={{ marginTop: 10 }}>
                 {measured.model} · {measured.tokens} tok · {t('ns.benchmarkDecode', (measured.decodeMs / 1000).toFixed(2))}
