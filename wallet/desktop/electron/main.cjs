@@ -714,7 +714,8 @@ async function benchmark(sender, maxTokens = 64) {
   return { ok: true, ...measured }
 }
 
-const { observeLiveRing } = require('./liveRing.cjs')
+const { createLiveRingCache } = require('./liveRing.cjs')
+const cachedLiveRing = createLiveRingCache()
 async function nodeStatus({ inspect = false } = {}) {
   if (inspect) await p4node.inspect().catch(() => {})
   // `participation` is what the operator needs to tell "the agent is running"
@@ -723,7 +724,7 @@ async function nodeStatus({ inspect = false } = {}) {
   return {
     ...p4node.status(), capability: (lastCapability = await capability()), measured,
     localBenchmark: measured, // additive alias: older renderers still read measured
-    liveRing: await observeLiveRing(p4node.status(), expertPool.status(), readConfig().stakingUrl || C.stakingServiceUrl),
+    liveRing: cachedLiveRing(p4node.status(), expertPool.status(), readConfig().stakingUrl || C.stakingServiceUrl),
     relay: relay.status(), participation: participation.status(),
     // Surfaced so a test identity can never be mistaken for the real wallet.
     debugWallet: DEBUG_WALLET ? activeAddress() : null,
