@@ -43,7 +43,7 @@ export const fr: Dict = {
   hero: {
     eyebrow: "DePIN · Modèles frontier sans centre de données",
     headline1: "Vous n’avez pas le matériel",
-    headline2: "pour un modèle de 428B. Nous non plus.",
+    headline2: "pour un modèle de 198B. Nous non plus.",
     sub: "Rien dans cette flotte ne peut contenir Step-3.7-Flash — 198 milliards de paramètres, bien au-delà de n’importe quel appareil que nous possédons. Kvasir le découpe en fenêtres de layers pour que chaque machine ne détienne que la sienne et tende un état caché à la suivante. Mesuré aujourd’hui sur l’anneau en service : 28–31 tokens par seconde, premier token en 270 ms.",
     badges: [
       "Fonctionne sur GPU · CPU · NPU · téléphone",

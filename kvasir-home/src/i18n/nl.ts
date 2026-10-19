@@ -43,7 +43,7 @@ export const nl: Dict = {
   hero: {
     eyebrow: "DePIN · Frontier-modellen zonder datacenter",
     headline1: "Jij hebt geen hardware",
-    headline2: "voor een 428B-model. Wij ook niet.",
+    headline2: "voor een 198B-model. Wij ook niet.",
     sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 198 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 28–31 tokens per seconde, eerste token in 270 ms.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",

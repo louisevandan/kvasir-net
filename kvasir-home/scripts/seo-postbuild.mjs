@@ -283,7 +283,7 @@ const staticRoutes = [
     // the same claim the page now leads with: a model too large for any one
     // machine, running across ordinary ones. The old title sold the supply
     // side, which rests on a network that is not open yet.
-    title: "Kvasir — a 428B model on machines that cannot hold it",
+    title: "Kvasir — a 198B model on machines that cannot hold it",
     description:
       "Kvasir runs open models larger than any single machine serving them. The p4 engine cuts a model into layer windows across a peer-to-peer ring of GPUs, CPUs, NPUs and phones, each holding only its own. Step-3.7-Flash, 198B parameters, at 28–31 tokens a second. Solana devnet.",
     image: `${ORIGIN}/og.png`,

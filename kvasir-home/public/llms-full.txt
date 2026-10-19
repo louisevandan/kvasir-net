@@ -18,7 +18,7 @@ One line: p4 is the engine; Kvasir is the network that turns it into a rewarded,
 
 ## Hero
 
-Headline: You don't have the hardware for a 428B model. Neither do we.
+Headline: You don't have the hardware for a 198B model. Neither do we.
 Nothing in this fleet can hold Step-3.7-Flash — 198 billion parameters, far past any single device we own. Kvasir cuts it into layer windows with p4 so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring on 2026-09-21: 28-31 tokens a second, first token in 270 ms. Contribute a GPU, CPU or phone (NPU support in progress) and earn devnet KVR for the layers you run.
 Badges: Runs on GPU · CPU · NPU · phone · OpenAI + Anthropic compatible · BSL engine · Solana devnet.
 

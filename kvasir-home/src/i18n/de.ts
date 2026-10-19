@@ -42,7 +42,7 @@ export const de: Dict = {
   hero: {
     eyebrow: "DePIN · Frontier-Modelle ohne Rechenzentrum",
     headline1: "Du hast nicht die Hardware",
-    headline2: "für ein 428B-Modell. Und wir? Auch nicht.",
+    headline2: "für ein 198B-Modell. Und wir? Auch nicht.",
     sub: "Nichts in dieser Flotte kann Step-3.7-Flash halten — 198 Milliarden Parameter, weit jenseits jedes einzelnen Geräts, das uns gehört. Kvasir zerschneidet es in Layer-Fenster, sodass jede Maschine nur ihr eigenes hält und einen Hidden State an die nächste weitergibt. Heute auf dem Serving-Ring gemessen: 28–31 Tokens pro Sekunde, das erste Token nach 270 ms.",
     badges: [
       "Läuft auf GPU · CPU · NPU · Smartphone",

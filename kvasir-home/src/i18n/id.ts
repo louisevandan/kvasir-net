@@ -36,7 +36,7 @@ export const id: Dict = {
   hero: {
     eyebrow: "DePIN · Model frontier tanpa pusat data",
     headline1: "Anda tidak punya perangkat keras",
-    headline2: "untuk model 428B. Kami juga tidak.",
+    headline2: "untuk model 198B. Kami juga tidak.",
     sub: "Tidak ada satu mesin pun di armada ini yang sanggup menyimpan Step-3.7-Flash — 198 miliar parameter, jauh melampaui perangkat mana pun yang kami miliki. Kvasir memotongnya menjadi jendela layer sehingga setiap mesin hanya menyimpan jendelanya sendiri dan menyerahkan satu hidden state ke mesin berikutnya. Diukur di ring penyajian hari ini: 28–31 token per detik, token pertama dalam 270 ms.",
     badges: [
       "Berjalan di GPU · CPU · NPU · ponsel",

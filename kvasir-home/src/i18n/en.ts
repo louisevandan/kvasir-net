@@ -45,7 +45,7 @@ export const en = {
     // here runs across these machines anyway, and the numbers are from today.
     eyebrow: "DePIN · Frontier models without the datacenter",
     headline1: "You don’t have the hardware",
-    headline2: "for a 428B model. Neither do we.",
+    headline2: "for a 198B model. Neither do we.",
     sub: "Nothing in this fleet can hold Step-3.7-Flash — 198 billion parameters, far past any single device we own. Kvasir cuts it into layer windows so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring today: 28–31 tokens a second, first token in 270 ms.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
