@@ -488,6 +488,81 @@ class Bridge {
   }
 }
 
+/* ---- gateway liveness ---------------------------------------------------- */
+
+/**
+ * Tell the gateway which of the nodes it lists for this bridge are alive now.
+ *
+ * The gateway marks a node online only when its lastReport is under five
+ * minutes old, and for the nodes this bridge stands for that report used to
+ * come only with credited work. A loaded ring stage with no request in five
+ * minutes read "idle", and after an hour "offline", while it was serving. A
+ * heartbeat moves lastReport and nothing else: /api/node/heartbeat credits no
+ * units, and uptime pays only infra roles, which these nodes do not have.
+ *
+ * Alive means: a stage of a model this bridge currently serves, or an expert
+ * worker whose relay socket is open right now. The gateway names them
+ * infer-<bridge key>-<node>; the key is learned from its own node list.
+ */
+const GATEWAY_URL = (process.env.P4_BRIDGE_GATEWAY_URL ?? 'https://gate.kvasir-ai.net').replace(/\/+$/, '');
+const GATEWAY_HEARTBEAT_MS = Number(process.env.P4_BRIDGE_GATEWAY_HEARTBEAT_MS ?? 60_000);
+
+function liveNodeNames(bridge) {
+  const live = new Set();
+  for (const model of bridge.catalog.models) {
+    const state = bridge.serving.get(model.id);
+    if (state?.serving) for (const stage of model.stages) live.add(stage.node);
+  }
+  const p = bridge.participation;
+  if (p) {
+    for (const [session, target] of p.relayTargets) {
+      const stats = p.relayStats.get(session);
+      if (stats && !stats.closed && target.nodeId) live.add(target.nodeId);
+    }
+  }
+  return live;
+}
+
+async function gatewayHeartbeat(bridge) {
+  const live = liveNodeNames(bridge);
+  if (!live.size) return 0;
+  const list = await fetch(`${GATEWAY_URL}/api/node/all`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+  const ids = (list.nodes ?? []).map((n) => n.nodeId).filter((id) => typeof id === 'string' && id.startsWith('infer-'));
+  // The key is the prefix that names this bridge's live nodes; stale rows of
+  // another bridge can share a stage name, not the key that names all of them.
+  const counts = new Map();
+  for (const id of ids) {
+    const m = /^infer-([0-9a-f]+)-(.+)$/.exec(id);
+    if (m && live.has(m[2])) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  }
+  const key = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!key) return 0;
+  let sent = 0;
+  for (const name of live) {
+    const nodeId = `infer-${key}-${name}`;
+    if (!ids.includes(nodeId)) continue;
+    const r = await fetch(`${GATEWAY_URL}/api/node/heartbeat`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nodeId }), signal: AbortSignal.timeout(8000),
+    });
+    if (r.ok) sent += 1;
+  }
+  return sent;
+}
+
+function startGatewayHeartbeat(bridge) {
+  if (!(GATEWAY_HEARTBEAT_MS > 0)) return null;
+  let last = -1;
+  const tick = () => gatewayHeartbeat(bridge).then((n) => {
+    if (n !== last) console.log(`gateway heartbeat: ${n} live node(s)`);
+    last = n;
+  }).catch((e) => console.log(`gateway heartbeat failed: ${e.message}`));
+  setTimeout(tick, 5_000).unref?.();
+  const timer = setInterval(tick, GATEWAY_HEARTBEAT_MS);
+  timer.unref?.();
+  return timer;
+}
+
 /* ---- HTTP -------------------------------------------------------------- */
 
 const send = (res, status, body, headers = {}) => {
@@ -980,6 +1055,7 @@ function participationPolicy() {
 
   const refreshTimer = setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs);
   refreshTimer.unref?.();
+  const heartbeatTimer = startGatewayHeartbeat(bridge);
   const server = createServer(bridge);
   attachRelays(server, bridge);
 
@@ -993,6 +1069,7 @@ function participationPolicy() {
     if (stopping) return stopping;
     stopping = (async () => {
       clearInterval(refreshTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       bridge.stopping = true;
       server.close();
       const guard = setTimeout(() => {
