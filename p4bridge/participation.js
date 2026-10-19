@@ -89,6 +89,40 @@ const json = (res, status, body) => {
 };
 const fail = (res, status, message) => json(res, status, { error: message });
 
+/**
+ * A refusal a client can act on without reading English.
+ *
+ * `error` stays the sentence, because the shipped iOS, Android and desktop
+ * builds all put it in front of a person — turning it into a symbol would show
+ * them "not_admitted". The machine-readable part is added beside it, and in a
+ * header too: a 403 that never reached this process (Cloudflare's bot check
+ * answers one, with no JSON in it) is then distinguishable from a refusal this
+ * bridge meant. They call for opposite responses — one is "ask a human to
+ * admit you", the other is "you are not the client you said you were".
+ */
+const refuse = (res, status, code, message) => {
+  res.setHeader('X-Kvasir-Error', code);
+  return json(res, status, { error: message, code });
+};
+
+/**
+ * The one method each participation path answers.
+ *
+ * `handle` used to return false when the path matched but the method did not,
+ * which dropped the request into the blanket service-token gate below it. A
+ * `GET /api/auth/challenge` — the first thing anyone types when they are
+ * working out how to join — came back 401 "service token required" on the one
+ * endpoint that has to look open to a stranger with no token at all. It reads
+ * as "not for you", and the reader stops there.
+ */
+const ALLOWED_METHOD = [
+  [/^\/api\/auth\/(challenge|node-token)$/, 'POST'],
+  [/^\/api\/expert-(volunteer|coverage)$/, 'POST'],
+  [/^\/api\/expert-demand$/, 'GET'],
+  [/^\/api\/expert-relay\/sessions$/, 'GET'],
+  [/^\/api\/proxy\/models\/[^/]+\/expert-shard$/, 'GET'],
+];
+
 class Participation {
   /**
    * @param {object} options
@@ -300,8 +334,27 @@ class Participation {
   /** Returns true when the request was handled. */
   async handle(req, res, path, query, body) {
     const who = this.auth.identify(req);
-    const needsNode = () => {
-      if (who.kind === 'service' || who.kind === 'node') return true;
+    /**
+     * A caller allowed to use the participation surface right now.
+     *
+     * The eligibility check used to happen only where a token is minted, so a
+     * node token outlived the decision that granted it: taking a wallet off the
+     * list left it working for up to thirty days, and the operator who removed
+     * it had no way to know that. A token says which wallet is asking; whether
+     * that wallet may still ask is a question with a current answer, so it is
+     * asked here too. The list is an in-memory set re-read only when the file
+     * changes, so this costs a lookup.
+     *
+     * A service token is exempt: it is the machine-to-machine secret, not a
+     * contributor, and nothing admits or removes it.
+     */
+    const needsNode = async () => {
+      if (who.kind === 'service') return true;
+      if (who.kind === 'node') {
+        if (await this.auth.allows(who.wallet)) return true;
+        refuse(res, 403, 'not_admitted', 'this wallet is no longer admitted to the ring'), true;
+        return false;
+      }
       fail(res, 401, 'authentication required');
       return false;
     };
@@ -318,7 +371,8 @@ class Participation {
         return fail(res, 400, 'that is not a wallet address'), true;
       }
       if (!await this.auth.allows(wallet)) {
-        return fail(res, 403, 'this wallet is not allowed to participate'), true;
+        return refuse(res, 403, 'not_admitted',
+          'this wallet has not been admitted to the ring yet'), true;
       }
       try {
         return json(res, 200, this.auth.newChallenge(wallet)), true;
@@ -335,7 +389,8 @@ class Participation {
         return fail(res, 400, 'wallet, nonce and signature are required'), true;
       }
       if (!await this.auth.allows(wallet)) {
-        return fail(res, 403, 'this wallet is not allowed to participate'), true;
+        return refuse(res, 403, 'not_admitted',
+          'this wallet has not been admitted to the ring yet'), true;
       }
       const message = this.auth.consumeChallenge(wallet, nonce);
       if (!message) {
@@ -350,7 +405,7 @@ class Participation {
     }
 
     if (req.method === 'GET' && path === '/api/expert-demand') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       const want = String(query.get('model') ?? '');
       const models = this.models()
         .filter((m) => !want || m.id === want || m.name === want || m.id.endsWith(want))
@@ -366,7 +421,7 @@ class Participation {
     }
 
     if (req.method === 'POST' && path === '/api/expert-volunteer') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       // Frozen: reachable, authenticating, serving every relay it already has,
       // and handing out nothing new. This is what a migration needs and what
       // stopping the process cannot give it — the old bridge has to stay up to
@@ -421,7 +476,7 @@ class Participation {
     }
 
     if (req.method === 'POST' && path === '/api/expert-coverage') {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       const workerId = String(body?.worker_id ?? '').trim();
       const model = String(body?.model ?? '').trim();
       if (!workerId || !model) {
@@ -533,7 +588,7 @@ class Participation {
 
     const shardPath = /^\/api\/proxy\/models\/([^/]+)\/expert-shard$/.exec(path);
     if (req.method === 'GET' && shardPath) {
-      if (!needsNode()) return true;
+      if (!await needsNode()) return true;
       if (!this.shard) {
         return fail(res, 503, 'this bridge serves no expert shards'), true;
       }
@@ -599,6 +654,14 @@ class Participation {
         upstream.end();
       });
       return true;
+    }
+
+    // The path is ours; only the method was wrong. Say so, rather than letting
+    // the service-token gate answer 401 for an endpoint that is open.
+    for (const [pattern, method] of ALLOWED_METHOD) {
+      if (!pattern.test(path)) continue;
+      res.setHeader('Allow', method);
+      return fail(res, 405, `${path} takes ${method}, not ${req.method}`), true;
     }
 
     return false;

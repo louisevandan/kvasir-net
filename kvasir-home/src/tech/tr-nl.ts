@@ -990,7 +990,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "experts · routering", "per expert (Q4≈)", "gedeeld", "status"],
         rows: [
-          ["Step-3.7-Flash 428B (vandaag in bedrijf)", "288 · top-8", "gemeten op de vloot", "ja", "serveert — 16 stages, twee machines"],
+          ["Step-3.7-Flash 198B (vandaag in bedrijf)", "288 · top-8", "gemeten op de vloot", "ja", "serveert — 16 stages, twee machines"],
           ["Qwen3.5-122B", "256 · top-8", "5.3 MB (gemeten)", "ja", "end-to-end bediend over 3 machines"],
           ["GLM-5.2 744B", "—", "—", "ja", "geverifieerd op linkcpp — rapport ongepubliceerd"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ja", "gepland (hook geverifieerd)"],

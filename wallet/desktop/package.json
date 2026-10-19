@@ -1,6 +1,6 @@
 {
   "name": "linkcpp-wallet-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Kvasir non-custodial KVR wallet + node dashboard for Windows/macOS/Linux desktop",
   "author": "kvasir-ai.net",
   "license": "MIT",

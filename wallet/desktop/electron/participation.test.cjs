@@ -489,6 +489,101 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
+  await test('a refusal the bridge names is told apart from one it never saw', async () => {
+    const named = await fakeBridge({
+      'POST /api/auth/challenge': () => ({
+        status: 403,
+        body: { error: 'this wallet has not been admitted to the ring yet', code: 'not_admitted' },
+      }),
+    })
+    try {
+      const p = client(named.base)
+      await assert.rejects(() => p.mintToken(), (e) => e.code === 'not_admitted')
+    } finally { await named.close() }
+
+    // Cloudflare's bot check: a 403 with no JSON and nothing this bridge wrote.
+    // Treating it as "not admitted" would park the client for five minutes on
+    // a problem that has nothing to do with admission.
+    const atTheDoor = http.createServer((req, res) => {
+      res.writeHead(403, { 'Content-Type': 'text/html', 'cf-mitigated': 'challenge' })
+      res.end('<html>error code: 1010</html>')
+    })
+    await new Promise((r) => atTheDoor.listen(0, '127.0.0.1', r))
+    try {
+      const p = client(`http://127.0.0.1:${atTheDoor.address().port}`)
+      await assert.rejects(() => p.mintToken(), (e) => e.code === 'forbidden')
+    } finally { await new Promise((r) => atTheDoor.close(r)) }
+  })
+
+  await test('waits for a person instead of asking the bridge every 15 seconds', async () => {
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({
+        status: 403,
+        body: { error: 'this wallet has not been admitted to the ring yet', code: 'not_admitted' },
+      }),
+    })
+    try {
+      const p = client(br.base)
+      p.running = true; p.maxExpertsFn = () => 64; p.pollMs = 45_000
+      const waits = []
+      const realTimeout = global.setTimeout
+      global.setTimeout = (fn, ms) => { waits.push(ms); return realTimeout(() => {}, 0) }
+      try { await p.tick() } finally { global.setTimeout = realTimeout }
+      p.stop()
+
+      assert.ok(waits.length > 0, 'the loop scheduled another attempt')
+      const wait = waits[waits.length - 1]
+      assert.ok(wait > 60_000, `backed off, not ${wait}ms`)
+      assert.strictEqual(p.status().admission, 'pending')
+      assert.strictEqual(p.status().phase, 'awaiting_admission')
+    } finally { await br.close() }
+  })
+
+  await test('a refused machine asks to be admitted, once, not every tick', async () => {
+    const asked = []
+    const admissions = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (c) => { body += c })
+      req.on('end', () => {
+        const parsed = body ? JSON.parse(body) : {}
+        asked.push({ url: req.url, body: parsed })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(req.url === '/requests/challenge'
+          ? JSON.stringify({ nonce: 'n1', message: 'sign me' })
+          : JSON.stringify({ ok: true, id: 'r1' }))
+      })
+    })
+    await new Promise((r) => admissions.listen(0, '127.0.0.1', r))
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({
+        status: 403,
+        body: { error: 'this wallet has not been admitted to the ring yet', code: 'not_admitted' },
+      }),
+    })
+    try {
+      const p = client(br.base)
+      p.admissionsBase = `http://127.0.0.1:${admissions.address().port}`
+      p.profileFn = () => ({ gpus: 'RTX 4090', lending: '16 GiB' })
+      p.running = true; p.maxExpertsFn = () => 64; p.pollMs = 45_000
+
+      const realTimeout = global.setTimeout
+      global.setTimeout = (fn, ms) => realTimeout(() => {}, 0)
+      try {
+        await p.tick()
+        await p.tick()          // the backoff has not elapsed; this must not ask again
+      } finally { global.setTimeout = realTimeout }
+      p.stop()
+
+      const requests = asked.filter((a) => a.url === '/requests')
+      assert.strictEqual(requests.length, 1, `asked ${requests.length} times`)
+      assert.strictEqual(requests[0].body.signature.length > 0, true, 'the wallet signed')
+      assert.deepStrictEqual(requests[0].body.profile, { gpus: 'RTX 4090', lending: '16 GiB' })
+    } finally {
+      await br.close()
+      await new Promise((r) => admissions.close(r))
+    }
+  })
+
   console.log('\nbridge participation')
   console.log(results.join('\n'))
   console.log(`\n${passed}/${results.length} passed`)

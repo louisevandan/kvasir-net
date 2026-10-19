@@ -33,6 +33,14 @@ node server.js
 
 The gateway points at it with `P4_BRIDGE_URL` and `P4_BRIDGE_TOKEN`.
 
+## When an agent stops accepting
+
+An agent that has leaked all 256 connection slots keeps serving on the
+connections it already has and accepts no new ones, silently. Restarting it
+kills its stage, so recovery is a full ring reload — the procedure, with the
+measurements from the one time it has been run, is in
+[RECOVERY.md](./RECOVERY.md).
+
 ## The load generation, and a mistake worth not repeating
 
 `load_generation` is set by whoever loaded the model and is compared for **exact
@@ -119,8 +127,16 @@ reported as 0 rather than estimated — the gateway must never bill a guess.
 ## Tests
 
 ```sh
-node --test test/
+node --test test/*.test.js
 ```
+
+Name the files. Newer Node treats a directory argument to `--test` as a single
+file and reports one failure — which reads exactly like the deployment you just
+made having broken something, at the moment you are least inclined to doubt the
+harness instead. Measured 2026-09-25 on one tree: v20.19.4 runs `node --test
+test/` and passes; v24.14.0 reports 1 fail for the same tree, and passes by
+file. If you see a single unexplained failure, check your Node version before
+you check your change.
 
 The wire tests pin the byte layout against the engine's own encoder: a field in
 the wrong order still encodes, and the agent answers by closing the socket.

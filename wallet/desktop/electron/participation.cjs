@@ -43,7 +43,43 @@ const DEFAULT_POLL_MS = 45_000
 // A failed tick means the census entry is already ageing, so retry well before
 // the next scheduled poll rather than letting the gap compound.
 const RETRY_MS = 15_000
+// Admission is a person pressing a button in their own time. Asking every 15
+// seconds neither speeds that up nor tells anyone anything; it only fills the
+// bridge's log and this machine's. Jittered so a room full of machines waiting
+// on the same operator does not arrive in step.
+const NOT_ADMITTED_MS = 5 * 60_000
+// Under the admissions service's own 30-minute request lifetime, so a request
+// nobody answered is renewed rather than left to lapse into silence — and far
+// enough above it that a waiting operator is not mailed about the same machine
+// twice in one sitting. The service also refuses a duplicate on its own side.
+const ADMISSION_ASK_EVERY_MS = 25 * 60_000
+const jitter = (ms) => Math.round(ms * (0.85 + Math.random() * 0.3))
 const REQUEST_TIMEOUT_MS = 20_000
+
+/**
+ * What kind of refusal this was, without reading English.
+ *
+ * The bridge names its own refusals — a header, and a `code` beside the
+ * sentence it shows a person. A 403 that never reached the bridge has neither:
+ * Cloudflare's bot check answers HTML, sometimes with `cf-mitigated`. The two
+ * need opposite responses — one is "ask a human to admit this machine", the
+ * other is "this client is being refused at the door" — so they must not be
+ * told apart by matching on a sentence that is free to be reworded.
+ *
+ * The sentence is still consulted, last, so a bridge older than this build is
+ * not classified as a Cloudflare block.
+ */
+function errorCode(resp, data) {
+  const named = resp.headers.get('x-kvasir-error')
+  if (named) return named
+  if (data && typeof data.code === 'string' && data.code) return data.code
+  if (resp.status === 403) {
+    if (resp.headers.get('cf-mitigated') || !data) return 'forbidden'
+    if (typeof data.error === 'string' && /not (admitted|allowed)/i.test(data.error)) return 'not_admitted'
+    return 'forbidden'
+  }
+  return ''
+}
 
 class ParticipationError extends Error {
   constructor(message, { status = 0, code = '' } = {}) {
@@ -67,7 +103,7 @@ class ParticipationError extends Error {
  * @param {(line:string)=>void} [opts.log]
  */
 class Participation {
-  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null, platform = null }) {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null, platform = null, admissionsUrl = '', profile = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.walletFn = wallet
     // Same identity the settlement side already uses for this machine
@@ -87,6 +123,8 @@ class Participation {
     this.timer = null
     this.running = false
     this.lastError = null
+    /** null until the bridge has an opinion; 'pending' once it has refused us. */
+    this.admission = null
     // What turns an assignment into something held (expertHost.cjs). Without
     // one this machine volunteers and reports nothing, which is the truth.
     this.host = host
@@ -95,6 +133,10 @@ class Participation {
     // instead of assuming. Without it a relay-credited desktop or server was
     // recorded as a phone.
     this.platformFn = typeof platform === 'function' ? platform : () => platform
+    this.admissionsBase = String(admissionsUrl || '').replace(/\/+$/, '')
+    this.profileFn = typeof profile === 'function' ? profile : () => profile
+    /** When we last put this machine in front of the operator. */
+    this.admissionRequestedAt = 0
   }
 
   // ---- token ---------------------------------------------------------------
@@ -158,6 +200,44 @@ class Participation {
     if (this.store) this.store.save({ token, expiresAt: this.tokenExpiresAt, wallet })
     this.log(`bridge: node token minted (${ttl ? Math.round(ttl / 86400) + 'd' : 'no stated expiry'})`)
     return token
+  }
+
+  /**
+   * Put this machine in front of whoever admits machines.
+   *
+   * The app holds the wallet and no shared secret — one shipped inside a build
+   * is not a secret — so it proves itself the same way it proves itself to the
+   * bridge: ask for a challenge, sign it, send the signature. What comes back
+   * is not admission. It is a mail in somebody's inbox.
+   *
+   * Failing here is not worth surfacing as the reason the node is not running:
+   * the reason is that nobody has admitted it yet, and that stays true whether
+   * or not the asking got through.
+   */
+  async requestAdmission() {
+    if (!this.admissionsBase) return false
+    if (Date.now() - this.admissionRequestedAt < ADMISSION_ASK_EVERY_MS) return false
+    const wallet = String(this.walletFn() || '')
+    if (!wallet) return false
+
+    // Claim the slot before the await: two ticks overlapping must not send two.
+    this.admissionRequestedAt = Date.now()
+    try {
+      const ch = await this.postTo(this.admissionsBase, '/requests/challenge', { wallet })
+      if (!ch || !ch.message || !ch.nonce) throw new ParticipationError('no challenge from admissions')
+      const signature = Buffer.from(this.signFn(Buffer.from(ch.message, 'utf8'))).toString('base64')
+      const profile = this.profileFn() || {}
+      const resp = await this.postTo(this.admissionsBase, '/requests',
+        { wallet, nonce: ch.nonce, signature, profile })
+      this.log(resp && resp.reused
+        ? 'admissions: this machine is already waiting for an answer'
+        : 'admissions: asked for this machine to be admitted')
+      return true
+    } catch (e) {
+      // Try again at the next backoff rather than at the next tick.
+      this.log(`admissions: could not ask — ${e.message}`)
+      return false
+    }
   }
 
   async ensureToken() {
@@ -309,6 +389,7 @@ class Participation {
   async tickOnce() {
       if (!this.running) return
       let failed = true
+      let notAdmitted = false
       try {
         if (this.host && typeof this.host.reports === 'function') {
           await this.tickPool(this.host)
@@ -351,16 +432,28 @@ class Participation {
         })
         if (url && resp && resp.wired && typeof host.wired === 'function') host.wired()
         this.lastError = null
+        this.admission = 'admitted'
         failed = false
       } catch (e) {
         this.lastError = e.message
+        notAdmitted = e.code === 'not_admitted'
+        if (notAdmitted) {
+          this.admission = 'pending'
+          // Asking is the only thing that can change this, and nobody else on
+          // this machine is going to do it.
+          await this.requestAdmission().catch(() => {})
+        }
         // A locked wallet is the expected state after a restart, not a fault.
+        // Neither is waiting to be admitted: both are someone else's turn.
         this.log(e.code === 'wallet_locked'
           ? 'bridge: waiting for the wallet to be unlocked'
-          : `bridge: ${e.message}`)
+          : notAdmitted
+            ? 'bridge: this machine has not been admitted to the ring yet'
+            : `bridge: ${e.message}`)
       }
       if (this.running) {
-        this.timer = setTimeout(() => this.tick(), failed ? RETRY_MS : this.pollMs)
+        const wait = notAdmitted ? jitter(NOT_ADMITTED_MS) : failed ? RETRY_MS : this.pollMs
+        this.timer = setTimeout(() => this.tick(), wait)
       }
   }
 
@@ -447,8 +540,11 @@ class Participation {
     }
     return {
       running: this.running,
-      phase,
+      phase: this.admission === 'pending' && !hasToken ? 'awaiting_admission' : phase,
       hasToken,
+      // What the node screen needs to tell "we are working on it" apart from
+      // "someone has to let you in": only the second has an action attached.
+      admission: this.admission,
       // True once the signature is done: later restarts reuse the 30-day
       // token, so the wallet only has to be unlocked for the first one.
       workerId: this.workerIdFn(),
@@ -462,9 +558,13 @@ class Participation {
 
   post(path, body, token = null) { return this.request('POST', path, body, token) }
   get(path, token = null) { return this.request('GET', path, null, token) }
+  /** Same transport, a different service. Admissions is not the bridge, and
+   *  giving it its own base keeps one from being reachable through the other's
+   *  configuration by accident. */
+  postTo(base, path, body) { return this.request('POST', path, body, null, base) }
 
-  async request(method, path, body, token) {
-    const url = this.base + path
+  async request(method, path, body, token, base = null) {
+    const url = (base || this.base) + path
     // Cloudflare fronts the gateway, and its Browser Integrity Check answers a
     // client it classes as a bot with a bare 403 ("error code: 1010") that is
     // indistinguishable from an auth failure. Python's default agent is refused
@@ -497,7 +597,7 @@ class Participation {
 
     if (!resp.ok) {
       const msg = (data && (data.error || (data.error && data.error.message))) || text || `HTTP ${resp.status}`
-      throw new ParticipationError(String(msg).slice(0, 300), { status: resp.status })
+      throw new ParticipationError(String(msg).slice(0, 300), { status: resp.status, code: errorCode(resp, data) })
     }
     return data
   }

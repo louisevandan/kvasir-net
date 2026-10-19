@@ -59,10 +59,10 @@ const MODEL = {
   expertLayers: [1, 2, 3],
 };
 
-function startBridge({ shard = null } = {}) {
+function startBridge({ shard = null, eligible = null } = {}) {
   const credited = [];
   const participation = new Participation({
-    auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret' }),
+    auth: new NodeAuth({ secret: 'test-secret', serviceToken: 'svc-secret', eligible }),
     credit: (nodeId, units, meta) => credited.push({ nodeId, units, ...meta }),
     models: () => [MODEL],
     shard,
@@ -135,6 +135,80 @@ test('a phone earns a node token from a wallet signature alone', async (t) => {
   assert.ok(token.body.node_token);
   assert.equal(token.body.wallet, wallet.address);
   assert.ok(token.body.expires_in > 0);
+});
+
+test('a wallet the operator did not list gets no node token', async (t) => {
+  const listed = makeWallet();
+  const stranger = makeWallet();
+  const { server, participation } = startBridge({
+    eligible: async (wallet) => wallet === listed.address,
+  });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+
+  const token = async (w) => {
+    const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: w.address } });
+    if (challenge.status !== 200) return challenge;
+    return call(port, 'POST', '/api/auth/node-token', {
+      body: { wallet: w.address, nonce: challenge.body.nonce, signature: w.sign(challenge.body.message) },
+    });
+  };
+
+  const allowed = await token(listed);
+  assert.equal(allowed.status, 200);
+  assert.ok(allowed.body.node_token);
+
+  // Refused for who it is, not for how it signed — the signature above and the
+  // signature below are equally valid, and that is the whole point of the gate.
+  const refused = await token(stranger);
+  assert.notEqual(refused.status, 200);
+  assert.equal(refused.body.node_token, undefined);
+});
+
+test('taking a wallet off the list stops the token it already holds', async (t) => {
+  let admitted = true;
+  const { server, participation } = startBridge({ eligible: async () => admitted });
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+  const w = makeWallet();
+
+  const challenge = await call(port, 'POST', '/api/auth/challenge', { body: { wallet: w.address } });
+  const minted = await call(port, 'POST', '/api/auth/node-token', {
+    body: { wallet: w.address, nonce: challenge.body.nonce, signature: w.sign(challenge.body.message) },
+  });
+  const token = minted.body.node_token;
+  assert.equal((await call(port, 'GET', '/api/expert-demand', { token })).status, 200);
+
+  // The operator removes the wallet. A thirty-day token that kept working
+  // until it expired would make the removal a thing nobody could rely on.
+  admitted = false;
+  const after = await call(port, 'GET', '/api/expert-demand', { token });
+  assert.equal(after.status, 403);
+  assert.equal(after.headers['x-kvasir-error'], 'not_admitted');
+});
+
+test('the wrong method on an open path says so, instead of demanding a token', async (t) => {
+  const { server, participation } = startBridge();
+  const port = await listen(server);
+  t.after(() => { server.close(); participation.stop(); });
+
+  // /api/auth/challenge is how a stranger with no token at all starts. Answering
+  // a GET with 401 "service token required" — which is what falling through to
+  // the blanket gate did — tells that stranger the endpoint is not for them.
+  const wrong = await call(port, 'GET', '/api/auth/challenge');
+  assert.equal(wrong.status, 405);
+  assert.equal(wrong.headers.allow, 'POST');
+  assert.match(wrong.body.error, /takes POST/);
+
+  // The market is the other direction: a GET route asked for with POST.
+  const market = await call(port, 'POST', '/api/expert-demand', { body: {} });
+  assert.equal(market.status, 405);
+  assert.equal(market.headers.allow, 'GET');
+
+  // A path this module does not own must fall through untouched — the new
+  // branch answers for the participation surface, and claims nothing else.
+  const foreign = await call(port, 'GET', '/api/controllers');
+  assert.notEqual(foreign.status, 405);
 });
 
 test('a challenge is single use and a foreign signature is refused', async (t) => {
@@ -468,7 +542,12 @@ test('the relay carries bytes both ways and credits the dialing wallet', async (
     socket.on('data', (chunk) => socket.write(Buffer.concat([Buffer.from('echo:'), chunk])));
   });
   const upstreamPort = await listen(upstream);
-  t.after(() => { upstream.close(); server.close(); participation.stop(); });
+  // The client socket too. server.close() stops accepting; it does not hang up
+  // on a connection that is already established, so without this the relay
+  // socket keeps the event loop alive and the whole FILE never exits -- while
+  // every test in it passes. Found by GB10 #1, 2026-09-25.
+  let client;
+  t.after(() => { client?.destroy(); upstream.close(); server.close(); participation.stop(); });
 
   await call(port, 'POST', '/api/expert-coverage', {
     token,
@@ -482,7 +561,7 @@ test('the relay carries bytes both ways and credits the dialing wallet', async (
 
   const reply = await new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString('base64');
-    const socket = net.connect(port, '127.0.0.1', () => {
+    const socket = client = net.connect(port, '127.0.0.1', () => {
       socket.write(
         `GET /api/expert-relay?session=expert-phone-2&token=${encodeURIComponent(token)} HTTP/1.1\r\n`
         + 'Host: test.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'

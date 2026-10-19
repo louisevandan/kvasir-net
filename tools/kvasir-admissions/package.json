@@ -1,0 +1,13 @@
+{
+  "name": "kvasir-admissions",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ask a person whether a machine may join the ring, then tell the ring.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/"
+  },
+  "engines": { "node": ">=20" }
+}

@@ -24,6 +24,8 @@
  */
 const http = require('node:http');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { connect } = require('./wire');
 const { Pipeline } = require('./pipeline');
 const catalogModule = require('./catalog');
@@ -37,6 +39,36 @@ const UNITS_PER_ROW = Number(process.env.P4_BRIDGE_UNITS_PER_KTOKEN ?? 1) / 1000
 // a private deployment; set it and every path but /health needs the header.
 const SERVICE_TOKEN = (process.env.P4_BRIDGE_TOKEN ?? '').trim();
 const HEADERS = ['x-kvasir-service-token'];
+
+// How far the bridge is allowed to go in spending an agent's connection slots.
+// See admitDial(). The defaults assume the observed steady state, where a
+// healthy ring opens no new connections at all: 20 h of normal traffic cost 0.
+const DIAL_TIMEOUT_MS = Number(process.env.P4_BRIDGE_DIAL_TIMEOUT_MS ?? 10_000);
+const DIAL_HOURLY_CAP = Number(process.env.P4_BRIDGE_DIAL_HOURLY_CAP ?? 6);
+const DIAL_LIFETIME_CAP = Number(process.env.P4_BRIDGE_DIAL_LIFETIME_CAP ?? 64);
+const DIAL_BACKOFF_MS = [60_000, 120_000, 240_000, 480_000, 900_000, 1_800_000];
+const DIAL_STEADY_MS = 300_000;
+
+// Shutdown. The unit gives SIGTERM 90 s before SIGKILL, but a FINISH to a live
+// agent is answered in milliseconds -- the only thing that can make it slow is
+// output still queued on that connection, and a request in flight when the
+// bridge is stopping dies with the bridge either way. So the budget is small.
+const FINISH_MS = Number(process.env.P4_BRIDGE_FINISH_MS ?? 3_000);
+const SHUTDOWN_MS = Number(process.env.P4_BRIDGE_SHUTDOWN_MS ?? 5_000);
+// How long to leave a failing agent alone before probing it again.
+//
+// Capped low on purpose. The first version of this went to 300 s, on the theory
+// that it would save journal writes and spare a wedged agent's inbox. Both
+// reasons turned out to be weak: GB10 #1 read the agent source and the inbox
+// bound is 65,536, about eleven days at this cadence, and the journal's ~100 MB
+// a day comes from the HEALTHY path -- four INSPECTs a minute to agents that
+// answer -- not from the rare failing one. What the long backoff did buy was
+// real: an agent that recovered quietly waited up to five minutes to be noticed,
+// because its snapshot stays deleted until a probe succeeds, and the model
+// spanning it reads serving:false the whole time. One minute is the trade that
+// still keeps a wedged agent from being hammered without holding the ring out
+// of service to save writes nobody was short of.
+const INSPECT_BACKOFF_MS = [30_000, 60_000];
 
 /** The expert-shard reader: see shard-server.py. Loopback by default. */
 const SHARD_ORIGIN = (process.env.P4_SHARD_URL ?? 'http://127.0.0.1:42300').replace(/\/+$/, '');
@@ -68,8 +100,50 @@ class Bridge {
     this.pipelines = new Map();       // model id -> Pipeline
     this.contributions = new Map();   // node id -> {units, rows, requests, agent}
     this.clients = new Map();         // agent address -> OUTER client
+    this.connecting = new Map();      // agent address -> in-flight dial promise
+    this.inspecting = new Map();      // agent address -> in-flight INSPECT promise
+    this.probe = new Map();           // agent address -> {failures, nextAt}
+    this.guards = new Map();          // agent address -> see guardFor()
     this.lastInspectError = null;
+    this.stopping = false;
     this.startedAt = Date.now();
+  }
+
+  /** The guard state, in the shape an operator reads it: /api/runtime. */
+  dialLedger() {
+    return [...this.guards.entries()].map(([agent, guard]) => ({
+      agent,
+      slots_spent: guard.spent,
+      unproductive_dials: guard.unproductive,
+      dials_last_hour: guard.recent.filter((at) => Date.now() - at < 3_600_000).length,
+      next_dial_in_s: guard.nextDialAt > Date.now() ? Math.ceil((guard.nextDialAt - Date.now()) / 1000) : 0,
+      failed_probes: this.probe.get(agent)?.failures ?? 0,
+      next_probe_in_s: (() => { const p = this.probe.get(agent); return p && p.nextAt > Date.now() ? Math.ceil((p.nextAt - Date.now()) / 1000) : 0; })(),
+      connected: Boolean(this.clients.get(agent) && !this.clients.get(agent).closed),
+      stopped: guard.stoppedWhy,
+    }));
+  }
+
+  /**
+   * What this bridge has spent of one agent's connection slots, and whether it
+   * is still allowed to spend more.
+   *
+   *   spent        slots taken from this agent since the bridge started. Never
+   *                refunded: a successful connect does not give the previous
+   *                one back.
+   *   unproductive consecutive dials that bought nothing -- the dial failed, or
+   *                the connection it opened never served STEADY_MS of INSPECTs.
+   *                Drives the backoff, and resets when a connection does earn
+   *                its slot.
+   *   recent       timestamps of dials inside the last hour.
+   */
+  guardFor(agent) {
+    let guard = this.guards.get(agent);
+    if (!guard) {
+      guard = { spent: 0, unproductive: 0, recent: [], nextDialAt: 0, healthySince: 0, stoppedWhy: null };
+      this.guards.set(agent, guard);
+    }
+    return guard;
   }
 
   /**
@@ -82,13 +156,146 @@ class Bridge {
     const agent = agentAddress ?? this.catalog.ingressAgent;
     const existing = this.clients.get(agent);
     if (existing && !existing.closed) return existing;
+
+    // One dial per agent at a time. The refresh timer fires every 15 s whether
+    // or not the last refresh finished (see the bottom of this file), and a
+    // client is only recorded once connect() resolves -- so without this, a
+    // dial that is merely slow collects a fresh companion every 15 s, and each
+    // one the agent accepts is a slot gone for good. pipelineFor() dials too,
+    // so the guard lives here rather than in refresh().
+    const inflight = this.connecting.get(agent);
+    if (inflight) return inflight;
+
+    this.admitDial(agent);
+    const promise = this.dial(agent)
+      .then((client) => {
+        this.clients.set(agent, client);
+        // Sessions do not survive a new connection, but only the pipelines that
+        // actually run on this agent are affected.
+        for (const model of this.catalog.models) {
+          if (model.stages.some((stage) => stage.agent === agent)) this.pipelines.delete(model.id);
+        }
+        const guard = this.guardFor(agent);
+        guard.healthySince = 0;
+        return client;
+      })
+      .catch((error) => { this.noteUnproductive(agent); throw error; })
+      .finally(() => { this.connecting.delete(agent); });
+    this.connecting.set(agent, promise);
+    return promise;
+  }
+
+  /**
+   * Three limits, because a connection slot is a consumable.
+   *
+   * An agent never reclaims the slot of a connection whose owner went away
+   * (transport.rs:900-902, Semaphore(256) at mod.rs:48). Anything that dials on
+   * a timer is therefore a leak with a clock on it, and backoff alone only
+   * slows the clock: retrying every 30 minutes still costs 48 slots a day.
+   *
+   *   backoff     spaces out consecutive dials that bought nothing.
+   *   hourly cap  bounds a connection that flaps -- opens, serves a while, dies
+   *              -- which backoff never sees, because each dial succeeded.
+   *   lifetime    stops dialling altogether. An agent that has taken a quarter
+   *               of its slots from this bridge and given nothing lasting back
+   *               will not be fixed by one more; at that point a person should
+   *               look. Nothing clears this but a bridge restart or an operator,
+   *               because no field in the INSPECT snapshot identifies an agent
+   *               PROCESS generation -- node generations are a different thing
+   *               (catalog.js:43) -- so the bridge cannot tell on its own that
+   *               the agent restarted and the slots came back.
+   */
+  admitDial(agent) {
+    if (this.stopping) throw new Error(`${agent}: the bridge is shutting down`);
+    const guard = this.guardFor(agent);
+    const now = Date.now();
+    guard.recent = guard.recent.filter((at) => now - at < 3_600_000);
+
+    if (guard.spent >= DIAL_LIFETIME_CAP) {
+      guard.stoppedWhy = `spent ${guard.spent} of this agent's connection slots; not dialling again without an operator`;
+      throw new Error(`${agent}: ${guard.stoppedWhy}`);
+    }
+    if (guard.recent.length >= DIAL_HOURLY_CAP) {
+      throw new Error(`${agent}: ${guard.recent.length} dials in the last hour, cap is ${DIAL_HOURLY_CAP}`);
+    }
+    if (now < guard.nextDialAt) {
+      throw new Error(`${agent}: ${guard.unproductive} unproductive dials, waiting ${Math.ceil((guard.nextDialAt - now) / 1000)} s`);
+    }
+
+    // Spent before the dial, never after. A connect this side gives up on may
+    // already have been accepted on the other, and that slot is gone either way.
+    guard.spent += 1;
+    guard.recent.push(now);
+    guard.stoppedWhy = null;
+  }
+
+  noteUnproductive(agent) {
+    const guard = this.guardFor(agent);
+    guard.unproductive += 1;
+    guard.healthySince = 0;
+    guard.nextDialAt = Date.now() + DIAL_BACKOFF_MS[Math.min(guard.unproductive - 1, DIAL_BACKOFF_MS.length - 1)];
+  }
+
+  /**
+   * A connection earns its slot by serving INSPECTs for STEADY_MS, not by
+   * answering one. A node that recovers for thirty seconds and falls over again
+   * would otherwise walk straight back into the fast end of the backoff.
+   */
+  noteSteady(agent) {
+    const guard = this.guardFor(agent);
+    if (!guard.healthySince) { guard.healthySince = Date.now(); return; }
+    if (guard.unproductive && Date.now() - guard.healthySince >= DIAL_STEADY_MS) {
+      guard.unproductive = 0;
+      guard.nextDialAt = 0;
+    }
+  }
+
+  /**
+   * Hand the connections back instead of dropping them on the floor.
+   *
+   * An agent releases a connection's slot when the owner sends FINISH -- a
+   * zero-length frame -- because that is what removes the return route and lets
+   * the writer task, which holds the semaphore permit, finish
+   * (transport.rs:997-1006 -> :480-487). A socket that simply dies is a
+   * different thing: the agent sees EOF, keeps the route on purpose in case it
+   * is a TCP half-close (:1076-1078), and the permit is held for good.
+   *
+   * The bridge had no signal handler at all, so every restart abandoned one
+   * live connection per agent that way. That is the +1 the gauge recorded after
+   * each of the last two restarts. wire.js has had finish() since the start;
+   * nothing ever called it.
+   *
+   * An agent that cannot answer still costs its slot -- there is no way to
+   * return a permit to a process that is not listening -- but that agent is
+   * already in trouble. The point is to stop paying on the healthy path.
+   */
+  async releaseClients(finishMs = FINISH_MS) {
+    this.stopping = true;
+    const entries = [...this.clients.entries()];
+    const outcome = await Promise.all(entries.map(async ([agent, client]) => {
+      if (!client || client.closed) return `${agent}: already gone`;
+      try {
+        await client.finish(finishMs);
+        return `${agent}: finished`;
+      } catch (error) {
+        client.close?.();                 // costs this agent a slot; nothing else to try
+        return `${agent}: destroyed (${error.message})`;
+      }
+    }));
+    this.clients.clear();
+    this.pipelines.clear();
+    return outcome;
+  }
+
+  async dial(agent) {
     const [host, port] = agent.replace(/^tcp:\/\//, '').split(':');
-    const client = await connect({
+    return connect({
       host,
       port: Number(port),
       address: agent,
       channel: `kvr-bridge-${crypto.randomBytes(6).toString('hex')}`,
       deadlineMs: 300_000,
+      connectTimeoutMs: DIAL_TIMEOUT_MS,
       // Direct ingress, not the receipt-framed hop transport. The agent writes
       // an admission record only for events that arrive directly
       // (transport.rs:1022); hop-framed events get an inbound record instead
@@ -97,33 +304,103 @@ class Bridge {
       // before any work is done. Set P4_BRIDGE_HOP=1 to go back.
       hop: process.env.P4_BRIDGE_HOP === '1',
     });
-    this.clients.set(agent, client);
-    this.pipelines.clear();           // sessions do not survive a new connection
-    return client;
   }
 
-  /** Drop every connection; the next refresh rebuilds them. */
-  resetClients() {
-    for (const client of this.clients.values()) client.close?.();
-    this.clients.clear();
-    this.pipelines.clear();
-  }
-
-  async refresh() {
-    try {
-      for (const agent of catalogModule.agents(this.catalog)) {
-        const client = await this.ensureClient(agent);
-        this.snapshots.set(agent, await client.inspect(agent, { timeoutMs: 10_000 }));
-      }
-      for (const model of this.catalog.models) {
-        this.serving.set(model.id, await catalogModule.verify(model, this.snapshots));
-      }
-      this.lastInspectError = null;
-    } catch (error) {
-      this.lastInspectError = error.message;
-      for (const model of this.catalog.models) this.serving.set(model.id, { serving: false, stages: [] });
-      this.resetClients();
+  /**
+   * Drop one agent's connection, and only the pipelines that span it.
+   *
+   * An agent never reclaims a connection slot whose owner went away
+   * (transport.rs:900-902, Semaphore(256) at mod.rs:48), so every reconnect
+   * costs that agent a slot for good. Dropping a healthy agent because a
+   * different one is unreachable therefore spends the healthy agent's slots at
+   * the refresh cadence: 15 s apart, 256 gone in about an hour. That is how
+   * GB10 #1's agent died on 2026-09-23 while #2 was the machine that had
+   * failed -- #1 kept accepting, so #1 kept paying.
+   */
+  dropClient(agent) {
+    this.clients.get(agent)?.close?.();
+    this.clients.delete(agent);
+    this.snapshots.delete(agent);
+    // Sessions do not survive the connection they were opened on, but only the
+    // pipelines that actually touch this agent are affected.
+    for (const model of this.catalog.models) {
+      if (model.stages.some((stage) => stage.agent === agent)) this.pipelines.delete(model.id);
     }
+  }
+
+  /**
+   * An INSPECT that times out is not a dead connection.
+   *
+   * exchange() rejects on a timer of its own and deletes the waiter
+   * (wire.js:433-447); the socket is never touched, and a reply that arrives
+   * afterwards finds no waiter and falls through to the listeners
+   * (wire.js:_deliver). Correlation ids are per-event, so a late reply cannot
+   * be mistaken for the next one. Closing such a connection was pure loss: the
+   * slot is spent for good and the reconnect spends another, every 15 s, for as
+   * long as the agent is merely slow.
+   *
+   * So the two questions are answered separately. The SNAPSHOT is stale either
+   * way -- it is dropped, and verify() reads a missing snapshot as a stage it
+   * could not find, so a model that spans this agent comes out serving:false.
+   * The CONNECTION is dropped only when it is actually gone.
+   */
+  async refresh() {
+    const failures = [];
+    for (const agent of catalogModule.agents(this.catalog)) {
+      // One probe in flight per agent. The refresh timer does not wait for the
+      // last refresh to finish, so without this an agent that is slow to answer
+      // collects a second INSPECT while the first is still out.
+      if (this.inspecting.has(agent)) continue;
+      // And an agent that has stopped answering is left alone for a while.
+      // Keeping the connection through a timeout costs no slot (see below), but
+      // the REQUEST is still outstanding on the agent: its receive loop is what
+      // returns receipts (transport.rs:1157-1215), so a process that is wedged
+      // returns none, and send() does not check outstanding against the agreed
+      // maxOutstanding (wire.js:417-422). Probing a wedged agent every 15 s
+      // fills its 256-deep store in about an hour; when it wakes, the overflow
+      // comes back as `hop receipt store full` and takes the connection with
+      // it. Found by GB10 #1 in the agent source, 2026-09-25.
+      const probe = this.probe.get(agent);
+      if (probe && Date.now() < probe.nextAt) continue;
+      try {
+        const client = await this.ensureClient(agent);
+        // Re-check: ensureClient yields even when the client is already open,
+        // so two refreshes both pass the test above before either sets the map.
+        // There is no await between here and the set, so this window closes it.
+        if (this.inspecting.has(agent)) continue;
+        const pending = client.inspect(agent, { timeoutMs: 10_000 });
+        this.inspecting.set(agent, pending);
+        try {
+          this.snapshots.set(agent, await pending);
+        } finally {
+          this.inspecting.delete(agent);
+        }
+        this.probe.delete(agent);
+        this.noteSteady(agent);
+      } catch (error) {
+        const seen = this.probe.get(agent) ?? { failures: 0, nextAt: 0 };
+        seen.failures += 1;
+        seen.nextAt = Date.now() + INSPECT_BACKOFF_MS[Math.min(seen.failures - 1, INSPECT_BACKOFF_MS.length - 1)];
+        this.probe.set(agent, seen);
+        failures.push(`${agent}: ${error.message}`);
+        const guard = this.guardFor(agent);
+        guard.healthySince = 0;
+        this.snapshots.delete(agent);
+        for (const model of this.catalog.models) {
+          if (model.stages.some((stage) => stage.agent === agent)) this.pipelines.delete(model.id);
+        }
+        const client = this.clients.get(agent);
+        if (client && !client.closed) continue;   // slow, not dead: keep the slot
+        this.dropClient(agent);
+      }
+    }
+    // verify() reads a missing snapshot as a stage it could not find, so a model
+    // that spans the failed agent still comes out serving:false -- without
+    // taking the models that do not span it out of service too.
+    for (const model of this.catalog.models) {
+      this.serving.set(model.id, await catalogModule.verify(model, this.snapshots));
+    }
+    this.lastInspectError = failures.length ? failures.join('; ') : null;
   }
 
   async pipelineFor(model) {
@@ -329,6 +606,16 @@ function createServer(bridge) {
           engine: 'p4',
           serving_models: serving,
           inspect_error: bridge.lastInspectError,
+          // Slots held by failures the host gauge cannot see. Upper bound.
+          transport_failures: [...bridge.snapshots.entries()]
+            .map(([agent, snap]) => [agent, snap?.transport?.failures?.count ?? null])
+            .filter(([, count]) => count),
+          dials_stopped: bridge.dialLedger().filter((row) => row.stopped).map((row) => row.agent),
+          // Why an agent is quiet right now. Without this an operator watching a
+          // model sit at serving:false has no way to tell a dead agent from one
+          // the bridge is deliberately not probing for another few seconds.
+          awaiting_probe: bridge.dialLedger().filter((row) => row.next_probe_in_s)
+            .map((row) => ({ agent: row.agent, in_s: row.next_probe_in_s, failed: row.failed_probes })),
           uptime_ms: Date.now() - bridge.startedAt,
         });
       }
@@ -340,6 +627,21 @@ function createServer(bridge) {
       if (req.method === 'GET' && path === '/api/runtime') {
         const machines = [...bridge.snapshots.entries()].map(([agent, snapshot]) => ({
           agent,
+          // The gauge on each host reads CLOSE-WAIT, which sees only the slots
+          // held by a kept return route. A write or ingress failure holds its
+          // slot too and closes the socket, so it is invisible there and shows
+          // up only here. failures.count is an upper bound: Undelivered
+          // failures carry no slot and cannot be told apart by state
+          // (transport.rs:326-345, :818-835). Free to report -- the bridge
+          // already has this snapshot and reads it over the connection it
+          // keeps, so no new connection is opened to collect it.
+          transport: {
+            failures: snapshot?.transport?.failures?.count ?? null,
+            failures_oldest_unix_ms: snapshot?.transport?.failures?.oldest_unix_ms ?? null,
+            receipts_pending: snapshot?.transport?.receipts?.pending ?? null,
+            receipts_records: snapshot?.transport?.receipts?.records ?? null,
+            outstanding_events: snapshot?.transport?.outstanding?.events ?? null,
+          },
           gpus: snapshot?.machine?.capability?.gpus?.map((gpu) => ({
             name: gpu.name, backend: gpu.backend, memory_total_bytes: gpu.memory_total_bytes,
           })) ?? [],
@@ -353,6 +655,7 @@ function createServer(bridge) {
           ingress_agent: bridge.catalog.ingressAgent,
           machines,
           inspect_error: bridge.lastInspectError,
+          dial_ledger: bridge.dialLedger(),
         });
       }
 
@@ -394,6 +697,26 @@ function createServer(bridge) {
           return await chatCompletions(bridge, model, req, res);
         }
         return send(res, 404, { error: { message: `unsupported controller path ${rest}` } });
+      }
+
+      // Admit a wallet to the ring. Behind the service-token gate above on
+      // purpose: the caller is the admissions service, not a contributor, and
+      // what it presents is the machine-to-machine secret rather than a wallet
+      // signature. Adding is all it can do — removing one is an operator's job
+      // at the file, where the record of who admitted whom is also kept.
+      if (req.method === 'POST' && path === '/api/admissions') {
+        let body = {};
+        try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+        catch { return send(res, 400, { error: 'request body is not JSON' }); }
+        const wallet = String(body.wallet ?? '').trim();
+        if (!wallet) return send(res, 400, { error: 'wallet required' });
+        try {
+          const added = admitWallet(wallet, String(body.by ?? '').trim() || 'admissions');
+          console.log(`participation: ${added ? 'admitted' : 'already admitted'} ${wallet}`);
+          return send(res, 200, { ok: true, wallet, added });
+        } catch (e) {
+          return send(res, 500, { error: `could not record the admission: ${e.message}` });
+        }
       }
 
       if (req.method === 'POST' && /^\/api\/controllers\/[^/]+\/(serve|unload)$/.test(path)) {
@@ -529,21 +852,111 @@ async function main() {
   });
   await bridge.refresh();
 
+/**
+ * The wallets an operator has admitted, kept where they survive a restart.
+ *
+ * A whitelist that lives only in the environment can be read but not written,
+ * so admitting one machine means editing a unit file and restarting the bridge
+ * — which drops the ring to let a single phone in. The file is the part that
+ * grows at runtime; the environment stays as the bootstrap list.
+ */
+const ADMITTED_FILE = process.env.KVR_PARTICIPATION_LIST_FILE
+  ?? path.join(__dirname, 'state', 'participation-admitted.json');
+
+let admittedCache = { at: 0, wallets: new Set() };
+
+/** Re-read when the file changed. Called on every token request, so it must not
+ *  parse the file each time, and must not serve a stale list after an admission. */
+function admittedWallets() {
+  let stamp = 0;
+  try { stamp = fs.statSync(ADMITTED_FILE).mtimeMs; } catch { return admittedCache.wallets; }
+  if (stamp === admittedCache.at) return admittedCache.wallets;
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMITTED_FILE, 'utf8'));
+    const list = Array.isArray(raw) ? raw : (raw.wallets ?? []);
+    admittedCache = { at: stamp, wallets: new Set(list.map((w) => String(w.wallet ?? w).trim()).filter(Boolean)) };
+  } catch (e) {
+    // A file we cannot read is not an empty list. Keeping the last good set
+    // fails closed for anyone new and leaves everyone already admitted working,
+    // which is the gentler of the two wrong answers.
+    console.error(`participation: ${ADMITTED_FILE} unreadable (${e.message}); keeping the last list`);
+  }
+  return admittedCache.wallets;
+}
+
+/** Admit a wallet. Returns false when it was already on the list. */
+function admitWallet(wallet, by) {
+  const w = String(wallet ?? '').trim();
+  if (!w) throw new Error('wallet required');
+  let entries = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(ADMITTED_FILE, 'utf8'));
+    entries = Array.isArray(raw) ? raw : (raw.wallets ?? []);
+  } catch { /* first admission writes the file */ }
+  if (entries.some((e) => String(e.wallet ?? e).trim() === w)) return false;
+  entries.push({ wallet: w, by: by || 'unknown', at: new Date().toISOString() });
+  fs.mkdirSync(path.dirname(ADMITTED_FILE), { recursive: true });
+  const tmp = `${ADMITTED_FILE}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, ADMITTED_FILE);
+  admittedCache = { at: 0, wallets: new Set() };   // force a re-read
+  return true;
+}
+
+/**
+ * Who may take a node token, as the environment and the admitted list describe.
+ *
+ * Returns null for "anyone", which is what NodeAuth reads as no policy at all.
+ *
+ * Restriction is switched on deliberately — by KVR_PARTICIPATION_RESTRICTED, or
+ * by naming a bootstrap list — and never by the act of admitting someone. An
+ * approval that silently closed the network to everyone else would be a strange
+ * thing for an approval to do.
+ *
+ * KVR_PARTICIPATION_MIN_KVR was written as a balance floor and never became
+ * one: nothing here can see a wallet's balance — the bridge holds no RPC client
+ * and no view of the ledger — so any value above zero turned into
+ * `async () => false` and refused every node on the network. It still refuses,
+ * because failing closed is right for a gate nobody can evaluate, but it now
+ * says why at startup instead of looking like a policy that works.
+ */
+function participationPolicy() {
+  const bootstrap = (process.env.KVR_PARTICIPATION_WHITELIST ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const restricted = /^(1|true|yes)$/i.test(process.env.KVR_PARTICIPATION_RESTRICTED ?? '')
+    || bootstrap.length > 0;
+  const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
+
+  if (minKvr > 0) {
+    console.warn('participation: KVR_PARTICIPATION_MIN_KVR is set and a balance'
+      + ' floor is not implemented here — this bridge cannot read a wallet balance.'
+      + ' Every node token request will be refused. Name who may join with'
+      + ' KVR_PARTICIPATION_RESTRICTED and the admissions list instead.');
+    return async () => false;
+  }
+  if (!restricted) {
+    console.log('participation: open — any wallet that proves a key may join');
+    return null;
+  }
+  const seeded = new Set(bootstrap);
+  console.log(`participation: restricted — ${seeded.size} bootstrapped, admissions in ${ADMITTED_FILE}`);
+  return async (wallet) => seeded.has(wallet) || admittedWallets().has(wallet);
+}
+
   // Participation is optional: without a token secret a node token could not
   // outlive a restart, and a fleet of phones silently dropping off is worse
   // than a surface that is plainly absent. Say which it is at startup.
   const tokenSecret = (process.env.KVR_NODE_TOKEN_SECRET ?? '').trim();
   if (tokenSecret) {
-    const minKvr = Number(process.env.KVR_PARTICIPATION_MIN_KVR ?? 0);
     bridge.participation = new Participation({
       auth: new NodeAuth({
         secret: tokenSecret,
         serviceToken: SERVICE_TOKEN,
         // Operating a bridge and contributing compute to one are different
         // things. The retired hub conflated them and refused every phone that
-        // ever asked; participation is open here unless an operator sets a
-        // floor, and that floor is a separate knob from operator eligibility.
-        eligible: minKvr > 0 ? async () => false : null,
+        // ever asked, so participation stays open here unless an operator names
+        // who may join.
+        eligible: participationPolicy(),
       }),
       credit: (nodeId, units, meta) => bridge.creditRelay(nodeId, units, meta),
       // The reader that owns the model file. It runs beside this process —
@@ -565,9 +978,37 @@ async function main() {
     });
   }
 
-  setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs).unref?.();
+  const refreshTimer = setInterval(() => { bridge.refresh().catch(() => {}); }, bridge.inspectIntervalMs);
+  refreshTimer.unref?.();
   const server = createServer(bridge);
   attachRelays(server, bridge);
+
+  // Stop in an order that does not open anything new on the way out: the
+  // refresh timer first (it dials), then the listener (requests dial through
+  // pipelineFor), and only then hand the connections back. Without this the
+  // process died where it stood and every live connection became a slot the
+  // agent never gets back -- see releaseClients().
+  let stopping = null;
+  const stop = (signal) => {
+    if (stopping) return stopping;
+    stopping = (async () => {
+      clearInterval(refreshTimer);
+      bridge.stopping = true;
+      server.close();
+      const guard = setTimeout(() => {
+        console.log(`p4-bridge: ${signal} — shutdown budget spent, leaving now`);
+        process.exit(0);
+      }, SHUTDOWN_MS);
+      guard.unref?.();
+      const outcome = await bridge.releaseClients();
+      clearTimeout(guard);
+      console.log(`p4-bridge: ${signal} — ${outcome.join(' · ') || 'no connections to hand back'}`);
+      process.exit(0);
+    })();
+    return stopping;
+  };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
   server.listen(port, host, () => {
     const serving = bridge.controllers().filter((controller) => controller.serving).map((controller) => controller.id);
     const auth = SERVICE_TOKEN ? 'token required' : 'NO TOKEN — anyone who can reach this can use the ring';
