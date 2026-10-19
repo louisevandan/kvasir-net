@@ -12,7 +12,7 @@
  *   "ingress_agent": "tcp://127.0.0.1:42011",
  *   "models": [{
  *     "id": "step-3.7-flash",
- *     "name": "Step-3.7-Flash (428B MoE)",
+ *     "name": "Step-3.7-Flash (198B MoE)",
  *     "load_generation": 1789148231396,       // from the placement plan
  *     "stages": [
  *       {"agent": "tcp://127.0.0.1:42011", "node": "step37-s0", "generation": 1},

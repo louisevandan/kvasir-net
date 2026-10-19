@@ -990,7 +990,7 @@ per token:  backbone → (cur rows, expert ids) → worker → expert partials �
         t: "table",
         head: ["model", "pakar · perutean", "per-pakar (Q4≈)", "bersama", "status"],
         rows: [
-          ["Step-3.7-Flash 428B (dilayani hari ini)", "288 · top-8", "terukur di armada", "ya", "dilayani — 16 stage, dua mesin"],
+          ["Step-3.7-Flash 198B (dilayani hari ini)", "288 · top-8", "terukur di armada", "ya", "dilayani — 16 stage, dua mesin"],
           ["Qwen3.5-122B", "256 · top-8", "5.3 MB (terukur)", "ya", "dilayani ujung-ke-ujung di 3 mesin"],
           ["GLM-5.2 744B", "—", "—", "ya", "terverifikasi di linkcpp — laporan belum dipublikasikan"],
           ["GLM-4.5 / 4.6 355B", "160 · top-8", "~13 MB", "ya", "direncanakan (hook terverifikasi)"],

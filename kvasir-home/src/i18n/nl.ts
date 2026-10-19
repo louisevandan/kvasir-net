@@ -43,8 +43,8 @@ export const nl: Dict = {
   hero: {
     eyebrow: "DePIN · Frontier-modellen zonder datacenter",
     headline1: "Jij hebt geen hardware",
-    headline2: "voor een 428B-model. Wij ook niet.",
-    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 428 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 6.7–6.8 tokens per seconde, eerste token in 70 ms.",
+    headline2: "voor een 198B-model. Wij ook niet.",
+    sub: "Niets in deze vloot kan Step-3.7-Flash bevatten — 198 miljard parameters, ver voorbij elk apparaat dat we bezitten. Kvasir snijdt het op in layer-vensters, zodat elke machine alleen zijn eigen venster bevat en een hidden state doorgeeft aan de volgende. Vandaag gemeten op de bedienende ring: 6.7–6.8 tokens per seconde, eerste token in 70 ms.",
     badges: [
       "Draait op GPU · CPU · NPU · telefoon",
       "OpenAI + Anthropic compatibel",
@@ -107,7 +107,7 @@ export const nl: Dict = {
       {
         title: "Splitsen",
         body: "Het model wordt verdeeld in aaneengesloten layer-vensters. Elk apparaat bewaart een kopie van het modelbestand, maar laadt alleen zijn eigen venster in het geheugen, zodat geen enkele node het geheel hoeft te draaien.",
-        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
+        note: "Step-3.7-Flash 198B · 45 layers · 2 stages",
       },
       {
         title: "Bedienen",
@@ -242,7 +242,7 @@ export const nl: Dict = {
       },
       {
         title: "Gedistribueerde layer-plaatsing",
-        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 428B MoE, staat momenteel als 2 stages verdeeld over twee machines.",
+        body: "p4 leest GGUF-metadata en berekent aaneengesloten layer-vensters per node op basis van een plaatsingsplan, plus optionele MoE-expert-FFN-offload naar node-RAM. Step-3.7-Flash, een 198B MoE, staat momenteel als 2 stages verdeeld over twee machines.",
       },
       {
         title: "SIWS + 2FA-beveiliging",
@@ -261,7 +261,7 @@ export const nl: Dict = {
       {
         phase: "Nu",
         title: "Serving op frontier-schaal, live",
-        body: "Step-3.7-Flash — een 428B MoE — is als 2 stages over twee NVIDIA GB10-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
+        body: "Step-3.7-Flash — een 198B MoE — is als 2 stages over twee NVIDIA GB10-machines geplaatst en bedient verkeer. Een 122B-model draaide end-to-end over drie fysieke machines, waarvan één een telefoon die een deel ervan bevatte. Wallets op web, desktop, iOS en Android houden de sleutels op het apparaat van de gebruiker.",
       },
       {
         phase: "In uitvoering",
@@ -291,7 +291,7 @@ export const nl: Dict = {
       "wallet-platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B op twee GB10-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
+      "Step-3.7-Flash 198B op twee GB10-machines · 122B end-to-end over drie machines · OpenAI + Anthropic compatibel · Solana devnet",
   },
 
   footer: {

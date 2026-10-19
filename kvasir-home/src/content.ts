@@ -111,13 +111,13 @@ export const DEVICE_META = [
    Each one is something an operator can check: the model serving right now, how
    many stages it is placed as, the cross-backend agreement we measured, and the
    platforms the wallet ships on. */
-export const PROOF_STATS = ["428B", "16", "0.9999", "4"];
+export const PROOF_STATS = ["198B", "16", "0.9999", "4"];
 
 /* Roadmap tone per item (positive = live, caution = coming). */
 export const ROADMAP_TONE = ["positive", "caution", "caution", "caution"] as const;
 
 /* A 45-layer model split across a heterogeneous set of devices — one of each, to
-   show that any device can be a node. Layers sum to 45 (Step-3.7-Flash, the 428B
+   show that any device can be a node. Layers sum to 45 (Step-3.7-Flash, the 198B
    MoE serving today). Illustrative: production places it as 16 stages on two
    machines, not one device per kind. */
 export const NODE_SPLIT = [

@@ -35,9 +35,9 @@ export const zh: Dict = {
 
   hero: {
     eyebrow: "DePIN · 不靠数据中心的前沿模型",
-    headline1: "你没有能跑 428B 模型的硬件。",
+    headline1: "你没有能跑 198B 模型的硬件。",
     headline2: "其实，我们也没有。",
-    sub: "这支机群里没有任何一台机器装得下 Step-3.7-Flash — 4280 亿参数，远远超出我们拥有的任何单台设备。Kvasir 把它切成层窗口，每台机器只持有自己的那一个，并把一份隐藏状态交给下一台。今天在服务环上实测：每秒 6.7–6.8 tokens，首个 token 用时 70 ms。",
+    sub: "这支机群里没有任何一台机器装得下 Step-3.7-Flash — 1980 亿参数，远远超出我们拥有的任何单台设备。Kvasir 把它切成层窗口，每台机器只持有自己的那一个，并把一份隐藏状态交给下一台。今天在服务环上实测：每秒 6.7–6.8 tokens，首个 token 用时 70 ms。",
     badges: [
       "可在 GPU · CPU · NPU · 手机上运行",
       "兼容 OpenAI + Anthropic",
@@ -100,7 +100,7 @@ export const zh: Dict = {
       {
         title: "拆分",
         body: "模型被划分为连续的层窗口。每台设备都保留一份模型文件副本，但只把自己的窗口加载到内存中，因此没有节点需要运行完整模型。",
-        note: "Step-3.7-Flash 428B · 45 层 · 2 stages",
+        note: "Step-3.7-Flash 198B · 45 层 · 2 stages",
       },
       {
         title: "服务",
@@ -235,7 +235,7 @@ export const zh: Dict = {
       },
       {
         title: "分布式层放置",
-        body: "p4 读取 GGUF 元数据，依据放置方案计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。428B 的 MoE 模型 Step-3.7-Flash 目前以 2 stages 分布在两台机器上。",
+        body: "p4 读取 GGUF 元数据，依据放置方案计算每个节点连续的层窗口，并可选将 MoE 专家 FFN 卸载至节点内存。198B 的 MoE 模型 Step-3.7-Flash 目前以 2 stages 分布在两台机器上。",
       },
       {
         title: "SIWS + 2FA 安全",
@@ -254,7 +254,7 @@ export const zh: Dict = {
       {
         phase: "现在",
         title: "前沿规模的服务，已上线",
-        body: "428B 的 MoE 模型 Step-3.7-Flash 以 2 stages 部署在两台 NVIDIA GB10 机器上，正在提供服务。一个 122B 模型已跨 3 台物理机器端到端运行，其中一台是持有部分模型的手机。web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上。",
+        body: "198B 的 MoE 模型 Step-3.7-Flash 以 2 stages 部署在两台 NVIDIA GB10 机器上，正在提供服务。一个 122B 模型已跨 3 台物理机器端到端运行，其中一台是持有部分模型的手机。web、desktop、iOS 和 Android 钱包将密钥保存在用户自己的设备上。",
       },
       {
         phase: "进行中",
@@ -284,7 +284,7 @@ export const zh: Dict = {
       "钱包平台 — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B 跑在两台 GB10 机器上 · 122B 跨 3 台机器端到端 · 兼容 OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 198B 跑在两台 GB10 机器上 · 122B 跨 3 台机器端到端 · 兼容 OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

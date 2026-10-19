@@ -860,7 +860,7 @@ export const INFERENCE_API_REF: CreditRefRow[] = [
   { key: "pricing", value: "basePrice + tokens × perToken KVR  (now 0.01 + tokens × 0.00002)" },
   { key: "errors", value: "402 no credit · 401 bad key · 403 not whitelisted" },
   { key: "context", value: "128K tokens (request body ≤ 2 MB)" },
-  { key: "model", value: "f793eb7b:step-3.7-flash (Step-3.7-Flash 428B MoE, Q4_K_XL)" },
+  { key: "model", value: "f793eb7b:step-3.7-flash (Step-3.7-Flash 198B MoE, Q4_K_XL)" },
 ];
 
 /* The four canonical API calls, shown as a language-agnostic reference. */
@@ -881,7 +881,7 @@ export const API_REFS: ApiRef[] = [
   "recipient": "8uu2gDKFVtNS79yqYyztJeerEKAh4cnZGdQytCjsYNfF",
   "mint": "6cuJAmqtMuGzJ7s7eWQSqfJvEFRUdTiYR3cuMmiNoCPQ",
   "symbol": "KVR",
-  "models": [{ "id": "f793eb7b:step-3.7-flash", "name": "Step-3.7-Flash (428B MoE, Q4_K_XL)" }]
+  "models": [{ "id": "f793eb7b:step-3.7-flash", "name": "Step-3.7-Flash (198B MoE, Q4_K_XL)" }]
 }`,
   },
   {

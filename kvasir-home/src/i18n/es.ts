@@ -36,8 +36,8 @@ export const es: Dict = {
   hero: {
     eyebrow: "DePIN · Modelos frontera sin centro de datos",
     headline1: "No tienes hardware",
-    headline2: "para un modelo de 428B. Nosotros tampoco.",
-    sub: "Nada en esta flota puede contener Step-3.7-Flash — 428 mil millones de parámetros, muy por encima de cualquier dispositivo que tengamos. Kvasir lo divide en ventanas de capas para que cada máquina contenga solo la suya y entregue un estado oculto a la siguiente. Medido hoy en el anillo en servicio: 6.7–6.8 tokens por segundo, primer token en 70 ms.",
+    headline2: "para un modelo de 198B. Nosotros tampoco.",
+    sub: "Nada en esta flota puede contener Step-3.7-Flash — 198 mil millones de parámetros, muy por encima de cualquier dispositivo que tengamos. Kvasir lo divide en ventanas de capas para que cada máquina contenga solo la suya y entregue un estado oculto a la siguiente. Medido hoy en el anillo en servicio: 6.7–6.8 tokens por segundo, primer token en 70 ms.",
     badges: [
       "Funciona en GPU · CPU · NPU · teléfono",
       "Compatible con OpenAI + Anthropic",
@@ -100,7 +100,7 @@ export const es: Dict = {
       {
         title: "Dividir",
         body: "El modelo se divide en ventanas de capas contiguas. Cada dispositivo guarda una copia del archivo del modelo pero solo carga en memoria su propia ventana, así que ningún nodo tiene que ejecutar el modelo entero.",
-        note: "Step-3.7-Flash 428B · 45 capas · 16 etapas",
+        note: "Step-3.7-Flash 198B · 45 capas · 16 etapas",
       },
       {
         title: "Servir",
@@ -235,7 +235,7 @@ export const es: Dict = {
       },
       {
         title: "Colocación de capas distribuida",
-        body: "p4 lee los metadatos GGUF y calcula ventanas de capas contiguas por nodo a partir de un plan de colocación, más una descarga opcional de FFN de expertos MoE a la RAM del nodo. Step-3.7-Flash, un MoE de 428B, se reparte actualmente en 16 etapas entre dos máquinas.",
+        body: "p4 lee los metadatos GGUF y calcula ventanas de capas contiguas por nodo a partir de un plan de colocación, más una descarga opcional de FFN de expertos MoE a la RAM del nodo. Step-3.7-Flash, un MoE de 198B, se reparte actualmente en 16 etapas entre dos máquinas.",
       },
       {
         title: "Seguridad SIWS + 2FA",
@@ -254,7 +254,7 @@ export const es: Dict = {
       {
         phase: "Ahora",
         title: "Servicio a escala frontera, en vivo",
-        body: "Step-3.7-Flash — un MoE de 428B — está colocado en 16 etapas entre dos máquinas NVIDIA GB10 y está sirviendo. Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas, una de ellas un teléfono que contenía una parte. Las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario.",
+        body: "Step-3.7-Flash — un MoE de 198B — está colocado en 16 etapas entre dos máquinas NVIDIA GB10 y está sirviendo. Un modelo de 122B se ejecutó de extremo a extremo en tres máquinas físicas, una de ellas un teléfono que contenía una parte. Las billeteras para web, escritorio, iOS y Android guardan las claves en el dispositivo del usuario.",
       },
       {
         phase: "En curso",
@@ -284,7 +284,7 @@ export const es: Dict = {
       "plataformas de billetera — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B en dos máquinas GB10 · 122B de extremo a extremo en tres máquinas · compatible con OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 198B en dos máquinas GB10 · 122B de extremo a extremo en tres máquinas · compatible con OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {
