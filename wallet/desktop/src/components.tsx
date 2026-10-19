@@ -22,7 +22,9 @@ export function MetricRow({ label, valueText, value, color }: { label: string; v
   )
 }
 
-export const tierColor = (t?: string) => t === 'S' ? 'var(--warn)' : t === 'A' ? 'var(--good)' : t === 'B' ? 'var(--info)' : 'var(--text-3)'
+// One tier palette everywhere (badges, tier table, node map): S red, A yellow, B blue, C green.
+export const TIER_COLORS: Record<string, string> = { S: '#ef4444', A: '#facc15', B: '#3b82f6', C: '#22c55e' }
+export const tierColor = (t?: string) => TIER_COLORS[t ?? ''] ?? 'var(--text-3)'
 
 /**
  * A circle for one letter (S/A/B/C), a pill for a word ("unrated"). The size

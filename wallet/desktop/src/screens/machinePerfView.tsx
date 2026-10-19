@@ -30,8 +30,10 @@ export function machinePerf(status?: NodeStatus | null, plan?: NetworkPlanStatus
     heldSlots: (status?.expertWork?.slots ?? []).filter((s) => s.held).length }
 }
 
+const MARK_RED = '#dc2626'
+
 /** C→S band bar with a marker for each measured speed. */
-export function TierBandBar({ marks }: { marks: { label: string; tps: number }[] }) {
+export function TierBandBar({ marks }: { marks: { label: string; tps: number; strong?: boolean }[] }) {
   const max = TIER_BANDS[TIER_BANDS.length - 1].to
   return <div style={{ position: 'relative', marginTop: 8, paddingTop: 18 }}>
     <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden' }}>
@@ -43,9 +45,13 @@ export function TierBandBar({ marks }: { marks: { label: string; tps: number }[]
     </div>
     {marks.map((m) => {
       const left = Math.min(100, Math.max(0, (m.tps / max) * 100))
-      return <div key={m.label} data-mark={m.label} style={{ position: 'absolute', top: 0, left: `${left}%`, transform: 'translateX(-50%)', textAlign: 'center' }}>
-        <div className="mono" style={{ fontSize: 10, fontWeight: 700, color: tierColor(tierFor(m.tps)), whiteSpace: 'nowrap' }}>{m.label} {m.tps.toFixed(1)}</div>
-        <div style={{ width: 2, height: 14, margin: '0 auto', background: tierColor(tierFor(m.tps)) }} />
+      // The expected-speed marker is the one to read at a glance: a thick red line
+      // that runs through the bar; other marks keep their band colour.
+      const color = m.strong ? MARK_RED : tierColor(tierFor(m.tps))
+      return <div key={m.label} data-mark={m.label} data-strong={!!m.strong} style={{ position: 'absolute', top: 0, left: `${left}%`, transform: 'translateX(-50%)', textAlign: 'center', zIndex: m.strong ? 2 : 1 }}>
+        <div className="mono" style={{ fontSize: m.strong ? 11 : 10, fontWeight: 800, color, whiteSpace: 'nowrap' }}>{m.label} {m.tps.toFixed(1)}</div>
+        <div style={{ width: m.strong ? 3 : 2, height: m.strong ? 24 : 14, margin: '0 auto', background: color, borderRadius: 2,
+          boxShadow: m.strong ? '0 0 0 1px rgba(255,255,255,.85), 0 0 6px rgba(220,38,38,.6)' : undefined }} />
       </div>
     })}
   </div>
@@ -60,7 +66,7 @@ export function MachinePerfView({ status, plan, measure, onMeasure, onOpenSettin
   const p = machinePerf(status, plan)
   const gib = (b: number | null) => (b == null ? '—' : `${(b / 1024 ** 3).toFixed(1)} GiB`)
   const marks = [
-    ...(p.expectedTps != null ? [{ label: t('node.perfExpectedMark'), tps: p.expectedTps }] : []),
+    ...(p.expectedTps != null ? [{ label: t('node.perfExpectedMark'), tps: p.expectedTps, strong: true }] : []),
     ...(p.localTps != null ? [{ label: t('node.perfLocalMark'), tps: p.localTps }] : []),
   ]
   return <Card>
