@@ -20,6 +20,7 @@ function render(status) {
     '../qr': { QR: () => null },
     './expertLayers': { ExpertLayersCard: () => React.createElement('div', null, 'EXPERT_CARD') },
     './expertMeasure': {}, '../services': {}, '../api': { isElectron: false },
+    './networkPlan': { NetworkPlanCard: () => null, SlowNetworkDialog: () => null, useSlowNetworkDialog: () => ({ open: false, dismiss() {} }) },
   }
   vm.runInNewContext(code, { module, exports: module.exports, require: key => dependencies[key] || require(key) })
   return renderToStaticMarkup(React.createElement(module.exports.NodeSettingsScreen))
