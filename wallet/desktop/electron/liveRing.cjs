@@ -7,9 +7,9 @@ function liveRing({ agent, experts, contributions, source, now = Date.now(), err
   const base = { state: 'unavailable', source, metric: 'achieved request throughput',
     observedAt: now, lastWorkAt: null, window: 'bridge EWMA (0.7 previous + 0.3 request)',
     relayBytes, stages: [], reason: null, reasonCode: null, httpStatus }
-  if (!agent.running || !agent.snapshotAt || now - agent.snapshotAt > 15000 || agent.lastError) {
-    return { ...base, state: 'stale', reasonCode: 'agentStale', reason: 'Owned-agent inspection is unavailable or stale' }
-  }
+  if (agent.snapshotAt == null) return { ...base, reasonCode: 'agentNotInspected', reason: 'Owned agent has not been inspected yet' }
+  if (now - agent.snapshotAt > 15000) return { ...base, state: 'stale', reasonCode: 'agentStale', reason: 'Owned-agent inspection is stale' }
+  if (!agent.running || agent.lastError) return { ...base, reasonCode: 'agentUnavailable', reason: 'Owned-agent inspection is currently unavailable' }
   if (!agent.nodes.length) return { ...base, state: experts?.servingSlots ? 'unavailable' : 'idle',
     reasonCode: experts?.servingSlots ? 'expertOnly' : 'noStage',
     reason: experts?.servingSlots ? 'No pipeline stage; expert workers expose relay activity, not token timing' : 'Idle — no stage on this agent' }
@@ -72,7 +72,7 @@ function createLiveRingCache({ observe = observeLiveRing, now = Date.now, refres
       if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) source = url.href
     } catch { /* invalid sources remain unavailable */ }
     const fallback = liveRing({ agent, experts, source, now: at })
-    if (fallback.state === 'stale' || !agent.nodes.length) {
+    if (fallback.reasonCode?.startsWith('agent') || !agent.nodes.length) {
       // A failed inspection must invalidate previously live work as well.
       entry = null
       return fallback

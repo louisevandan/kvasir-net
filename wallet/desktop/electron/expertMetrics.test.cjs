@@ -73,8 +73,8 @@ test('loopback synthetic benchmark sends correct hidden width and local IDs, exc
     })
   }, async port => {
     const r = await benchmarkExpert({ port, nEmbd: 4, experts: 3, isCurrent: () => true })
-    assert.equal(r.kind, 'synthetic-expert-ffn'); assert.equal(calls, 6); assert.equal(r.calls, 5)
-    assert.equal(r.rows, 5); assert.ok(r.rowsPerSecond > 0); assert.ok(r.p95Ms >= r.p50Ms)
+    assert.equal(r.kind, 'synthetic-expert-ffn'); assert.equal(calls, 31); assert.equal(r.calls, 30)
+    assert.equal(r.rows, 30); assert.ok(r.rowsPerSecond > 0); assert.ok(r.p95Ms >= r.p50Ms)
   })
 })
 test('benchmark rejects a stalled worker and changed assignment', async () => {
@@ -84,6 +84,19 @@ test('benchmark rejects a stalled worker and changed assignment', async () => {
   let current = true
   await withWorker(socket => socket.on('data', () => { current = false; socket.write(Buffer.alloc(32)) }), async port => {
     await assert.rejects(benchmarkExpert({ port, nEmbd: 4, experts: 2, isCurrent: () => current }), /assignment changed/)
+  })
+})
+test('default slot deadline is two seconds; reassignment cancels even a silent worker', async () => {
+  await withWorker(() => {}, async port => {
+    const start = Date.now()
+    await assert.rejects(benchmarkExpert({ port, nEmbd: 4, experts: 2, isCurrent: () => true }), /timed out/)
+    assert.ok(Date.now() - start < 3000)
+    let current = true
+    const pending = benchmarkExpert({ port, nEmbd: 4, experts: 2, isCurrent: () => current })
+    setTimeout(() => { current = false }, 40)
+    const cancelStart = Date.now()
+    await assert.rejects(pending, /assignment changed/)
+    assert.ok(Date.now() - cancelStart < 1000)
   })
 })
 test('host concurrency guard prevents a second benchmark and never adds synthetic work to live metrics', async () => {
@@ -126,6 +139,7 @@ test('Measure selects serving experts before GGUF and falls back only when a GGU
   assert.equal((await context.measureNode()).errorCode, 'noMeasurementTarget')
   context.listModels = () => [{ name: 'm.gguf' }]
   assert.equal((await context.measureNode()).tps, 12)
-  context.expertPool.slots = [{ phase: 'serving', proc: {}, benchmark: async () => ({ ok: true, expertBenchmark: {} }) }]
+  context.expertPool.slots = [{ phase: 'serving', proc: {} }]
+  context.expertPool.benchmark = async () => ({ ok: true, expertBenchmark: {} })
   assert.ok((await context.measureNode()).expertBenchmark)
 })

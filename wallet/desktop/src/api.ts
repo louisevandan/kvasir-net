@@ -98,6 +98,11 @@ export interface ExpertBenchmark {
   elapsedMs: number; calls: number; rows: number; batchRows: number; expertsPerRow: number; at: number
 }
 
+export interface ExpertMeasurementProgress {
+  running: boolean; index: number; count: number; layer: number | null; error: string | null
+  total: { rowsPerSecond: number; p95Ms: number; slots: number; at: number } | null
+}
+
 export interface NodeStatus {
   running: boolean
   pid: number | null
@@ -114,7 +119,7 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
-  expertWork?: { slots: { workerId: string; phase: string;
+  expertWork?: { measurement?: ExpertMeasurementProgress | null; slots: { workerId: string; phase: string;
     held: { model: string; layer: number; begin: number; end: number; nLayer?: number | null; nExpert?: number | null; denseLayers?: number | null; shardFile?: string | null } | null
     port: number | null; relay: { connected: boolean; lastClose: { code: number; reason: string; at: number } | null }
     work: ExpertWorkMeasurement; localBenchmark: ExpertBenchmark | null }[] }
@@ -215,6 +220,7 @@ export interface KvasirAPI {
     setVramBudget(bytes: number): Promise<{ vramBudgetBytes: number | null; maxExperts: number | null }>
     installCudaPack(): Promise<CudaPackStatus>
     cancelCudaPack(): Promise<CudaPackStatus>
+    benchmarkProgress?(): Promise<ExpertMeasurementProgress | null>
     benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string; errorCode?: string; expertBenchmark?: ExpertBenchmark } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>

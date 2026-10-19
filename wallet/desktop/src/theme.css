@@ -167,6 +167,10 @@ select { appearance: none; }
 .composer .box { display: flex; gap: 10px; align-items: flex-end; }
 .composer textarea { min-height: 52px; max-height: 180px; resize: none; }
 
+.measure-spinner { display: inline-block; width: 12px; height: 12px; margin-right: 8px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: measure-spin .8s linear infinite; }
+@keyframes measure-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .measure-spinner { animation: none; } }
+
 /* thinking dots */
 .thinking { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
 .thinking .dots { display: inline-flex; gap: 4px; }

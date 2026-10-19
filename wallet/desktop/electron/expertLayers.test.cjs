@@ -1,45 +1,75 @@
 'use strict'
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const fs = require('node:fs')
 const path = require('node:path')
 const vm = require('node:vm')
 const React = require('react')
 const { renderToStaticMarkup } = require('react-dom/server')
 const { buildSync } = require('esbuild')
-const code = buildSync({ stdin: { contents: "export { ExpertLayersCard, expertLayerState } from './src/screens/expertLayers'; export { I18nProvider } from './src/i18n'", resolveDir: path.join(__dirname, '..'), loader: 'tsx' }, bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', external: ['react', 'react/jsx-runtime'] }).outputFiles[0].text
+const code = buildSync({ stdin: { contents: "export { ExpertLayersCard, expertLayerState, expertBudget } from './src/screens/expertLayers'; export { ExpertMeasureControl, runMeasurement } from './src/screens/expertMeasure'; export { I18nProvider } from './src/i18n'", resolveDir: path.join(__dirname, '..'), loader: 'tsx' }, bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', external: ['react', 'react/jsx-runtime'] }).outputFiles[0].text
 const moduleObject = { exports: {} }
-vm.runInNewContext(code, { module: moduleObject, exports: moduleObject.exports, require })
-const { ExpertLayersCard, expertLayerState, I18nProvider } = moduleObject.exports
+vm.runInNewContext(code, { module: moduleObject, exports: moduleObject.exports, require, Error })
+const { ExpertLayersCard, expertLayerState, expertBudget, ExpertMeasureControl, runMeasurement, I18nProvider } = moduleObject.exports
 const fixture = {
   workerId: 'fixture-only', phase: 'serving', port: 59019,
-  held: { model: 'step-3.7-flash', layer: 3, begin: 0, end: 64, nLayer: 45, nExpert: 288, denseLayers: 3, shardFile: 'L3_e000-064.gguf' },
+  held: { model: 'step-3.7-flash', layer: 6, begin: 0, end: 64, nLayer: 45, nExpert: 288, denseLayers: 3, shardFile: 'L6_e000-064.gguf' },
   relay: { connected: false, lastClose: { code: 1011, reason: 'upstream unavailable', at: 100000 } },
-  work: { state: 'live', calls: 12, rows: 64, windowMs: 60000, windowLimitMs: 60000, callsPerSecond: 0.2, rowsPerSecond: 1.07, p50Ms: 8, p95Ms: 14, lastWorkAt: 100000, recentRows: [0, 1, 4, 0, 8, 4, 3, 10, 2, 1, 0, 6] },
-  localBenchmark: null,
+  work: { calls: 0, rows: 0, windowMs: 32700, rowsPerSecond: 0, lastWorkAt: null }, localBenchmark: null,
 }
-const render = (slots, lang = 'en') => renderToStaticMarkup(React.createElement(I18nProvider, { initial: lang }, React.createElement(ExpertLayersCard, { slots })))
-test('expert layers renders 45 layers, dense prefix, held range, relay state and measured activity from fixture', () => {
-  const html = render([fixture])
-  assert.equal((html.match(/data-layer=/g) || []).length, 45)
-  assert.equal((html.match(/data-dense="true"/g) || []).length, 3)
-  assert.equal((html.match(/data-expert=/g) || []).length, 288)
-  assert.equal((html.match(/data-held="true"/g) || []).length, 65) // layer + 64 experts
-  for (const value of ['step-3.7-flash', 'L3_e000-064.gguf', '59019', 'relay down', '1011', '1.1 rows/s', 'p95 14.00 ms', 'polyline']) assert.ok(html.includes(value), value)
-  const ko = render([fixture], 'ko')
-  assert.ok(ko.includes('전문가 레이어')); assert.ok(ko.includes('릴레이 끊김')); assert.ok(!ko.includes('ns.'))
-  if (process.env.EXPERT_LAYERS_FIXTURE_HTML) {
-    const css = fs.readFileSync(path.join(__dirname, '../src/theme.css'), 'utf8')
-    fs.writeFileSync(process.env.EXPERT_LAYERS_FIXTURE_HTML, `<!doctype html><meta charset="utf-8"><style>${css}</style><main style="max-width:660px;margin:24px auto"><p>FIXTURE — synthetic display data, not live measurements</p>${html}</main>`)
-  }
+const renderComponent = (component, props, lang = 'en') => renderToStaticMarkup(React.createElement(I18nProvider, { initial: lang }, React.createElement(component, props)))
+const render = (slots, lang = 'en', status) => renderComponent(ExpertLayersCard, { slots, status }, lang)
+test('seven layers collapse to one summary, default-closed table and one factual relay note', () => {
+  const slots = Array.from({ length: 7 }, (_, i) => ({ ...fixture, workerId: `fixture-${i}`, held: { ...fixture.held, layer: 6 + i } }))
+  const html = render(slots)
+  assert.match(html, /7 layers held · 7 serving · 7 connecting\/retrying · live total 0.0 rows\/s/)
+  assert.equal((html.match(/role="note"/g) || []).length, 1)
+  assert.match(html, /cannot reach a coordinator/)
+  assert.match(html, /<details/); assert.doesNotMatch(html, /<details[^>]*open/)
+  assert.equal((html.match(/<tbody><tr|<\/tr><tr/g) || []).length, 7)
+  assert.match(html, /Live rows\/s/); assert.match(html, /Bench p50\/p95 ms/)
+  assert.match(html, /L12/); assert.match(html, /Worker serving · relay down/)
+  const ko = render(slots, 'ko')
+  assert.match(ko, /전문가 레이어/); assert.match(ko, /릴레이 끊김/); assert.doesNotMatch(ko, /ns\./)
+  assert.doesNotMatch(render([{ ...fixture, relay: { connected: true, lastClose: fixture.relay.lastClose } }]), /role="note"/)
+  assert.doesNotMatch(render([{ ...fixture, phase: 'starting' }]), /role="note"/)
 })
-test('layer card states are driven by cached assignment/relay state and missing topology is not guessed', () => {
-  assert.equal(expertLayerState({ ...fixture, phase: 'downloading' }), 'downloading')
+test('starting and downloading are explicit rather than unavailable, per-layer benchmark is visible', () => {
+  assert.equal(expertLayerState({ ...fixture, phase: 'starting', held: { ...fixture.held, shardFile: null } }), 'starting')
   assert.equal(expertLayerState({ ...fixture, phase: 'starting' }), 'cached')
-  assert.equal(expertLayerState({ ...fixture, relay: { connected: true } }), 'serving')
-  assert.equal(expertLayerState({ ...fixture, phase: 'failed' }), 'failed')
-  assert.ok(render([]).includes('No assigned expert shard'))
-  const html = render([{ ...fixture, held: { ...fixture.held, nLayer: null, nExpert: null, denseLayers: null } }])
-  assert.ok(html.includes('Complete model topology unavailable'))
-  assert.ok(!html.includes('data-layer=')); assert.ok(!html.includes('data-expert='))
+  assert.equal(expertLayerState({ ...fixture, phase: 'downloading' }), 'downloading')
+  assert.match(render([{ ...fixture, phase: 'downloading' }]), /Downloading/)
+  const html = render([{ ...fixture, localBenchmark: { rowsPerSecond: 223, p50Ms: 2.56, p95Ms: 11.43, calls: 30, at: 100000, batchRows: 1, expertsPerRow: 8 } }])
+  assert.match(html, /223.0/); assert.match(html, /2.56 \/ 11.43/); assert.match(html, /30 measured calls/)
+  assert.match(render([]), /No assigned expert shard/)
+})
+test('budget diagnostic includes fixed cost per slot plus headroom once, flags but never allocates', () => {
+  const slots = Array.from({ length: 8 }, () => fixture)
+  const expertMemoryModel = { fixedBytes: 64 * 2 ** 20, scratchBytes: 320 * 2 ** 20, headroomBytes: 256 * 2 ** 20, residentBytesPerExpert: 9499993 }
+  const status = { expertMemoryModel, maxExperts: 512, vramBudgetBytes: 8 * 2 ** 30 }
+  const budget = expertBudget(slots, status)
+  assert.equal(budget.experts, 512)
+  assert.equal(budget.bytes, 8 * (384 * 2 ** 20 + 64 * 9499993) + 256 * 2 ** 20)
+  assert.equal(budget.state, 'within')
+  assert.equal(expertBudget(slots, { ...status, maxExperts: 511 }).state, 'over')
+  assert.equal(expertBudget(slots, { ...status, vramBudgetBytes: budget.bytes - 1 }).state, 'over')
+  assert.equal(expertBudget(slots).state, 'unknown')
+  assert.match(render(slots, 'en', { ...status, maxExperts: 511 }), /Budget exceeded/)
+})
+test('renderer measurement state idle → measuring → done/error enables controls and shows progress', async () => {
+  for (const outcome of ['done', 'error', 'throw', 'reassignment']) {
+    let state = { running: false, error: null }, resolve
+    const renderState = progress => renderComponent(ExpertMeasureControl, { state, progress, onMeasure() {} }, 'ko')
+    assert.doesNotMatch(renderState(), /disabled=""/)
+    const pending = runMeasurement({ benchmark: () => new Promise(done => { resolve = done }),
+      refresh: async () => { if (outcome === 'throw') throw Error('status failed') }, setState: s => { state = s }, failed: 'failed', noTarget: 'no target' })
+    const progress = { running: true, index: 2, count: 7, layer: 8 }
+    const html = renderState(progress)
+    assert.match(html, /측정 중…/); assert.match(html, /disabled=""/); assert.match(html, /measure-spinner/)
+    assert.match(html, /레이어 8 측정 중 \(2\/7\)/); assert.match(html, /<progress/)
+    resolve(outcome === 'error' || outcome === 'reassignment' ? { ok: false, error: outcome } : { ok: true })
+    await pending
+    assert.equal(state.running, false)
+    assert.doesNotMatch(renderState(), /disabled=""/)
+    if (outcome !== 'done') assert.match(renderState(), /role="alert"/)
+  }
 })

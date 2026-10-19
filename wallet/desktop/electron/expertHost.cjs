@@ -420,11 +420,11 @@ class ExpertHost {
     this.phase = 'idle'
   }
 
-  async benchmark() {
+  async benchmark(poolIsCurrent = () => true) {
     if (this.benchmarkBusy) return { ok: false, error: 'expert benchmark already running' }
     if (this.phase !== 'serving' || !this.proc || !this.held) return { ok: false, error: 'no owned expert worker is serving' }
     const gen = this.generation, proc = this.proc, held = this.held, port = this.port
-    const isCurrent = () => this.generation === gen && this.proc === proc && this.phase === 'serving' && this.port === port
+    const isCurrent = () => poolIsCurrent() && this.generation === gen && this.proc === proc && this.held === held && this.phase === 'serving' && this.port === port
     this.benchmarkBusy = true
     try {
       const result = await benchmarkExpert({ port, nEmbd: held.nEmbd, experts: held.end - held.begin, isCurrent })
@@ -583,10 +583,46 @@ class ExpertPool {
     return out
   }
 
+  /** Snapshot ownership for the whole run, not just the slot currently timed. */
+  async benchmark() {
+    if (this.measurement?.running) return { ok: false, error: 'expert benchmark already running' }
+    const targets = this.slots.filter(s => s.phase === 'serving' && s.proc && s.held)
+      .map(s => ({ s, generation: s.generation, proc: s.proc, held: s.held, port: s.port }))
+    if (!targets.length) return { ok: false, error: 'no owned expert worker is serving' }
+    const isCurrent = () => targets.every(({ s, generation, proc, held, port }) =>
+      this.slots.includes(s) && s.generation === generation && s.proc === proc && s.held === held && s.port === port && s.phase === 'serving')
+    this.measurementCurrent = isCurrent
+    this.measurement = { running: true, index: 0, count: targets.length, layer: null, error: null, total: null }
+    for (const { s } of targets) s.localBenchmark = null
+    const results = []
+    try {
+      for (const [index, { s, held }] of targets.entries()) {
+        if (!isCurrent()) throw Error('expert assignment changed')
+        Object.assign(this.measurement, { index: index + 1, layer: held.layer })
+        const result = await s.benchmark(isCurrent)
+        if (!isCurrent()) throw Error('expert assignment changed')
+        if (!result.ok) throw Error(`L${held.layer}: ${result.error}`)
+        results.push(result.expertBenchmark)
+      }
+      this.measurement.total = { rowsPerSecond: results.reduce((sum, r) => sum + r.rowsPerSecond, 0),
+        p95Ms: Math.max(...results.map(r => r.p95Ms)), slots: results.length, at: Date.now() }
+      // Keep the single-slot response alias for older callers.
+      return { ok: true, expertBenchmark: results[0], expertBenchmarks: results, expertBenchmarkTotal: this.measurement.total }
+    } catch (e) {
+      this.measurement.error = e.message
+      return { ok: false, error: e.message }
+    } finally { this.measurement.running = false }
+  }
+
   /** Compatibility with single-host callers. */
   heldSegments() { return this.slots.flatMap((s) => s.heldSegments()) }
 
   release(why = 'released') { for (const s of this.slots) s.release(why) }
+
+  measurementStatus() {
+    return this.measurement ? { ...this.measurement,
+      total: this.measurementCurrent?.() ? this.measurement.total : null } : null
+  }
 
   status() {
     const slots = this.slots.map((s, i) => ({ workerId: this.slotId(i), ...s.status() }))
@@ -596,6 +632,7 @@ class ExpertPool {
       slots,
       heldExperts: this.heldExperts(),
       servingSlots: serving.length,
+      measurement: this.measurementStatus(),
     }
   }
 }

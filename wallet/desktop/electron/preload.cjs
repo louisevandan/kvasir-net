@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('kvasir', {
     cancelCudaPack: () => ipcRenderer.invoke('node:cancelCudaPack'),
     setVramBudget: (bytes) => ipcRenderer.invoke('node:setVramBudget', bytes),
     benchmark: (maxTokens) => ipcRenderer.invoke('node:benchmark', maxTokens),
+    benchmarkProgress: () => ipcRenderer.invoke('node:benchmarkProgress'),
   },
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
   revealPath: (p) => ipcRenderer.invoke('shell:reveal', p),

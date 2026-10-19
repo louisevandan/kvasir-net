@@ -17,7 +17,8 @@ const { catalog, I18nProvider, useI18n } = exportsObject.exports
 const screen = fs.readFileSync(path.join(__dirname, '../src/screens/nodeSettings.tsx'), 'utf8')
 const keys = [...screen.matchAll(/t\('(ns\.(?:liveRing|localDecode|localBenchmark|agentRunning|benchmark|expert|noMeasurementTarget|measureFailed)[^']*)'/g)].map(m => m[1])
 for (const state of ['live', 'idle', 'stale', 'unavailable']) keys.push(`ns.liveRingState.${state}`)
-for (const reason of ['agentStale', 'expertOnly', 'noStage', 'feedUnavailable', 'feedHttp', 'noMatch', 'missingMetadata']) keys.push(`ns.liveRingReason.${reason}`)
+for (const reason of ['agentNotInspected', 'agentUnavailable', 'agentStale', 'expertOnly', 'noStage', 'feedUnavailable', 'feedHttp', 'noMatch', 'missingMetadata']) keys.push(`ns.liveRingReason.${reason}`)
+for (const key of Object.keys(catalog.en).filter(key => key.startsWith('ns.expert'))) keys.push(key)
 
 test('every live-ring and local benchmark UI key has English and Korean translations', () => {
   assert.ok(keys.length >= 27)
