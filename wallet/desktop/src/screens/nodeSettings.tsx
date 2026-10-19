@@ -5,10 +5,11 @@ import { Card, MetricRow, CopyButton } from '../components'
 import { QR } from '../qr'
 import { ExpertLayersCard } from './expertLayers'
 import { ExpertMeasureControl, runMeasurement } from './expertMeasure'
+import { NetworkPlanCard, SlowNetworkDialog, useSlowNetworkDialog } from './networkPlan'
 import type { MeasureState } from './expertMeasure'
 import { Staking } from '../services'
 import { api, capacityForBudget, isElectron, NODE_GUIDE_URL } from '../api'
-import type { NodeStatus, ExpertMeasurementProgress, ShardDownload } from '../api'
+import type { NodeStatus, ExpertMeasurementProgress, ShardDownload, NetworkPlanStatus } from '../api'
 
 const osLabel = (os: string) => ({ macos: 'macOS', windows: 'Windows', linux: 'Linux' }[os] || os)
 const BACKEND_LABEL: Record<string, string> = { metal: 'GPU · Metal', cuda: 'GPU · CUDA', rocm: 'GPU · ROCm', cpu: 'CPU' }
@@ -228,6 +229,20 @@ export function NodeSettingsScreen() {
     const id = setInterval(poll, 400)
     return () => { active = false; clearInterval(id) }
   }, [])
+  // Network path + layer plan: measured by the main process when the node
+  // starts; polled fast only while a measurement runs.
+  const [netPlan, setNetPlan] = useState<NetworkPlanStatus | null>(null)
+  useEffect(() => {
+    if (!api.node?.networkPlan) return
+    let active = true
+    const poll = () => api.node!.networkPlan!().then((p) => { if (active) setNetPlan(p) }).catch(() => {})
+    poll()
+    const id = setInterval(poll, netPlan?.state === 'measuring' ? 300 : 3000)
+    return () => { active = false; clearInterval(id) }
+  }, [netPlan?.state])
+  const measureNetwork = () => { void api.node?.measureNetwork?.().then(setNetPlan).catch(() => {}); setNetPlan((p) => p ? { ...p, state: 'measuring' } : p) }
+  const selectBackbone = (id: string) => { void api.node?.selectBackbone?.(id).then((p) => { if (p.ok) setNetPlan(p) }).catch(() => {}) }
+  const slowNet = useSlowNetworkDialog(netPlan)
   const expertSlots = status?.expertWork?.slots?.map(slot =>
     slot.workerId in downloads ? { ...slot, download: downloads[slot.workerId] } : slot)
   const timer = useRef<any>(null)
@@ -396,6 +411,8 @@ export function NodeSettingsScreen() {
 
       {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
+        {isElectron && <NetworkPlanCard status={netPlan} onMeasure={measureNetwork} onSelect={selectBackbone} />}
+        {isElectron && slowNet.open && netPlan && <SlowNetworkDialog status={netPlan} onClose={slowNet.dismiss} onMeasure={() => { slowNet.dismiss(); measureNetwork() }} />}
         <ExpertLayersCard slots={expertSlots} status={status}>
           {isElectron && <ExpertMeasureControl state={measureState} progress={measureState.running ? measureProgress : null}
             disabled={busy !== null && busy !== 'measure'}

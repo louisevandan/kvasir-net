@@ -723,6 +723,21 @@ async function measureNode(sender, maxTokens = 64) {
   return { ok: false, error: 'no serving expert shard or local GGUF to measure', errorCode: 'noMeasurementTarget' }
 }
 
+const { createNetworkPlanner } = require('./networkPlan.cjs')
+const networkPlanner = createNetworkPlanner({ targets: C.backbones, model: C.expertPlanModel, selected: () => readConfig().backboneId ?? null })
+/** Re-measure the direct path and re-plan with what this machine can actually hold and compute. */
+function refreshNetworkPlan() {
+  const slots = expertPool.slots.filter((s) => s.held)
+  const bench = slots.map((s) => s.localBenchmark?.p50Ms).filter(Number.isFinite)
+  const held = slots.find((s) => s.held?.nExpert)?.held
+  const capacity = knowsWhatASlotCosts() ? capacityForBudget(vramBudgetBytes(), expertMemoryModel(), availableGpuBytes()).slots : 1
+  return networkPlanner.refresh({
+    maxLayers: Math.max(1, capacity),
+    ...(bench.length ? { computeMs: Math.max(...bench) } : {}),
+    ...(held?.nExpert ? { nExpert: held.nExpert } : {}),
+    ...(held?.nUsed ? { nUsed: held.nUsed } : {}),
+  })
+}
 const { createLiveRingCache } = require('./liveRing.cjs')
 const cachedLiveRing = createLiveRingCache()
 async function nodeStatus({ inspect = false } = {}) {
@@ -930,6 +945,7 @@ function register() {
     // only needs the port to exist by the time somebody dials, and a stream
     // that arrives early closes itself and says the agent is not up yet.
     startRelay()
+    void refreshNetworkPlan()  // measured in the background; the card shows progress
     await new Promise((r) => setTimeout(r, 1200))
     return nodeStatus({ inspect: true })
   })
@@ -955,6 +971,14 @@ function register() {
   ipcMain.handle('node:benchmark', (e, maxTokens) => measureNode(e.sender, maxTokens || 64))
   ipcMain.handle('node:benchmarkProgress', () => expertPool.measurementStatus())
   ipcMain.handle('node:expertDownloads', () => expertPool.downloadStatus())
+  ipcMain.handle('node:networkPlan', () => ({ ...networkPlanner.status(), warnTps: C.networkWarnTps }))
+  ipcMain.handle('node:measureNetwork', async () => ({ ...(await refreshNetworkPlan()), warnTps: C.networkWarnTps }))
+  // The operator's choice of backbone, kept in config; only a known id is accepted.
+  ipcMain.handle('node:selectBackbone', (_e, id) => {
+    if (id != null && !C.backbones.some((b) => b.id === id)) return { ok: false, error: 'unknown backbone' }
+    writeConfig({ backboneId: id ?? null })
+    return { ok: true, ...networkPlanner.status(), warnTps: C.networkWarnTps }
+  })
 }
 
 function createWindow() {

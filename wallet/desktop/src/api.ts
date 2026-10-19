@@ -98,6 +98,20 @@ export interface ExpertBenchmark {
   elapsedMs: number; calls: number; rows: number; batchRows: number; expertsPerRow: number; at: number
 }
 
+export interface NetworkPlanRow { layers: number; tokenMs: number; tps: number; meetsTarget: boolean }
+export interface NetworkPlan { perLayerMs: number; transferMs: number; computeMs: number; hitProbability: number; baseTps: number; targetTps: number
+  rows: NetworkPlanRow[]; recommendedLayers: number }
+export interface BackboneCandidate {
+  id: string; label: string; host: string; serving: boolean
+  state: 'idle' | 'measuring' | 'ready' | 'failed'
+  rtt: { p50Ms: number; p90Ms: number; minMs: number; samples: number; failed: number } | null
+  plan: NetworkPlan | null; error: string | null
+}
+export interface NetworkPlanStatus {
+  state: 'idle' | 'measuring' | 'ready' | 'failed'
+  targets: BackboneCandidate[]; bestId: string | null; selectedId: string | null
+  at: number | null; warnTps?: number
+}
 export interface ShardDownload { bytes: number; totalBytes: number | null; startedAt: number }
 export interface ExpertMeasurementProgress {
   running: boolean; index: number; count: number; layer: number | null; error: string | null
@@ -224,6 +238,9 @@ export interface KvasirAPI {
     cancelCudaPack(): Promise<CudaPackStatus>
     benchmarkProgress?(): Promise<ExpertMeasurementProgress | null>
     expertDownloads?(): Promise<{ workerId: string; phase: string; download: ShardDownload | null }[]>
+    networkPlan?(): Promise<NetworkPlanStatus>
+    measureNetwork?(): Promise<NetworkPlanStatus>
+    selectBackbone?(id: string | null): Promise<NetworkPlanStatus & { ok: boolean; error?: string }>
     benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string; errorCode?: string; expertBenchmark?: ExpertBenchmark } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>

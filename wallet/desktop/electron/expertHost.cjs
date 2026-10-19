@@ -192,6 +192,7 @@ class ExpertHost {
       this.held.nLayer ||= Number(metadata[`${arch}.block_count`]) || null
       this.held.nExpert ||= Number(metadata[`${arch}.expert_count`]) || null
       this.held.denseLayers ??= metadata[`${arch}.leading_dense_block_count`] ?? null
+      this.held.nUsed ||= Number(metadata[`${arch}.expert_used_count`]) || null
       this.phase = 'starting'
       await this.startWorker(gen)
       if (gen !== this.generation) return
@@ -446,7 +447,7 @@ class ExpertHost {
       localBenchmark: this.localBenchmark,
       phase: this.phase,
       held: this.held ? { model: this.held.model, layer: this.held.layer, begin: this.held.begin, end: this.held.end,
-        nLayer: this.held.nLayer, nExpert: this.held.nExpert, denseLayers: this.held.denseLayers,
+        nLayer: this.held.nLayer, nExpert: this.held.nExpert, nUsed: this.held.nUsed ?? null, denseLayers: this.held.denseLayers,
         shardFile: this.held.path ? path.basename(this.held.path) : null } : null,
       port: this.port,
       session: this.session,

@@ -28,4 +28,20 @@ module.exports = {
   // on purpose: it has to answer when the compute fleet does not, since being
   // told "you are not admitted" is exactly the moment you need it.
   admissionsUrl: 'https://reg.kvasir-ai.net',
+  // Backbone hosts expert calls can go to, measured directly (not through the
+  // public gateway) when this PC joins: see electron/networkPlan.cjs. The probe
+  // is a bare TCP handshake to an already-open port — nothing is sent.
+  // `serving`: a p4 backbone runs there today. The MI250 hosts are reachable
+  // candidates the operator can pick ahead of a backbone being placed on them.
+  backbones: [
+    { id: 'gb10-1', label: 'GB10-1', host: '1.220.225.155', port: 22, serving: true },
+    { id: 'mi250-01', label: 'MI250-01', host: '1.214.116.122', port: 5122, serving: false },
+    { id: 'mi250-02', label: 'MI250-02', host: '1.214.116.122', port: 5222, serving: false },
+  ],
+  // Routing shape and the ring's measured single-stream speed for the model the
+  // network serves today (Step-3.7-Flash on the 2-stage GB10 ring, 2026-10-01:
+  // 6.7–6.8 tok/s). Used only for the plan estimate.
+  expertPlanModel: { model: 'step-3.7-flash', baseTps: 6.7, nExpert: 288, nUsed: 8, expertsPerLayer: 64, nEmbd: 4096, targetTps: 5 },
+  // Below this expected speed the node screen asks the operator to connect from a faster network.
+  networkWarnTps: 5,
 }
