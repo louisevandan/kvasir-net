@@ -254,13 +254,17 @@ class ExpertHost {
     const expected = Number(res.headers.get('content-length'))
     const out = fs.createWriteStream(dest)
     let got = 0
+    // Read by the renderer's fast progress poll; bytes only, never content.
+    const progress = this.downloadProgress = { bytes: 0, totalBytes: Number.isFinite(expected) && expected > 0 ? expected : null, startedAt: Date.now() }
     try {
       for await (const chunk of res.body) {
         got += chunk.length
+        progress.bytes = got
         if (!out.write(chunk)) await new Promise((r) => out.once('drain', r))
       }
     } finally {
       await new Promise((r) => out.end(r))
+      if (this.downloadProgress === progress) this.downloadProgress = null
     }
     if (Number.isFinite(expected) && expected > 0 && got !== expected) {
       throw new ExpertHostError(`body ended at ${got} of ${expected} bytes`, 'truncated')
@@ -437,6 +441,7 @@ class ExpertHost {
 
   status() {
     return {
+      download: this.downloadProgress ? { ...this.downloadProgress } : null,
       work: this.metrics.status(),
       localBenchmark: this.localBenchmark,
       phase: this.phase,
@@ -618,6 +623,11 @@ class ExpertPool {
   heldSegments() { return this.slots.flatMap((s) => s.heldSegments()) }
 
   release(why = 'released') { for (const s of this.slots) s.release(why) }
+
+  /** Cheap per-slot download progress for a fast renderer poll (no GPU or network probes). */
+  downloadStatus() {
+    return this.slots.map((s, i) => ({ workerId: this.slotId(i), phase: s.phase, download: s.downloadProgress ? { ...s.downloadProgress } : null }))
+  }
 
   measurementStatus() {
     return this.measurement ? { ...this.measurement,

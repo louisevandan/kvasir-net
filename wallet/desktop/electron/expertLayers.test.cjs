@@ -6,10 +6,10 @@ const vm = require('node:vm')
 const React = require('react')
 const { renderToStaticMarkup } = require('react-dom/server')
 const { buildSync } = require('esbuild')
-const code = buildSync({ stdin: { contents: "export { ExpertLayersCard, expertLayerState, expertBudget } from './src/screens/expertLayers'; export { ExpertMeasureControl, runMeasurement } from './src/screens/expertMeasure'; export { I18nProvider } from './src/i18n'", resolveDir: path.join(__dirname, '..'), loader: 'tsx' }, bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', external: ['react', 'react/jsx-runtime'] }).outputFiles[0].text
+const code = buildSync({ stdin: { contents: "export { ExpertLayersCard, expertLayerState, expertBudget, ShardDownloadBar } from './src/screens/expertLayers'; export { ExpertMeasureControl, runMeasurement } from './src/screens/expertMeasure'; export { I18nProvider } from './src/i18n'", resolveDir: path.join(__dirname, '..'), loader: 'tsx' }, bundle: true, write: false, platform: 'node', format: 'cjs', jsx: 'automatic', external: ['react', 'react/jsx-runtime'] }).outputFiles[0].text
 const moduleObject = { exports: {} }
 vm.runInNewContext(code, { module: moduleObject, exports: moduleObject.exports, require, Error })
-const { ExpertLayersCard, expertLayerState, expertBudget, ExpertMeasureControl, runMeasurement, I18nProvider } = moduleObject.exports
+const { ExpertLayersCard, expertLayerState, expertBudget, ExpertMeasureControl, runMeasurement, I18nProvider, ShardDownloadBar } = moduleObject.exports
 const fixture = {
   workerId: 'fixture-only', phase: 'serving', port: 59019,
   held: { model: 'step-3.7-flash', layer: 6, begin: 0, end: 64, nLayer: 45, nExpert: 288, denseLayers: 3, shardFile: 'L6_e000-064.gguf' },
@@ -90,4 +90,13 @@ test('measure stays disabled until an expert shard is downloaded and serving', (
   assert.match(waiting, /<button[^>]*disabled/); assert.match(waiting, /내려받아 워커가 서빙을 시작하면/)
   const ready = renderComponent(ExpertMeasureControl, { state, ready: true, onMeasure() {} }, 'en')
   assert.doesNotMatch(ready, /<button[^>]*disabled/); assert.doesNotMatch(ready, /becomes available once/)
+})
+test('shard download bar fills from bytes and is indeterminate without a size', () => {
+  const half = renderComponent(ShardDownloadBar, { download: { bytes: 300 * 2 ** 20, totalBytes: 600 * 2 ** 20, startedAt: 0 }, now: 10000 }, 'en')
+  assert.match(half, /aria-valuenow="50"/); assert.match(half, /width:50.0%/); assert.match(half, /300.0 \/ 600.0 MB · 50% · 30.0 MB\/s/)
+  const unknown = renderComponent(ShardDownloadBar, { download: { bytes: 2 ** 20, totalBytes: null, startedAt: 0 }, now: 1000 }, 'ko')
+  assert.match(unknown, /indeterminate/); assert.doesNotMatch(unknown, /aria-valuenow/)
+  const card = render([{ ...fixture, phase: 'downloading', download: { bytes: 2 ** 20, totalBytes: 4 * 2 ** 20, startedAt: Date.now() } }])
+  assert.match(card, /role="progressbar"/); assert.match(card, /aria-valuenow="25"/)
+  assert.doesNotMatch(render([fixture]), /role="progressbar"/)
 })

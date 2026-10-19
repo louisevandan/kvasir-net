@@ -24,6 +24,27 @@ export function expertBudget(slots: Slot[], status?: Partial<NodeStatus> | null)
   return { experts, bytes, state: over ? 'over' : bytes != null && status?.vramBudgetBytes != null && status?.maxExperts != null ? 'within' : 'unknown' }
 }
 
+const MB = 1024 * 1024
+// Fills as bytes arrive (fed by the fast download poll). Without a
+// content-length the bar is indeterminate rather than a made-up percentage.
+export function ShardDownloadBar({ download, now = Date.now() }: { download: { bytes: number; totalBytes: number | null; startedAt: number } | null; now?: number }) {
+  const { t } = useI18n()
+  const ratio = download?.totalBytes ? Math.min(1, download.bytes / download.totalBytes) : null
+  const secs = download ? Math.max(0.001, (now - download.startedAt) / 1000) : 0
+  const rate = download ? download.bytes / MB / secs : 0
+  return <div style={{ gridColumn: '1 / -1', marginTop: 2 }}>
+    <div role="progressbar" aria-label={t('ns.expertDownloading')} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={ratio == null ? undefined : Math.round(ratio * 100)}
+      className={ratio == null ? 'shard-progress indeterminate' : 'shard-progress'}
+      style={{ height: 4, borderRadius: 2, background: 'var(--surface-2)', overflow: 'hidden' }}>
+      <div style={{ height: '100%', width: ratio == null ? '30%' : `${(ratio * 100).toFixed(1)}%`, background: 'var(--pink)', transition: 'width 0.35s linear' }} />
+    </div>
+    <div className="small muted">{download
+      ? t('ns.expertDownloadProgress', (download.bytes / MB).toFixed(1), download.totalBytes ? (download.totalBytes / MB).toFixed(1) : '?', ratio == null ? '—' : Math.round(ratio * 100), rate.toFixed(1))
+      : t('ns.expertDownloading')}</div>
+  </div>
+}
+
 // The picture of what this node holds: the model's layer stack with held layers
 // lit, and one strip per held layer showing its expert range. Metadata only —
 // topology the assignment/GGUF did not state is shown as unknown, not guessed.
@@ -62,6 +83,7 @@ function ExpertLayerMap({ assigned }: { assigned: Slot[] }) {
                 style={{ background: expert >= h.begin && expert < h.end ? 'var(--pink)' : 'var(--surface-2)' }} />)}
             </div> : <span className="small muted">{t('ns.expertTopologyUnknown')}</span>}
             <span className="chip" style={{ fontSize: 10 }}>{t(`ns.expertLayerState.${expertLayerState(slot)}`)}</span>
+            {slot.phase === 'downloading' && <ShardDownloadBar download={slot.download ?? null} />}
           </div>
         })}
       </div>

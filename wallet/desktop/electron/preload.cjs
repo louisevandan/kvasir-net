@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('kvasir', {
     setVramBudget: (bytes) => ipcRenderer.invoke('node:setVramBudget', bytes),
     benchmark: (maxTokens) => ipcRenderer.invoke('node:benchmark', maxTokens),
     benchmarkProgress: () => ipcRenderer.invoke('node:benchmarkProgress'),
+    expertDownloads: () => ipcRenderer.invoke('node:expertDownloads'),
   },
   openExternal: (url) => ipcRenderer.invoke('shell:open', url),
   revealPath: (p) => ipcRenderer.invoke('shell:reveal', p),
