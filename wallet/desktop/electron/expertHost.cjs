@@ -125,9 +125,11 @@ class ExpertHost {
    * @param {Function} [o.fetch]       injected for tests; defaults to global fetch
    * @param {string[]} [o.workerArgs]  extra worker flags (tests pass a fake worker's)
    */
-  constructor({ baseUrl, token, workerBinary, shardDir, log = () => {}, WebSocket = null, fetch = null, workerArgs = [] }) {
+  constructor({ baseUrl, token, workerBinary, shardDir, log = () => {}, WebSocket = null, fetch = null, workerArgs = [], relayBase = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.tokenFn = token
+    // Optional direct path for the relay only (electron/directRelay.cjs); null → the gateway.
+    this.relayBaseFn = relayBase
     this.workerBinaryFn = workerBinary
     this.shardDir = shardDir
     this.log = log
@@ -338,7 +340,7 @@ class ExpertHost {
   }
 
   relayUrl(token) {
-    const ws = this.base.replace(/^http/, 'ws')
+    const ws = (this.relayBaseFn && this.relayBaseFn()) || this.base.replace(/^http/, 'ws')
     const q = new URLSearchParams({ session: this.session, token })
     return `${ws}/api/expert-relay?${q}`
   }

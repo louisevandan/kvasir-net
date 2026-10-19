@@ -22,7 +22,7 @@ test('nodeStatus returns while the live-ring request is still pending', async ()
     cachedLiveRing: createLiveRingCache ? createLiveRingCache({ observe }) : undefined,
     capability: async () => ({}), lastCapability: null, measured: null,
     readConfig: () => ({}), C: { stakingServiceUrl: 'https://example.com' },
-    relay: { status: () => ({}) }, participation: { status: () => ({}) },
+    relay: { status: () => ({}) }, participation: { status: () => ({}) }, directRelay: { status: () => ({ state: 'off' }) },
     DEBUG_WALLET: false, refreshGpuTotal: async () => ({}),
     vramBudgetBytes: () => 0, maxExpertsForBudget: () => 0,
     knowsWhatASlotCosts: () => false, memoryTopology: () => 'unknown',
