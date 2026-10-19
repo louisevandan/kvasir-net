@@ -45,8 +45,8 @@ export const en = {
     // here runs across these machines anyway, and the numbers are from today.
     eyebrow: "DePIN · Frontier models without the datacenter",
     headline1: "You don’t have the hardware",
-    headline2: "for a 428B model. Neither do we.",
-    sub: "Nothing in this fleet can hold Step-3.7-Flash — 428 billion parameters, far past any single device we own. Kvasir cuts it into layer windows so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring today: 6.7–6.8 tokens a second, first token in 70 ms.",
+    headline2: "for a 198B model. Neither do we.",
+    sub: "Nothing in this fleet can hold Step-3.7-Flash — 198 billion parameters, far past any single device we own. Kvasir cuts it into layer windows so each machine holds only its own and hands a hidden state to the next. Measured on the serving ring today: 6.7–6.8 tokens a second, first token in 70 ms.",
     badges: [
       "Runs on GPU · CPU · NPU · phone",
       "OpenAI + Anthropic compatible",
@@ -109,7 +109,7 @@ export const en = {
       {
         title: "Split",
         body: "The model is divided into contiguous layer windows. Every device keeps a copy of the model file but loads only its own window into memory, so no node has to run the whole thing.",
-        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
+        note: "Step-3.7-Flash 198B · 45 layers · 2 stages",
       },
       {
         title: "Serve",
@@ -225,7 +225,7 @@ export const en = {
     formulaLabels: ["Compute units", "Effective", "Infra uptime"],
     tiersTitle: "Performance tiers",
     tiersBody:
-      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work. The thresholds are absolute tokens per second, so they compare a node against the model it is serving, not against other nodes: a 428B MoE decodes far slower than a small model on the same silicon, and our own reference fleet sits at 6.7–6.8 tok/s on Step-3.7-Flash. Read a tier as a measure of the work a node is doing, not of how good the hardware is — and expect the thresholds to be stated per model class before mainnet.",
+      "A node’s measured decode speed sets its multiplier — faster hardware earns proportionally more for the same work. The thresholds are absolute tokens per second, so they compare a node against the model it is serving, not against other nodes: a 198B MoE decodes far slower than a small model on the same silicon, and our own reference fleet sits at 6.7–6.8 tok/s on Step-3.7-Flash. Read a tier as a measure of the work a node is doing, not of how good the hardware is — and expect the thresholds to be stated per model class before mainnet.",
   },
 
   tech: {
@@ -244,7 +244,7 @@ export const en = {
       },
       {
         title: "Distributed layer placement",
-        body: "p4 reads GGUF metadata and computes contiguous per-node layer windows from a placement plan, plus optional MoE expert-FFN offload to node RAM. Step-3.7-Flash, a 428B MoE, currently sits as 2 stages across two machines.",
+        body: "p4 reads GGUF metadata and computes contiguous per-node layer windows from a placement plan, plus optional MoE expert-FFN offload to node RAM. Step-3.7-Flash, a 198B MoE, currently sits as 2 stages across two machines.",
       },
       {
         title: "SIWS + 2FA security",
@@ -263,7 +263,7 @@ export const en = {
       {
         phase: "Now",
         title: "Frontier-scale serving, live",
-        body: "Step-3.7-Flash — a 428B MoE — is placed as 2 stages across two NVIDIA GB10 machines and is serving. A 122B model ran end to end across three physical machines, one of them a phone holding part of it. Wallets on web, desktop, iOS and Android keep keys on the user's device.",
+        body: "Step-3.7-Flash — a 198B MoE — is placed as 2 stages across two NVIDIA GB10 machines and is serving. A 122B model ran end to end across three physical machines, one of them a phone holding part of it. Wallets on web, desktop, iOS and Android keep keys on the user's device.",
       },
       {
         phase: "In flight",
@@ -293,7 +293,7 @@ export const en = {
       "wallet platforms — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B at 6.7–6.8 tok/s, first token in 67–71 ms · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
+      "Step-3.7-Flash 198B at 6.7–6.8 tok/s, first token in 67–71 ms · 122B end to end across three machines · OpenAI + Anthropic compatible · Solana devnet",
   },
 
   footer: {

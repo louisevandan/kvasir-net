@@ -43,8 +43,8 @@ export const fr: Dict = {
   hero: {
     eyebrow: "DePIN · Modèles frontier sans centre de données",
     headline1: "Vous n’avez pas le matériel",
-    headline2: "pour un modèle de 428B. Nous non plus.",
-    sub: "Rien dans cette flotte ne peut contenir Step-3.7-Flash — 428 milliards de paramètres, bien au-delà de n’importe quel appareil que nous possédons. Kvasir le découpe en fenêtres de layers pour que chaque machine ne détienne que la sienne et tende un état caché à la suivante. Mesuré aujourd’hui sur l’anneau en service : 6.7–6.8 tokens par seconde, premier token en 70 ms.",
+    headline2: "pour un modèle de 198B. Nous non plus.",
+    sub: "Rien dans cette flotte ne peut contenir Step-3.7-Flash — 198 milliards de paramètres, bien au-delà de n’importe quel appareil que nous possédons. Kvasir le découpe en fenêtres de layers pour que chaque machine ne détienne que la sienne et tende un état caché à la suivante. Mesuré aujourd’hui sur l’anneau en service : 6.7–6.8 tokens par seconde, premier token en 70 ms.",
     badges: [
       "Fonctionne sur GPU · CPU · NPU · téléphone",
       "Compatible OpenAI + Anthropic",
@@ -107,7 +107,7 @@ export const fr: Dict = {
       {
         title: "Répartir",
         body: "Le modèle est divisé en fenêtres de layers contiguës. Chaque appareil conserve une copie du fichier du modèle mais ne charge en mémoire que sa propre fenêtre, de sorte qu’aucun nœud n’a besoin d’exécuter le modèle entier.",
-        note: "Step-3.7-Flash 428B · 45 layers · 2 stages",
+        note: "Step-3.7-Flash 198B · 45 layers · 2 stages",
       },
       {
         title: "Servir",
@@ -242,7 +242,7 @@ export const fr: Dict = {
       },
       {
         title: "Placement distribué des layers",
-        body: "p4 lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud à partir d’un plan de placement, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud. Step-3.7-Flash, un MoE de 428B, est actuellement réparti en 2 stages sur deux machines.",
+        body: "p4 lit les métadonnées GGUF et calcule des fenêtres de layers contiguës par nœud à partir d’un plan de placement, avec un déchargement optionnel des FFN d’experts MoE vers la RAM du nœud. Step-3.7-Flash, un MoE de 198B, est actuellement réparti en 2 stages sur deux machines.",
       },
       {
         title: "Sécurité SIWS + 2FA",
@@ -261,7 +261,7 @@ export const fr: Dict = {
       {
         phase: "Maintenant",
         title: "Service à l’échelle frontier, en direct",
-        body: "Step-3.7-Flash — un MoE de 428B — est réparti en 2 stages sur deux machines NVIDIA GB10 et sert déjà. Un modèle de 122B a tourné de bout en bout sur trois machines physiques, dont un téléphone qui en détenait une partie. Les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur.",
+        body: "Step-3.7-Flash — un MoE de 198B — est réparti en 2 stages sur deux machines NVIDIA GB10 et sert déjà. Un modèle de 122B a tourné de bout en bout sur trois machines physiques, dont un téléphone qui en détenait une partie. Les portefeuilles web, desktop, iOS et Android conservent les clés sur l’appareil de l’utilisateur.",
       },
       {
         phase: "En cours",
@@ -291,7 +291,7 @@ export const fr: Dict = {
       "plateformes de portefeuille — web · desktop · iOS · Android",
     ],
     strip:
-      "Step-3.7-Flash 428B sur deux machines GB10 · 122B de bout en bout sur trois machines · compatible OpenAI + Anthropic · Solana devnet",
+      "Step-3.7-Flash 198B sur deux machines GB10 · 122B de bout en bout sur trois machines · compatible OpenAI + Anthropic · Solana devnet",
   },
 
   footer: {

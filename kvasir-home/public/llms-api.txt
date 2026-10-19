@@ -225,6 +225,6 @@ than describing the balance as theirs on-chain.
 
 ## Related
 
-- Run a node and earn instead of spending: https://kvasir-ai.net/llms-node.txt
+- Run a node and earn instead of spending: https://kvasir-ai.net/llms.txt (section "Join the network as a node")
 - What the network is: https://kvasir-ai.net/llms.txt
 - The full site as text: https://kvasir-ai.net/llms-full.txt
