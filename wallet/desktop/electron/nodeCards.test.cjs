@@ -47,11 +47,13 @@ test('connect card follows the main process status, so it survives leaving the s
   const opts = { electron: true, address: 'JcVYk4PpWallet' }
   const connected = render({ ...base, running: true, participation: { running: true, phase: 'serving' } }, opts)
   assert.match(connected, /data-connected="true"/); assert.match(connected, /dev\.connected/)
+  assert.match(connected, /data-action="disconnect"[^>]*>(<span[^>]*><\/span>)?dev\.disconnect</)
   assert.doesNotMatch(connected, /<button[^>]*>(<span[^>]*><\/span>)?dev\.connectThis/)
   const participating = render({ ...base, running: false, participation: { running: true, phase: 'volunteering' } }, opts)
   assert.match(participating, /data-connected="true"/)
   const stopped = render({ ...base, running: false, participation: { running: false, phase: 'stopped' } }, opts)
   assert.match(stopped, /data-connected="false"/); assert.match(stopped, />dev\.connectThis<\/button>/)
+  assert.doesNotMatch(stopped, /data-action="disconnect"/)
   assert.match(render(null, opts), /dev\.connectChecking/)
 })
 

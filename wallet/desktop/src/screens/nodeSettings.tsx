@@ -334,6 +334,14 @@ export function NodeSettingsScreen() {
     } catch (e: any) { setConnectMsg(String(e?.message ?? e)) }
     finally { setBusy(null) }
   }
+  // The same button disconnects: stops the agent, the volunteer loop and the relays.
+  const disconnectThis = async () => {
+    if (!api.node) return
+    setBusy('stop')
+    try { setStatus(await api.node.stop()); setConnectMsg(null) }
+    catch (e: any) { setConnectMsg(String(e?.message ?? e)) }
+    finally { setBusy(null) }
+  }
 
   // The slider commits on release; the main process caps the next volunteer
   // request with it, so it takes effect without restarting the node.
@@ -464,6 +472,10 @@ export function NodeSettingsScreen() {
               : connected ? <>
                 <div className="small" style={{ color: 'var(--good)' }}>✓ {nodeId} · {osLabel(os)} ({arch})</div>
                 {status.participation?.phase && <div className="small muted">{t('dev.connectPhase', status.participation.phase)}</div>}
+                <button className="btn ghost block" data-action="disconnect" style={{ marginTop: 10 }} disabled={busy !== null}
+                  aria-busy={busy === 'stop'} onClick={disconnectThis}>
+                  {busy === 'stop' && <span className="measure-spinner" aria-hidden="true" />}{busy === 'stop' ? t('dev.disconnecting') : t('dev.disconnect')}
+                </button>
               </>
               : <button className="btn block" disabled={busy !== null || !address} aria-busy={busy === 'start'} onClick={connectThis}>
                   {busy === 'start' && <span className="measure-spinner" aria-hidden="true" />}{busy === 'start' ? t('dev.connecting') : t('dev.connectThis')}
