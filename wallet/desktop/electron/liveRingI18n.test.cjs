@@ -15,7 +15,7 @@ const exportsObject = { exports: {} }
 vm.runInNewContext(compiled, { module: exportsObject, exports: exportsObject.exports, require })
 const { catalog, I18nProvider, useI18n } = exportsObject.exports
 const screen = fs.readFileSync(path.join(__dirname, '../src/screens/nodeSettings.tsx'), 'utf8')
-const keys = [...screen.matchAll(/t\('(ns\.(?:liveRing|localDecode|localBenchmark|agentRunning|benchmark)[^']*)'/g)].map(m => m[1])
+const keys = [...screen.matchAll(/t\('(ns\.(?:liveRing|localDecode|localBenchmark|agentRunning|benchmark|expert|noMeasurementTarget|measureFailed)[^']*)'/g)].map(m => m[1])
 for (const state of ['live', 'idle', 'stale', 'unavailable']) keys.push(`ns.liveRingState.${state}`)
 for (const reason of ['agentStale', 'expertOnly', 'noStage', 'feedUnavailable', 'feedHttp', 'noMatch', 'missingMetadata']) keys.push(`ns.liveRingReason.${reason}`)
 

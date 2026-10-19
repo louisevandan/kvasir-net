@@ -714,6 +714,15 @@ async function benchmark(sender, maxTokens = 64) {
   return { ok: true, ...measured }
 }
 
+// A node measures the shard it actually serves. Synthetic FFN results stay
+// separate from the historical full-model decode measurement.
+async function measureNode(sender, maxTokens = 64) {
+  const serving = expertPool.slots.find(slot => slot.phase === 'serving' && slot.proc)
+  if (serving) return serving.benchmark()
+  if (listModels().length) return benchmark(sender, maxTokens)
+  return { ok: false, error: 'no serving expert shard or local GGUF to measure', errorCode: 'noMeasurementTarget' }
+}
+
 const { createLiveRingCache } = require('./liveRing.cjs')
 const cachedLiveRing = createLiveRingCache()
 async function nodeStatus({ inspect = false } = {}) {
@@ -723,6 +732,7 @@ async function nodeStatus({ inspect = false } = {}) {
   // identical before, which is why an earning-nothing node read as healthy.
   return {
     ...p4node.status(), capability: (lastCapability = await capability()), measured,
+    expertWork: expertPool.status(),
     localBenchmark: measured, // additive alias: older renderers still read measured
     liveRing: cachedLiveRing(p4node.status(), expertPool.status(), readConfig().stakingUrl || C.stakingServiceUrl),
     relay: relay.status(), participation: participation.status(),
@@ -942,7 +952,7 @@ function register() {
     // Takes effect on the next volunteer poll; no restart needed.
     return { vramBudgetBytes: vramBudgetBytes(), maxExperts: maxExpertsForBudget() }
   })
-  ipcMain.handle('node:benchmark', (e, maxTokens) => benchmark(e.sender, maxTokens || 64))
+  ipcMain.handle('node:benchmark', (e, maxTokens) => measureNode(e.sender, maxTokens || 64))
 }
 
 function createWindow() {

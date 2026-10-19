@@ -88,6 +88,16 @@ export function capacityForBudget(budget: number | null, model: ExpertMemoryMode
   return { experts, slots }
 }
 
+export interface ExpertWorkMeasurement {
+  recentRows: number[]; state: 'live' | 'idle'; calls: number; rows: number; windowMs: number; windowLimitMs: number
+  callsPerSecond: number; rowsPerSecond: number; p50Ms: number | null; p95Ms: number | null; lastWorkAt: number | null
+}
+export interface ExpertBenchmark {
+  kind: 'synthetic-expert-ffn'; model: string; layer: number; begin: number; end: number
+  rowsPerSecond: number; callsPerSecond: number; p50Ms: number; p95Ms: number
+  elapsedMs: number; calls: number; rows: number; batchRows: number; expertsPerRow: number; at: number
+}
+
 export interface NodeStatus {
   running: boolean
   pid: number | null
@@ -104,6 +114,10 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
+  expertWork?: { slots: { workerId: string; phase: string;
+    held: { model: string; layer: number; begin: number; end: number; nLayer?: number | null; nExpert?: number | null; denseLayers?: number | null; shardFile?: string | null } | null
+    port: number | null; relay: { connected: boolean; lastClose: { code: number; reason: string; at: number } | null }
+    work: ExpertWorkMeasurement; localBenchmark: ExpertBenchmark | null }[] }
   localBenchmark?: NodeMeasurement | null
   liveRing?: {
     state: 'live' | 'idle' | 'stale' | 'unavailable'
@@ -201,7 +215,7 @@ export interface KvasirAPI {
     setVramBudget(bytes: number): Promise<{ vramBudgetBytes: number | null; maxExperts: number | null }>
     installCudaPack(): Promise<CudaPackStatus>
     cancelCudaPack(): Promise<CudaPackStatus>
-    benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string } & Partial<NodeMeasurement>>
+    benchmark(maxTokens?: number): Promise<{ ok: boolean; error?: string; errorCode?: string; expertBenchmark?: ExpertBenchmark } & Partial<NodeMeasurement>>
   }
   openExternal(url: string): Promise<void>
   revealPath(p: string): Promise<void>

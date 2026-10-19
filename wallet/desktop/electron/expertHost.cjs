@@ -31,6 +31,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const net = require('node:net')
 const { spawn } = require('node:child_process')
+const { ExpertMetrics, ExpertFrames, benchmarkExpert } = require('./expertMetrics.cjs')
 
 const SHARD_PATH = (model, layer, begin, end) =>
   `/api/proxy/models/${encodeURIComponent(model)}/expert-shard?layer=${layer}&expert_begin=${begin}&expert_end=${end}`
@@ -140,6 +141,9 @@ class ExpertHost {
     this.session = null
     this.relay = { ws: null, tcp: null, timer: null, retryMs: RELAY_RETRY_MIN, connected: false, bytes: 0, lastClose: null }
     this.lastError = null
+    this.metrics = new ExpertMetrics()
+    this.benchmarkBusy = false
+    this.localBenchmark = null
     this.generation = 0          // bumps on release; stale async work checks it
   }
 
@@ -171,7 +175,11 @@ class ExpertHost {
       && this.held.begin === want.begin && this.held.end === want.end) return
     this.release('reassigned')
     const gen = ++this.generation
-    this.held = { ...want, path: null, nEmbd: Number(assignment.n_embd) || 0 }
+    this.metrics = new ExpertMetrics()
+    this.localBenchmark = null
+    this.held = { ...want, path: null, nEmbd: Number(assignment.n_embd) || 0,
+      nLayer: Number(assignment.n_layer) || null, nExpert: Number(assignment.n_expert) || null,
+      denseLayers: Number.isInteger(assignment.leading_dense_block_count) ? assignment.leading_dense_block_count : null }
     this.session = `expert-${workerId}`
     this.lastError = null
     try {
@@ -179,6 +187,11 @@ class ExpertHost {
       const file = await this.download(want, gen)
       if (gen !== this.generation) return
       this.held.path = file
+      const metadata = this.checkShard(file, want)
+      const arch = metadata['general.architecture']
+      this.held.nLayer ||= Number(metadata[`${arch}.block_count`]) || null
+      this.held.nExpert ||= Number(metadata[`${arch}.expert_count`]) || null
+      this.held.denseLayers ??= metadata[`${arch}.leading_dense_block_count`] ?? null
       this.phase = 'starting'
       await this.startWorker(gen)
       if (gen !== this.generation) return
@@ -340,26 +353,31 @@ class ExpertHost {
     const ws = new this.WebSocket(this.relayUrl(token), { headers: { 'User-Agent': 'kvasir-wallet-desktop' } })
     this.relay.ws = ws
     let tcp = null
+    const frames = new ExpertFrames(this.held.nEmbd, this.metrics)
     ws.binaryType = 'nodebuffer'
+    const isCurrent = () => gen === this.generation && this.relay.ws === ws
     ws.on('open', () => {
+      if (!isCurrent()) { ws.terminate(); return }
       // Connect to the worker only once the bridge has accepted the session:
       // the worker serves each connection on its own thread, so idle
       // connections opened for refused dials would pile up there.
       tcp = net.connect(this.port, '127.0.0.1')
       tcp.setNoDelay(true)
       this.relay.tcp = tcp
-      tcp.on('data', (d) => { if (ws.readyState === 1) ws.send(d) })
+      tcp.on('data', (d) => { if (ws.readyState === 1 && isCurrent()) { frames.response(d); ws.send(d) } })
       tcp.on('close', () => { try { ws.close() } catch { /* closing */ } })
       tcp.on('error', () => { try { ws.close() } catch { /* closing */ } })
     })
     ws.on('message', (data) => {
+      if (!isCurrent()) return
       this.relay.connected = true
       this.relay.retryMs = RELAY_RETRY_MIN
       this.relay.bytes += data.length
-      if (tcp && !tcp.destroyed) tcp.write(data)
+      if (tcp && !tcp.destroyed) { frames.request(data); tcp.write(data) }
     })
     ws.on('error', () => { /* 'close' follows and carries the reason */ })
     ws.on('close', (code, reason) => {
+      if (!isCurrent()) { tcp?.destroy(); return }
       this.relay.connected = false
       this.relay.lastClose = { code, reason: String(reason || ''), at: Date.now() }
       if (tcp) { try { tcp.destroy() } catch { /* gone */ } }
@@ -402,10 +420,29 @@ class ExpertHost {
     this.phase = 'idle'
   }
 
+  async benchmark() {
+    if (this.benchmarkBusy) return { ok: false, error: 'expert benchmark already running' }
+    if (this.phase !== 'serving' || !this.proc || !this.held) return { ok: false, error: 'no owned expert worker is serving' }
+    const gen = this.generation, proc = this.proc, held = this.held, port = this.port
+    const isCurrent = () => this.generation === gen && this.proc === proc && this.phase === 'serving' && this.port === port
+    this.benchmarkBusy = true
+    try {
+      const result = await benchmarkExpert({ port, nEmbd: held.nEmbd, experts: held.end - held.begin, isCurrent })
+      if (!isCurrent()) return { ok: false, error: 'expert assignment changed' }
+      this.localBenchmark = { ...result, model: held.model, layer: held.layer, begin: held.begin, end: held.end }
+      return { ok: true, expertBenchmark: this.localBenchmark }
+    } catch (e) { return { ok: false, error: e.message } }
+    finally { this.benchmarkBusy = false }
+  }
+
   status() {
     return {
+      work: this.metrics.status(),
+      localBenchmark: this.localBenchmark,
       phase: this.phase,
-      held: this.held ? { model: this.held.model, layer: this.held.layer, begin: this.held.begin, end: this.held.end } : null,
+      held: this.held ? { model: this.held.model, layer: this.held.layer, begin: this.held.begin, end: this.held.end,
+        nLayer: this.held.nLayer, nExpert: this.held.nExpert, denseLayers: this.held.denseLayers,
+        shardFile: this.held.path ? path.basename(this.held.path) : null } : null,
       port: this.port,
       session: this.session,
       relay: { connected: this.relay.connected, bytes: this.relay.bytes, lastClose: this.relay.lastClose },
