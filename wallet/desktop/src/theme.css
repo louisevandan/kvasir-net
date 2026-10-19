@@ -141,8 +141,8 @@ select { appearance: none; }
 
 /* world map */
 .mapwrap { position: relative; width: 100%; background: radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--blue) 8%, var(--surface)) 0%, var(--surface) 70%); border-radius: 16px; overflow: hidden; }
-.land-dot { fill: var(--stroke); }
-:root[data-theme='light'] .land-dot { fill: #d6dcea; }
+.land-dot { fill: color-mix(in srgb, var(--text-2) 60%, transparent); }
+:root[data-theme='light'] .land-dot { fill: #aeb8cf; }
 .node-mark { transition: r .2s; cursor: pointer; }
 .node-ring { animation: nodepulse 2.2s ease-out infinite; transform-origin: center; transform-box: fill-box; }
 @keyframes nodepulse { 0% { opacity: .5; r: 4px; } 100% { opacity: 0; r: 16px; } }

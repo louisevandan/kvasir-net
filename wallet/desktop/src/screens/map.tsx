@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useWallet } from '../state'
 import { useI18n } from '../i18n'
 import { fmt } from '../api'
-import { Card, Stat, tierColor } from '../components'
+import { Card, Stat } from '../components'
+
+// Map palette for nodes that are online: S red, A yellow, B blue, C green.
+// Offline nodes stay grey so the live ones stand out on the dotted map.
+export const MAP_TIER_COLORS: Record<string, string> = { S: '#ef4444', A: '#facc15', B: '#3b82f6', C: '#22c55e' }
+export const mapNodeColor = (tier?: string, online = true) =>
+  online ? (MAP_TIER_COLORS[tier ?? ''] ?? '#94a3b8') : '#64748b'
 import { Staking, GlobalNode, GlobalNodeStatus } from '../services'
 
 const W = 1000, H = 500
@@ -80,7 +86,7 @@ export function MapScreen() {
           <div className="row" style={{ gap: 12 }}>
             {['S', 'A', 'B', 'C'].map((tr) => (
               <span key={tr} className="row small" style={{ gap: 5 }}>
-                <span className="badge-dot" style={{ background: tierColor(tr) }} />{tr}{totals?.byTier?.[tr] ? ` ${totals.byTier[tr]}` : ''}
+                <span className="badge-dot" style={{ background: mapNodeColor(tr) }} />{tr}{totals?.byTier?.[tr] ? ` ${totals.byTier[tr]}` : ''}
               </span>
             ))}
           </div>
@@ -92,7 +98,7 @@ export function MapScreen() {
             {data?.nodes.map((n) => {
               const [lng, lat] = nodeLngLat(n.nodeId)
               const { x, y } = project(lng, lat)
-              const c = tierColor(n.tier)
+              const c = mapNodeColor(n.tier, n.status === 'online')
               const r = 4 + Math.min(6, (n.effectiveUnits || 0) / 300)
               return (
                 <g key={n.nodeId}
@@ -107,7 +113,7 @@ export function MapScreen() {
           {hover && (
             <div className="map-tip" style={{ left: `${(hover.x / W) * 100}%`, top: `${(hover.y / H) * 100}%`, transform: 'translate(12px, -50%)' }}>
               <div style={{ fontWeight: 700 }}>{hover.n.label}</div>
-              <div className="muted">{hover.n.os} · <span style={{ color: tierColor(hover.n.tier) }}>{hover.n.tier} ×{fmt(hover.n.perfMultiplier)}</span> · {hover.n.status}</div>
+              <div className="muted">{hover.n.os} · <span style={{ color: mapNodeColor(hover.n.tier, hover.n.status === 'online') }}>{hover.n.tier} ×{fmt(hover.n.perfMultiplier)}</span> · {hover.n.status}</div>
               <div className="muted">{fmt(hover.n.effectiveUnits)} eff · {hover.n.ownerShort}</div>
             </div>
           )}
