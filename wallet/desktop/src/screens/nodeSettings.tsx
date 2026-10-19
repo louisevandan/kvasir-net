@@ -377,7 +377,8 @@ export function NodeSettingsScreen() {
       <div className="grid">
         <ExpertLayersCard slots={status?.expertWork?.slots} status={status}>
           {isElectron && <ExpertMeasureControl state={measureState} progress={measureState.running ? measureProgress : null}
-            disabled={busy !== null && busy !== 'measure'} onMeasure={measure} />}
+            disabled={busy !== null && busy !== 'measure'}
+            ready={!!status?.expertWork?.slots?.some(slot => slot.phase === 'serving')} onMeasure={measure} />}
         </ExpertLayersCard>
         {(status?.nodes.length ?? 0) > 0 && <Card>
           <div className="spread"><div className="label">{t('ns.liveRingTitle')}</div><span className="chip">{live?.reasonCode === 'agentNotInspected' ? t('ns.liveRingReason.agentNotInspected') : liveState(live?.state)}</span></div>

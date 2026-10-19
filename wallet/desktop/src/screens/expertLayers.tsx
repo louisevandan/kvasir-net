@@ -24,6 +24,51 @@ export function expertBudget(slots: Slot[], status?: Partial<NodeStatus> | null)
   return { experts, bytes, state: over ? 'over' : bytes != null && status?.vramBudgetBytes != null && status?.maxExperts != null ? 'within' : 'unknown' }
 }
 
+// The picture of what this node holds: the model's layer stack with held layers
+// lit, and one strip per held layer showing its expert range. Metadata only —
+// topology the assignment/GGUF did not state is shown as unknown, not guessed.
+function ExpertLayerMap({ assigned }: { assigned: Slot[] }) {
+  const { t } = useI18n()
+  const models = [...new Set(assigned.map(slot => slot.held!.model))]
+  return <>{models.map(model => {
+    const held = assigned.filter(slot => slot.held!.model === model)
+    const topology = held.find(slot => slot.held!.nLayer)?.held
+    const layers = topology?.nLayer && topology.nLayer > 0 && topology.nLayer <= 512 ? topology.nLayer : null
+    const dense = topology?.denseLayers
+    return <div key={model} style={{ marginTop: 10 }}>
+      <strong className="small">{model}</strong>
+      <div className="small muted">{t('ns.expertLayersLegend')}</div>
+      {layers ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(15, 1fr)', gap: 3, marginTop: 6 }}>
+        {Array.from({ length: layers }, (_, layer) => {
+          const owned = held.some(slot => slot.held!.layer === layer)
+          const isDense = dense != null && layer < dense
+          return <div key={layer} data-layer={layer} data-held={owned} data-dense={isDense}
+            title={t('ns.expertLayerCell', layer, isDense ? t('ns.expertDense') : owned ? t('ns.expertHeld') : t('ns.expertUnheld'))}
+            style={{ textAlign: 'center', fontSize: 10, padding: 3, borderRadius: 3,
+              border: '1px solid var(--line)', background: owned ? 'var(--pink)' : isDense ? 'var(--surface-2)' : 'transparent',
+              color: owned ? 'var(--bg)' : 'var(--muted)' }}>{layer}{isDense ? ' D' : ''}</div>
+        })}
+      </div> : <div className="small muted">{t('ns.expertTopologyUnknown')}</div>}
+      {dense == null && <div className="small muted">{t('ns.expertDenseUnknown')}</div>}
+      <div style={{ marginTop: 8 }}>
+        {held.slice().sort((a, b) => a.held!.layer - b.held!.layer).map(slot => {
+          const h = slot.held!
+          const count = h.nExpert && h.nExpert > 0 && h.nExpert <= 4096 ? h.nExpert : null
+          return <div key={slot.workerId} style={{ display: 'grid', gridTemplateColumns: '3.2em 1fr auto', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            <span className="small mono muted">L{h.layer}</span>
+            {count ? <div aria-label={t('ns.expertHeldRange')} title={`${h.begin}–${h.end} / ${count}`}
+              style={{ display: 'grid', gridTemplateColumns: `repeat(${count}, 1fr)`, height: 6, borderRadius: 2, overflow: 'hidden' }}>
+              {Array.from({ length: count }, (_, expert) => <span key={expert} data-expert={expert} data-held={expert >= h.begin && expert < h.end}
+                style={{ background: expert >= h.begin && expert < h.end ? 'var(--pink)' : 'var(--surface-2)' }} />)}
+            </div> : <span className="small muted">{t('ns.expertTopologyUnknown')}</span>}
+            <span className="chip" style={{ fontSize: 10 }}>{t(`ns.expertLayerState.${expertLayerState(slot)}`)}</span>
+          </div>
+        })}
+      </div>
+    </div>
+  })}</>
+}
+
 export function ExpertLayersCard({ slots = [], status, children }: {
   slots?: Slot[]; status?: Partial<NodeStatus> | null; children?: ReactNode
 }) {
@@ -43,6 +88,7 @@ export function ExpertLayersCard({ slots = [], status, children }: {
     {!assigned.length ? <div className="small muted">{t('ns.expertWorkNone')}</div> : <>
       <div className="small">{t('ns.expertNodeSummary', layers, serving, connecting, rows.toFixed(1), lastWork ? new Date(lastWork).toLocaleString() : t('ns.expertNeverWorked'))}</div>
       <div className="small muted">{t('ns.expertWorkHint')}</div>
+      <ExpertLayerMap assigned={assigned} />
       {upstreamDown && <div className="small" role="note" style={{ marginTop: 8 }}>{t('ns.expertUpstreamUnavailable')}</div>}
       <div className="small" style={{ color: budget.state === 'over' ? 'var(--danger)' : 'var(--muted)', marginTop: 8 }}>
         {t(`ns.expertBudget.${budget.state}`, budget.experts, status?.maxExperts ?? '—', gib(budget.bytes), gib(status?.vramBudgetBytes))}

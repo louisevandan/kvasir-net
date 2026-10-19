@@ -16,13 +16,15 @@ export async function runMeasurement({ benchmark, refresh, setState, failed, noT
   finally { setState({ running: false, error }) }
 }
 
-export function ExpertMeasureControl({ state, progress, disabled, onMeasure }: {
-  state: MeasureState; progress?: ExpertMeasurementProgress | null; disabled?: boolean; onMeasure: () => void
+export function ExpertMeasureControl({ state, progress, disabled, ready = true, onMeasure }: {
+  state: MeasureState; progress?: ExpertMeasurementProgress | null; disabled?: boolean
+  /** false until an expert shard is downloaded and a worker serves it */
+  ready?: boolean; onMeasure: () => void
 }) {
   const { t } = useI18n()
   const running = state.running || !!progress?.running
   return <div style={{ marginTop: 8 }}>
-    <button className="btn block" disabled={disabled || running} aria-busy={running} onClick={onMeasure}>
+    <button className="btn block" disabled={disabled || running || !ready} aria-busy={running} onClick={onMeasure}>
       {running && <span className="measure-spinner" aria-hidden="true" />}
       {running ? t('ns.measuring') : t('ns.measure')}
     </button>
@@ -31,6 +33,6 @@ export function ExpertMeasureControl({ state, progress, disabled, onMeasure }: {
       {progress?.running && <progress aria-label={t('ns.measuring')} value={Math.max(0, progress.index - 1)} max={progress.count} style={{ width: '100%', accentColor: 'var(--pink)' }} />}
     </div>}
     {!running && (state.error || progress?.error) && <div role="alert" className="small" style={{ color: 'var(--danger)' }}>{state.error || progress?.error}</div>}
-    <div className="small muted">{t('ns.expertMeasureHint')}</div>
+    <div className="small muted">{t(ready ? 'ns.expertMeasureHint' : 'ns.expertMeasureWaiting')}</div>
   </div>
 }
