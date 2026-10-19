@@ -109,7 +109,8 @@ export interface NodeStatus {
     state: 'live' | 'idle' | 'stale' | 'unavailable'
     source: string | null; metric: string; window: string; observedAt: number
     lastWorkAt: number | null; relayBytes: number; reason: string | null
-    stages: { nodeId: string; model: string | null; state: string; tps: number | null; lastWorkAt: number | null; reason: string | null }[]
+    reasonCode?: string | null; httpStatus?: number | null
+    stages: { nodeId: string; model: string | null; state: string; tps: number | null; lastWorkAt: number | null; reason: string | null; reasonCode?: string | null }[]
   }
   // What can actually compute on this machine, with live GPU memory.
   compute?: NodeCompute
