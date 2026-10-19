@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useWallet } from '../state'
 import { useI18n } from '../i18n'
 import { fmt } from '../api'
-import { Card, Stat } from '../components'
+import { Card, Stat, TIER_COLORS } from '../components'
 
-// Map palette for nodes that are online: S red, A yellow, B blue, C green.
-// Offline nodes stay grey so the live ones stand out on the dotted map.
-export const MAP_TIER_COLORS: Record<string, string> = { S: '#ef4444', A: '#facc15', B: '#3b82f6', C: '#22c55e' }
+// Online nodes use the shared tier palette (S red, A yellow, B blue, C green);
+// offline nodes stay grey so the live ones stand out on the dotted map.
+export const MAP_TIER_COLORS: Record<string, string> = TIER_COLORS
 export const mapNodeColor = (tier?: string, online = true) =>
   online ? (MAP_TIER_COLORS[tier ?? ''] ?? '#94a3b8') : '#64748b'
 import { Staking, GlobalNode, GlobalNodeStatus } from '../services'

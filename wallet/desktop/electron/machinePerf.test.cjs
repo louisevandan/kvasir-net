@@ -43,7 +43,8 @@ test('expected ring speed uses the chosen backbone at the recommended layers (at
 test('card shows the band bar, the settings it used, and the measure control', () => {
   const html = render({ status, plan, measure: { state: { running: false, error: null }, ready: true }, onMeasure() {}, onOpenSettings() {} })
   assert.equal((html.match(/data-band="/g) || []).length, 4)
-  assert.match(html, /data-mark="expected"/); assert.doesNotMatch(html, /data-mark="local"/)
+  assert.match(html, /data-mark="expected" data-strong="true"/); assert.doesNotMatch(html, /data-mark="local"/)
+  assert.match(html, /data-mark="expected"[\s\S]*?width:3px;height:24px[^"]*background:#dc2626/)
   assert.match(html, /Expected ring speed/); assert.match(html, /GB10-1/); assert.match(html, /measured: relay round trip/)
   assert.match(html, /8 slots\): 4200\.0 rows\/s/); assert.match(html, /9\.0 GiB/); assert.match(html, /Open node settings/)
   const withLocal = render({ status: { ...status, localBenchmark: { tps: 64.2 } }, plan })
