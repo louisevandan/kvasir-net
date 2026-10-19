@@ -99,12 +99,12 @@ export interface ExpertBenchmark {
 }
 
 export interface NetworkPlanRow { layers: number; tokenMs: number; tps: number; meetsTarget: boolean }
-export interface NetworkPlan { perLayerMs: number; transferMs: number; computeMs: number; hitProbability: number; baseTps: number; targetTps: number
+export interface NetworkPlan { perLayerMs: number; transferMs: number; computeMs: number; wire?: string; hitProbability: number; baseTps: number; targetTps: number
   rows: NetworkPlanRow[]; recommendedLayers: number }
 export interface BackboneCandidate {
   id: string; label: string; host: string; serving: boolean
   state: 'idle' | 'measuring' | 'ready' | 'failed'
-  rtt: { p50Ms: number; p90Ms: number; minMs: number; samples: number; failed: number } | null
+  rtt: { p50Ms: number; p90Ms: number; minMs: number; samples: number; failed: number; source?: 'relay' | 'tcp' } | null
   plan: NetworkPlan | null; error: string | null
 }
 export interface DirectRelayStatus { state: 'off' | 'starting' | 'up' | 'failed'; via: string | null; localPort: number | null; error: string | null }

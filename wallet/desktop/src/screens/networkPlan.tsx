@@ -79,16 +79,21 @@ export function NetworkPlanCard({ status, relay, onMeasure, onSelect }: {
               <div>{c.label}{c.id === status.bestId ? ` · ${t('ns.netPlanBest')}` : ''}</div>
               <div className="muted mono" style={{ fontSize: 10 }}>{c.host} · {c.serving ? t('ns.netPlanServing') : t('ns.netPlanNotServing')}</div>
             </td>
-            <td style={{ padding: 3 }}>{c.state === 'measuring' ? '…' : c.rtt ? `${c.rtt.p50Ms.toFixed(1)} ms` : c.state === 'failed' ? t('ns.netPlanUnreachable') : '—'}</td>
+            <td style={{ padding: 3 }} data-rtt-source={c.rtt?.source ?? ''}>{c.state === 'measuring' ? '…' : c.rtt ? <>
+              {c.rtt.p50Ms.toFixed(1)} ms
+              <div className="muted" style={{ fontSize: 10 }}>{c.rtt.source === 'relay' ? t('ns.netPlanSourceRelay') : t('ns.netPlanSourceTcp')}</div>
+            </> : c.state === 'failed' ? t('ns.netPlanUnreachable') : '—'}</td>
             <td style={{ padding: 3 }}>{c.plan ? t('ns.netPlanBestCell', c.plan.recommendedLayers, (c.plan.rows.find((r) => r.layers === Math.max(1, c.plan!.recommendedLayers))?.tps ?? 0).toFixed(1)) : '—'}</td>
-            <td style={{ padding: 3 }}>{onSelect && <button className="btn ghost" style={{ width: 'auto', padding: '2px 8px' }}
-              disabled={isChosen || c.state !== 'ready'} onClick={() => onSelect(c.id)}>{isChosen ? t('ns.netPlanSelected') : t('ns.netPlanSelect')}</button>}</td>
+            <td style={{ padding: 3 }}>{onSelect && <button className="btn ghost"
+              data-selected={isChosen} disabled={isChosen || c.state !== 'ready'} onClick={() => onSelect(c.id)}
+              style={{ width: 'auto', padding: '2px 8px', ...(isChosen ? { color: 'var(--good)', opacity: 1 } : {}) }}>{isChosen ? `✓ ${t('ns.netPlanSelected')}` : t('ns.netPlanSelect')}</button>}</td>
           </tr>
         })}</tbody>
       </table>
       {chosen && <div style={{ marginTop: 10 }}>
         <div className="small">{t('ns.netPlanPath', chosen.label, chosen.host)}</div>
-        {chosen.rtt && <div className="small">{t('ns.netPlanRtt', chosen.rtt.p50Ms.toFixed(1), chosen.rtt.p90Ms.toFixed(1), chosen.rtt.samples)}</div>}
+        {chosen.rtt && <div className="small">{t('ns.netPlanRtt', chosen.rtt.p50Ms.toFixed(1), chosen.rtt.p90Ms.toFixed(1), chosen.rtt.samples)}
+          {' · '}{chosen.rtt.source === 'relay' ? t('ns.netPlanSourceRelay') : t('ns.netPlanSourceTcp')}</div>}
         {chosen.error && <div role="alert" className="small" style={{ color: 'var(--danger)' }}>{t('ns.netPlanFailed', chosen.error)}</div>}
         {!chosen.serving && <div className="small" style={{ color: 'var(--warn)' }}>{t('ns.netPlanCandidateNote', chosen.label)}</div>}
         {chosen.plan && <PlanTable target={chosen} />}

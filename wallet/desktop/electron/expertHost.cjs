@@ -113,6 +113,15 @@ function readGgufMetadata(file) {
   }
 }
 
+const RELAY_PING_MS = 5000
+/** p50/p90 of the recent relay ping round trips, or null before the first pong. */
+function relayRtt(relay) {
+  const xs = (relay.rtt || []).slice().sort((a, b) => a - b)
+  if (!xs.length) return null
+  const at = (q) => xs[Math.min(xs.length - 1, Math.floor(xs.length * q))]
+  return { p50Ms: at(0.5), p90Ms: at(0.9), lastMs: relay.rtt[relay.rtt.length - 1], samples: xs.length, at: relay.rttAt }
+}
+
 class ExpertHost {
   /**
    * @param {object} o
@@ -141,7 +150,7 @@ class ExpertHost {
     this.proc = null
     this.port = null
     this.session = null
-    this.relay = { ws: null, tcp: null, timer: null, retryMs: RELAY_RETRY_MIN, connected: false, bytes: 0, lastClose: null }
+    this.relay = { ws: null, tcp: null, timer: null, retryMs: RELAY_RETRY_MIN, connected: false, bytes: 0, lastClose: null, rtt: [], rttAt: null, pingTimer: null }
     this.lastError = null
     this.metrics = new ExpertMetrics()
     this.benchmarkBusy = false
@@ -374,6 +383,26 @@ class ExpertHost {
       tcp.on('data', (d) => { if (ws.readyState === 1 && isCurrent()) { frames.response(d); ws.send(d) } })
       tcp.on('close', () => { try { ws.close() } catch { /* closing */ } })
       tcp.on('error', () => { try { ws.close() } catch { /* closing */ } })
+      // The real round trip of this relay path (this PC → bridge, which sits on
+      // the backbone host): a WebSocket ping the bridge answers with a pong.
+      // This, not a TCP handshake to some other port, is what an expert call pays.
+      const ping = () => { if (ws.readyState === 1 && isCurrent()) { try { ws.ping(Buffer.from(String(process.hrtime.bigint()))) } catch { /* closing */ } } }
+      ping()
+      this.relay.pingTimer = setInterval(ping, RELAY_PING_MS)
+    })
+    ws.on('pong', (data) => {
+      if (!isCurrent()) return
+      const sent = (() => { try { return BigInt(String(data)) } catch { return null } })()
+      if (sent == null) return
+      const ms = Number(process.hrtime.bigint() - sent) / 1e6
+      if (!(ms >= 0 && ms < 60000)) return
+      this.relay.rtt.push(ms)
+      if (this.relay.rtt.length > 32) this.relay.rtt.shift()
+      this.relay.rttAt = Date.now()
+      // A pong means the bridge kept the socket, which it only does once the
+      // backbone's port accepted: the relay is up even before the first request.
+      this.relay.connected = true
+      this.relay.retryMs = RELAY_RETRY_MIN
     })
     ws.on('message', (data) => {
       if (!isCurrent()) return
@@ -384,6 +413,7 @@ class ExpertHost {
     })
     ws.on('error', () => { /* 'close' follows and carries the reason */ })
     ws.on('close', (code, reason) => {
+      if (this.relay.pingTimer && this.relay.ws === ws) { clearInterval(this.relay.pingTimer); this.relay.pingTimer = null }
       if (!isCurrent()) { tcp?.destroy(); return }
       this.relay.connected = false
       this.relay.lastClose = { code, reason: String(reason || ''), at: Date.now() }
@@ -409,7 +439,8 @@ class ExpertHost {
   closeRelay() {
     clearTimeout(this.relay.timer)
     const { ws, tcp } = this.relay
-    this.relay = { ws: null, tcp: null, timer: null, retryMs: RELAY_RETRY_MIN, connected: false, bytes: this.relay.bytes, lastClose: this.relay.lastClose }
+    if (this.relay.pingTimer) clearInterval(this.relay.pingTimer)
+    this.relay = { ws: null, tcp: null, timer: null, retryMs: RELAY_RETRY_MIN, connected: false, bytes: this.relay.bytes, lastClose: this.relay.lastClose, rtt: this.relay.rtt, rttAt: this.relay.rttAt, pingTimer: null }
     if (ws) { try { ws.terminate() } catch { /* gone */ } }
     if (tcp) { try { tcp.destroy() } catch { /* gone */ } }
   }
@@ -453,7 +484,7 @@ class ExpertHost {
         shardFile: this.held.path ? path.basename(this.held.path) : null } : null,
       port: this.port,
       session: this.session,
-      relay: { connected: this.relay.connected, bytes: this.relay.bytes, lastClose: this.relay.lastClose },
+      relay: { connected: this.relay.connected, bytes: this.relay.bytes, lastClose: this.relay.lastClose, rtt: relayRtt(this.relay) },
       lastError: this.lastError,
     }
   }
@@ -650,4 +681,4 @@ class ExpertPool {
   }
 }
 
-module.exports = { ExpertHost, ExpertPool, ExpertHostError, readGgufMetadata }
+module.exports = { ExpertHost, ExpertPool, ExpertHostError, readGgufMetadata, relayRtt }

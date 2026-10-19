@@ -748,7 +748,23 @@ function refreshNetworkPlan() {
     ...(bench.length ? { computeMs: Math.max(...bench) } : {}),
     ...(held?.nExpert ? { nExpert: held.nExpert } : {}),
     ...(held?.nUsed ? { nUsed: held.nUsed } : {}),
-  })
+  }, measuredRelay())
+}
+/** Relay ping round trips by backbone: today every relay ends at the serving backbone's bridge. */
+function measuredRelay() {
+  const rtts = expertPool.slots.map((s) => s.status().relay?.rtt).filter((r) => r && r.samples > 0)
+  const serving = C.backbones.find((b) => b.serving)
+  if (!rtts.length || !serving) return {}
+  rtts.sort((a, b) => a.p50Ms - b.p50Ms)
+  return { [serving.id]: rtts[0] }
+}
+/** Re-plan in the background once real relay pings exist and the plan still uses a TCP estimate. */
+function networkPlanStatus() {
+  const st = networkPlanner.status()
+  const live = measuredRelay()
+  const stale = st.targets.some((t) => live[t.id] && (t.rtt?.source !== 'relay' || Date.now() - (st.at ?? 0) > 30000))
+  if (st.state !== 'measuring' && stale) void refreshNetworkPlan()
+  return { ...st, warnTps: C.networkWarnTps }
 }
 const { createLiveRingCache } = require('./liveRing.cjs')
 const cachedLiveRing = createLiveRingCache()
@@ -985,7 +1001,7 @@ function register() {
   ipcMain.handle('node:benchmark', (e, maxTokens) => measureNode(e.sender, maxTokens || 64))
   ipcMain.handle('node:benchmarkProgress', () => expertPool.measurementStatus())
   ipcMain.handle('node:expertDownloads', () => expertPool.downloadStatus())
-  ipcMain.handle('node:networkPlan', () => ({ ...networkPlanner.status(), warnTps: C.networkWarnTps }))
+  ipcMain.handle('node:networkPlan', () => networkPlanStatus())
   ipcMain.handle('node:measureNetwork', async () => ({ ...(await refreshNetworkPlan()), warnTps: C.networkWarnTps }))
   // The operator's choice of backbone, kept in config; only a known id is accepted.
   ipcMain.handle('node:selectBackbone', (_e, id) => {

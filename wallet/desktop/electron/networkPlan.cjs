@@ -57,10 +57,15 @@ function hitProbability(total, held, used) {
  * (the v2f16 wire mode returns the router-weighted sum, n_embd × 2 bytes).
  */
 function planLayers({ rttMs, computeMs = 2, baseTps, nExpert = 288, nUsed = 8, expertsPerLayer = 64,
-  nEmbd = 4096, uploadBytesPerSecond = 5e6, maxLayers = 8, targetTps = 4 }) {
-  const transferMs = (nEmbd * 2) / uploadBytesPerSecond * 1000
-  const perLayerMs = rttMs + computeMs + transferMs
+  nEmbd = 4096, uploadBytesPerSecond = 5e6, maxLayers = 8, targetTps = 4, wire = 'v1' }) {
   const p = hitProbability(nExpert, expertsPerLayer, nUsed)
+  // What this PC sends back per token that touches its range. v1 (what the
+  // backbone speaks today) returns one f32 row per (token, expert) pair; v2f16
+  // would return one combined f16 row.
+  const pairsPerHit = p > 0 ? (nUsed * expertsPerLayer / nExpert) / p : 0
+  const bytes = wire === 'v2f16' ? nEmbd * 2 : pairsPerHit * nEmbd * 4
+  const transferMs = bytes / uploadBytesPerSecond * 1000
+  const perLayerMs = rttMs + computeMs + transferMs
   const baseMs = 1000 / baseTps
   const rows = []
   for (let k = 0; k <= maxLayers; k++) {
@@ -68,7 +73,7 @@ function planLayers({ rttMs, computeMs = 2, baseTps, nExpert = 288, nUsed = 8, e
     rows.push({ layers: k, tokenMs, tps: 1000 / tokenMs, meetsTarget: 1000 / tokenMs >= targetTps })
   }
   const fits = rows.filter((r) => r.layers > 0 && r.meetsTarget)
-  return { perLayerMs, transferMs, computeMs, hitProbability: p, baseTps, targetTps, rows,
+  return { perLayerMs, transferMs, computeMs, wire, hitProbability: p, baseTps, targetTps, rows,
     recommendedLayers: fits.length ? fits[fits.length - 1].layers : 0 }
 }
 
@@ -96,13 +101,18 @@ function createNetworkPlanner({ targets, model, probe = probeRtt, now = Date.now
   }
   return {
     status: view,
-    refresh(inputs = {}) {
+    refresh(inputs = {}, measured = {}) {
       if (running) return running
       state = { ...state, state: 'measuring', targets: state.targets.map((t) => ({ ...t, state: 'measuring', error: null })) }
       running = (async () => {
         const results = await Promise.all(targets.map(async (t) => {
           try {
-            const rtt = await probe({ host: t.host, port: t.port })
+            // A backbone this PC already relays to is planned from that relay's
+            // own ping round trips; others from a TCP handshake (an estimate).
+            const live = measured[t.id]
+            const rtt = live && live.samples > 0
+              ? { p50Ms: live.p50Ms, p90Ms: live.p90Ms, minMs: live.p50Ms, samples: live.samples, failed: 0, source: 'relay' }
+              : { ...(await probe({ host: t.host, port: t.port })), source: 'tcp' }
             return { ...blank(t), state: 'ready', rtt, plan: planLayers({ ...model, ...inputs, rttMs: rtt.p50Ms }) }
           } catch (e) { return { ...blank(t), state: 'failed', error: e.message } }
         }))
