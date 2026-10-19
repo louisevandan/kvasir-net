@@ -104,6 +104,13 @@ export interface NodeStatus {
   log: string[]
   capability: NodeCapability
   measured: NodeMeasurement | null
+  localBenchmark?: NodeMeasurement | null
+  liveRing?: {
+    state: 'live' | 'idle' | 'stale' | 'unavailable'
+    source: string | null; metric: string; window: string; observedAt: number
+    lastWorkAt: number | null; relayBytes: number; reason: string | null
+    stages: { nodeId: string; model: string | null; state: string; tps: number | null; lastWorkAt: number | null; reason: string | null }[]
+  }
   // What can actually compute on this machine, with live GPU memory.
   compute?: NodeCompute
   // GPU memory the operator lends the network, and how many experts that holds.

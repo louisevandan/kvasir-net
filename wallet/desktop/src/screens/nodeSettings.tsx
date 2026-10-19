@@ -214,7 +214,8 @@ export function NodeSettingsScreen() {
 
   const capability = status?.capability
   const backend = capability?.backend ?? 'cpu'
-  const measured = status?.measured ?? null
+  const measured = status?.localBenchmark ?? status?.measured ?? null
+  const live = status?.liveRing
   const running = !!status?.running
 
   // Register only while an agent is actually running: a heartbeat from a machine
@@ -347,8 +348,24 @@ export function NodeSettingsScreen() {
         </Card>
       </div>
 
-      {/* col 2 — measured throughput, and what it is worth */}
+      {/* Live ring work is separate from the optional local GGUF benchmark. */}
       <div className="grid">
+        <Card>
+          <div className="spread"><div className="label">Live ring work</div><span className="chip">{live?.state ?? 'unavailable'}</span></div>
+          <div className="small muted">Achieved request throughput · not decode-only speed</div>
+          {live?.reason && <div className="small muted">{live.reason}</div>}
+          {live?.stages.map(stage => (
+            <div key={stage.nodeId} className="small" style={{ marginTop: 8 }}>
+              <div>{stage.nodeId} · {stage.model ?? 'model unavailable'} · {stage.state}</div>
+              <strong>{stage.tps == null ? '—' : stage.tps.toFixed(1)} tok/s</strong>
+              <div className="muted">Last work: {stage.lastWorkAt ? new Date(stage.lastWorkAt).toLocaleString() : 'unknown'}</div>
+              {stage.reason && <div className="muted">{stage.reason}</div>}
+            </div>
+          ))}
+          <div className="small muted" style={{ marginTop: 8 }}>Source: {live?.source ?? 'unavailable'}</div>
+          <div className="small muted">Window: {live?.window ?? 'unknown'}</div>
+          <div className="small muted">Expert relay activity: {live?.relayBytes ?? 0} bytes · not token throughput</div>
+        </Card>
         <Card>
           <div className="spread">
             <div className="label">{t('ns.throughput')}</div>
@@ -382,7 +399,7 @@ export function NodeSettingsScreen() {
           <Card>
             <div className="row" style={{ marginBottom: 10 }}>
               <span className="badge-dot" style={{ background: 'var(--good)' }} />
-              <span className="small" style={{ marginLeft: 8 }}>{t('ns.live')} · {nodeId}</span>
+              <span className="small" style={{ marginLeft: 8 }}>Agent running · {nodeId}</span>
             </div>
             <MetricRow label={`${BACKEND_LABEL[backend] ?? backend} · last local benchmark`} value={Math.min(1, (measured?.tps ?? 0) / 120)}
               valueText={measured ? `${Math.round(measured.tps)} tok/s` : t('ns.notMeasured')} color="var(--pink)" />
