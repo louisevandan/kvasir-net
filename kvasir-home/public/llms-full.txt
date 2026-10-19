@@ -153,7 +153,7 @@ Runnable self-issue scripts (TS/Node, Python), the streaming + tool-call example
 - p4 (engine, BSL 1.1): https://github.com/louisevandan/kvasir-net/tree/p4
 - Gateway (OpenAI/Anthropic-compatible): https://gate.kvasir-ai.net
 - Agent instructions, inference API: https://kvasir-ai.net/llms-api.txt
-- Agent instructions, run a node: https://kvasir-ai.net/llms-node.txt
+- Agent instructions, run a node: https://kvasir-ai.net/llms.txt (section "Join the network as a node")
 - Run a node (how a device joins): https://kvasir-ai.net/run-node
 - Installing the mobile builds: https://kvasir-ai.net/install
 (hub.kvasir-ai.net is retired: the control plane behind it was deleted and the bridge took over its role. Its DNS record was removed on 2026-09-21, so the host no longer resolves.)

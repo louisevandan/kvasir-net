@@ -16,3 +16,8 @@
 /wiki/linkcpp               /wiki/p4                  301
 /wiki/ring-runtime          /wiki/in-flight-ring      301
 /wiki/relay-443             /wiki/node-relay          301
+
+# The node-join instructions for agents were folded into llms.txt so one file
+# (and /docs/api, which prerenders it) carries the whole path. 301: it lives
+# there now.
+/llms-node.txt  /llms.txt  301

@@ -326,7 +326,9 @@ const staticRoutes = [
     image: `${ORIGIN}/og.png`,
     kind: "website",
     bodyHtml:
-      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Kvasir developer API</h1><p class="mt-4 text-lg text-ink-muted">Pay-per-inference in KVR over an OpenAI-compatible surface: discover a model, quote, pay on-chain from your own wallet, redeem. Solana devnet.</p></section>`,
+      `<section class="mx-auto max-w-3xl px-6 py-24"><h1 class="text-4xl font-semibold text-ink">Kvasir developer API</h1><p class="mt-4 text-lg text-ink-muted">Pay-per-inference in KVR over an OpenAI-compatible surface: discover a model, quote, pay on-chain from your own wallet, redeem. Solana devnet.</p>` +
+      `<h2 class="mt-12 text-2xl font-semibold text-ink">For AI agents</h2><p class="mt-4 text-ink-muted">If you are an agent acting for a user, everything you need is below as plain text — how to install a node and join the network (Linux headless, or the Windows/macOS desktop app), the wallet, and how to call the paid API. The same text is at <a href="/llms.txt">/llms.txt</a>; the API walkthrough is at <a href="/llms-api.txt">/llms-api.txt</a>.</p>` +
+      `<pre class="mt-6 whitespace-pre-wrap font-mono text-sm text-ink-muted">${esc(readFileSync(resolve(ROOT, "public/llms.txt"), "utf8"))}</pre></section>`,
     jsonld: [breadcrumb([["API", "/docs/api"]])],
   },
   {

@@ -481,10 +481,10 @@ export default function ApiDocsPage() {
               llms-api.txt
             </a>{" "}
             is this page written for one — wallet, key, first call, and what each error means.{" "}
-            <a href="/llms-node.txt" className="text-brand-300 underline underline-offset-2 hover:text-brand-200">
-              llms-node.txt
+            <a href="/llms.txt" className="text-brand-300 underline underline-offset-2 hover:text-brand-200">
+              llms.txt
             </a>{" "}
-            does the same for running a node.
+            does the same for running a node on Linux, Windows or macOS.
           </p>
         </div>
 
