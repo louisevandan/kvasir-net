@@ -136,6 +136,8 @@ export interface NodeStatus {
   capability: NodeCapability
   measured: NodeMeasurement | null
   directRelay?: DirectRelayStatus | null
+  // The volunteer loop (electron/participation.cjs); kept by the main process, so it survives leaving this screen.
+  participation?: { running: boolean; phase: string; workerId?: string | null; lastError?: string | null } | null
   expertWork?: { measurement?: ExpertMeasurementProgress | null; slots: { workerId: string; phase: string;
     held: { model: string; layer: number; begin: number; end: number; nLayer?: number | null; nExpert?: number | null; denseLayers?: number | null; shardFile?: string | null } | null
     download?: ShardDownload | null
