@@ -27,7 +27,7 @@ function harness({ timings, httpOk = true, usage = 64 } = {}) {
     setTimeout: (cb, ms) => { now += ms; cb() },
     fetch: async (url) => {
       if (url.endsWith('/health')) return { ok: true }
-      if (url.endsWith('/props')) return { ok: true, json: async () => ({ model_path: '/models/small.gguf' }) }
+      if (url.endsWith('/props')) return { ok: true, json: async () => ({ model_path: path.join('/models', 'small.gguf') }) } // llama-server echoes -m, which main.cjs builds with path.join
       if (url.endsWith('/v1/models')) return { ok: true, json: async () => ({ data: [{ id: context.localServer.current.alias }] }) }
       now += 9000 // prompt/queue/decode, separate from the health wait
       return { ok: httpOk, status: httpOk ? 200 : 500, json: async () => ({
