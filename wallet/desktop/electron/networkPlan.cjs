@@ -84,7 +84,7 @@ function planLayers({ rttMs, computeMs = 2, baseTps, nExpert = 288, nUsed = 8, e
  * and is never auto-selected over one that serves.
  */
 function createNetworkPlanner({ targets, model, probe = probeRtt, now = Date.now, selected = () => null } = {}) {
-  const blank = (t) => ({ id: t.id, label: t.label, host: t.host, serving: !!t.serving, state: 'idle', rtt: null, plan: null, error: null })
+  const blank = (t) => ({ id: t.id, label: t.label, host: t.host, serving: !!t.serving, via: t.via || null, baseTps: t.baseTps || null, state: 'idle', rtt: null, plan: null, error: null })
   let state = { state: 'idle', targets: targets.map(blank), at: null }
   let running = null
   const best = (list) => {
@@ -113,7 +113,7 @@ function createNetworkPlanner({ targets, model, probe = probeRtt, now = Date.now
             const rtt = live && live.samples > 0
               ? { p50Ms: live.p50Ms, p90Ms: live.p90Ms, minMs: live.p50Ms, samples: live.samples, failed: 0, source: 'relay' }
               : { ...(await probe({ host: t.host, port: t.port })), source: 'tcp' }
-            return { ...blank(t), state: 'ready', rtt, plan: planLayers({ ...model, ...inputs, rttMs: rtt.p50Ms }) }
+            return { ...blank(t), state: 'ready', rtt, plan: planLayers({ ...model, ...inputs, ...(t.baseTps ? { baseTps: t.baseTps } : {}), rttMs: rtt.p50Ms }) }
           } catch (e) { return { ...blank(t), state: 'failed', error: e.message } }
         }))
         state = { state: results.some((r) => r.state === 'ready') ? 'ready' : 'failed', targets: results, at: now() }

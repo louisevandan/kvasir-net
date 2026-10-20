@@ -78,6 +78,22 @@ test('planner measures every backbone in parallel, prefers one that serves, hono
   assert.equal(planner.status().selectedId, 'a')
 })
 
+test('each backbone is planned from its own ring speed, and the shipped MI250-02 serves via GB10-1', async () => {
+  const planner = createNetworkPlanner({
+    targets: [{ id: 'slow', label: 'S', host: 's', port: 1, serving: true, baseTps: 6.7 }, { id: 'fast', label: 'F', host: 'f', port: 1, serving: true, baseTps: 16, via: 'slow' }],
+    model: C.expertPlanModel,
+    probe: async () => ({ p50Ms: 20, p90Ms: 21, minMs: 20, samples: 5, failed: 0 }),
+  })
+  const s = await planner.refresh()
+  const slow = s.targets.find((t) => t.id === 'slow'), fast = s.targets.find((t) => t.id === 'fast')
+  assert.equal(slow.plan.baseTps, 6.7); assert.equal(fast.plan.baseTps, 16)
+  assert.equal(fast.via, 'slow')
+  assert.ok(fast.plan.rows[0].tps > slow.plan.rows[0].tps)
+  const mi = C.backbones.find((b) => b.id === 'mi250-02')
+  assert.ok(mi.serving && mi.bridgeId === 'mi250-02' && mi.via === 'gb10-1')
+  assert.ok(!C.backbones.find((b) => b.id === 'mi250-01').serving)
+})
+
 const status = (rttA, extra = {}) => ({
   state: 'ready', at: 1, bestId: 'gb10-1', selectedId: null, warnTps: 5,
   targets: [

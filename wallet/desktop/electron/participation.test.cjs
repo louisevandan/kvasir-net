@@ -266,6 +266,24 @@ function client(base, extra = {}) {
     } finally { await br.close() }
   })
 
+  await test('coverage names the chosen backbone, and only when there is one', async () => {
+    const br = await fakeBridge({
+      'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),
+      'POST /api/auth/node-token': () => ({ body: { node_token: 't', expires_in: 100 } }),
+      'POST /api/expert-coverage': () => ({ body: { ok: true, workers: 1 } }),
+    })
+    try {
+      let backbone = null
+      const p = client(br.base, { backbone: () => backbone })
+      await p.reportCoverage([[4, 8, 15]], { model: 'step-3.7' })
+      backbone = 'mi250-02'
+      await p.reportCoverage([[4, 8, 15]], { model: 'step-3.7' })
+      const calls = br.seen.filter((x) => x.key === 'POST /api/expert-coverage')
+      assert.ok(!('backbone' in calls[0].body), 'the default ring sends no backbone')
+      assert.strictEqual(calls[1].body.backbone, 'mi250-02')
+    } finally { await br.close() }
+  })
+
   await test('skips the post when it would be a guaranteed 400', async () => {
     const br = await fakeBridge({
       'POST /api/auth/challenge': () => ({ body: { nonce: 'n', message: 'm' } }),

@@ -103,7 +103,7 @@ class ParticipationError extends Error {
  * @param {(line:string)=>void} [opts.log]
  */
 class Participation {
-  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null, platform = null, admissionsUrl = '', profile = null }) {
+  constructor({ baseUrl, wallet, sign, store = null, log = () => {}, workerId = null, host = null, platform = null, admissionsUrl = '', profile = null, backbone = null }) {
     this.base = String(baseUrl || '').replace(/\/+$/, '')
     this.walletFn = wallet
     // Same identity the settlement side already uses for this machine
@@ -133,6 +133,9 @@ class Participation {
     // instead of assuming. Without it a relay-credited desktop or server was
     // recorded as a phone.
     this.platformFn = typeof platform === 'function' ? platform : () => platform
+    // Which backbone this machine's expert sessions are for (the bridge's id for
+    // it), or null for the default ring. Sent with every coverage report.
+    this.backboneFn = typeof backbone === 'function' ? backbone : () => backbone
     this.admissionsBase = String(admissionsUrl || '').replace(/\/+$/, '')
     this.profileFn = typeof profile === 'function' ? profile : () => profile
     /** When we last put this machine in front of the operator. */
@@ -334,6 +337,8 @@ class Participation {
     // Relay wiring only happens for a "relay:<session>" url, and an empty one
     // leaves this worker unwired — correct until there is something to serve.
     if (url) body.url = url
+    const backbone = this.backboneFn()
+    if (backbone) body.backbone = String(backbone)
     const platform = this.platformFn()
     if (platform) {
       for (const k of ['os', 'device_kind', 'accelerator', 'backend']) {

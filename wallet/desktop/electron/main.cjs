@@ -657,6 +657,9 @@ const expertPool = new ExpertPool({
 })
 participation = new Participation({
   baseUrl: readConfig().stakingUrl || C.stakingServiceUrl,
+  // Only an explicit choice of a serving non-default backbone routes this
+  // machine's sessions there; the automatic pick never moves them.
+  backbone: () => selectedBridgeBackbone(),
   wallet: () => activeAddress(),
   // Signing needs the unlocked mnemonic (or the debug identity). Throwing here
   // rather than returning an empty signature is what surfaces "wallet is
@@ -750,13 +753,23 @@ function refreshNetworkPlan() {
     ...(held?.nUsed ? { nUsed: held.nUsed } : {}),
   }, measuredRelay())
 }
-/** Relay ping round trips by backbone: today every relay ends at the serving backbone's bridge. */
+/** The backbone the operator explicitly chose, if it serves and the bridge knows it by an id. */
+function selectedBridgeBackbone() {
+  const b = C.backbones.find((x) => x.id === readConfig().backboneId)
+  return b && b.serving && b.bridgeId ? b.bridgeId : null
+}
+/**
+ * Relay ping round trips by backbone. The relays are wired for one backbone at
+ * a time (the explicit choice, else the default ring), so their pings belong to
+ * that one; the others keep their TCP estimate.
+ */
 function measuredRelay() {
   const rtts = expertPool.slots.map((s) => s.status().relay?.rtt).filter((r) => r && r.samples > 0)
-  const serving = C.backbones.find((b) => b.serving)
-  if (!rtts.length || !serving) return {}
+  const chosen = C.backbones.find((b) => b.id === readConfig().backboneId && b.serving && b.bridgeId)
+  const wiredFor = chosen || C.backbones.find((b) => b.serving && !b.bridgeId)
+  if (!rtts.length || !wiredFor) return {}
   rtts.sort((a, b) => a.p50Ms - b.p50Ms)
-  return { [serving.id]: rtts[0] }
+  return { [wiredFor.id]: rtts[0] }
 }
 /** Re-plan in the background once real relay pings exist and the plan still uses a TCP estimate. */
 function networkPlanStatus() {
@@ -1006,7 +1019,11 @@ function register() {
   // The operator's choice of backbone, kept in config; only a known id is accepted.
   ipcMain.handle('node:selectBackbone', (_e, id) => {
     if (id != null && !C.backbones.some((b) => b.id === id)) return { ok: false, error: 'unknown backbone' }
+    const before = selectedBridgeBackbone()
     writeConfig({ backboneId: id ?? null })
+    // Sessions move with the next coverage report; reopen the relays so they
+    // are dialled against the new backbone's coordinator port.
+    if (selectedBridgeBackbone() !== before) { expertPool.redialRelays(); participation?.poke?.() }
     return { ok: true, ...networkPlanner.status(), warnTps: C.networkWarnTps }
   })
 }

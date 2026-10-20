@@ -34,9 +34,13 @@ module.exports = {
   // `serving`: a p4 backbone runs there today. The MI250 hosts are reachable
   // candidates the operator can pick ahead of a backbone being placed on them.
   backbones: [
-    { id: 'gb10-1', label: 'GB10-1', host: '1.220.225.155', port: 22, serving: true },
+    // baseTps: that ring's measured single-stream speed (GB10 2-stage 6.7 tok/s, 2026-10-01;
+    // MI250-02 3-stage ROCm ~16 tok/s, 2026-10-20). `bridgeId` is what the bridge knows the
+    // backbone by (P4_BRIDGE_BACKBONES); the default ring has none. A non-default backbone's
+    // relays still end at the GB10-1 bridge, which forwards them over the MI250 tunnel.
+    { id: 'gb10-1', label: 'GB10-1', host: '1.220.225.155', port: 22, serving: true, baseTps: 6.7 },
     { id: 'mi250-01', label: 'MI250-01', host: '1.214.116.122', port: 5122, serving: false },
-    { id: 'mi250-02', label: 'MI250-02', host: '1.214.116.122', port: 5222, serving: false },
+    { id: 'mi250-02', label: 'MI250-02', host: '1.214.116.122', port: 5222, serving: true, baseTps: 16, bridgeId: 'mi250-02', via: 'gb10-1' },
   ],
   // Routing shape and the ring's measured single-stream speed for the model the
   // network serves today (Step-3.7-Flash on the 2-stage GB10 ring, 2026-10-01:

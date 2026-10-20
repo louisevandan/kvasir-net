@@ -571,6 +571,15 @@ class ExpertPool {
     }
   }
 
+  /**
+   * Drop every open relay so the next tick dials again. The bridge picks the
+   * coordinator port at dial time, so after the operator switches backbone an
+   * existing socket would keep feeding the old one.
+   */
+  redialRelays() {
+    for (const s of this.slots) if (s.relay && (s.relay.ws || s.relay.timer)) s.closeRelay()
+  }
+
   /** The bridge wired the relay session for this worker id: let that slot dial. */
   wired(workerId) {
     const i = this.slots.findIndex((_, k) => this.slotId(k) === workerId)

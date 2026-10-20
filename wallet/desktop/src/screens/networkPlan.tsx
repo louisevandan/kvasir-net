@@ -96,6 +96,7 @@ export function NetworkPlanCard({ status, relay, onMeasure, onSelect }: {
           {' · '}{chosen.rtt.source === 'relay' ? t('ns.netPlanSourceRelay') : t('ns.netPlanSourceTcp')}</div>}
         {chosen.error && <div role="alert" className="small" style={{ color: 'var(--danger)' }}>{t('ns.netPlanFailed', chosen.error)}</div>}
         {!chosen.serving && <div className="small" style={{ color: 'var(--warn)' }}>{t('ns.netPlanCandidateNote', chosen.label)}</div>}
+        {chosen.serving && chosen.via && <div className="small muted">{t('ns.netPlanViaNote', chosen.label, (status.targets.find((x) => x.id === chosen.via)?.label) || chosen.via)}</div>}
         {chosen.plan && <PlanTable target={chosen} />}
       </div>}
       <div className="small muted" style={{ marginTop: 6 }}>{t('ns.netPlanEstimate')}</div>
